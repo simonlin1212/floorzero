@@ -1,0 +1,4 @@
+# Vibe-Flow 后端依赖 —— 刻意保持极简（延续 global-stock-data「零重依赖」原则）
+fastapi>=0.110
+uvicorn[standard]>=0.27
+requests>=2.31
