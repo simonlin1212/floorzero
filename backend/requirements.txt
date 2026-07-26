@@ -1,4 +1,12 @@
+# ⚠️ 启动前必须设置 VF_CONTACT（见项目根 .env.example）——
+#    SEC 与国会站点要求 UA 带联系方式，未配置会直接报错。
 # Vibe-Flow 后端依赖 —— 刻意保持极简（延续 global-stock-data「零重依赖」原则）
 fastapi>=0.110
 uvicorn[standard]>=0.27
 requests>=2.31
+pypdf>=4.0            # 众议院 PTR 是 PDF；纯 Python，不用装 poppler 系统二进制
+
+# ── 可选 ──
+# curl_cffi>=0.6      # 仅参议院需要：eFD 由 Akamai 按 TLS 指纹拦截，
+#                     # requests 无论怎么伪装请求头都是 403，必须做 TLS 伪装。
+#                     # 不装 = 参议院分栏如实显示"不可用+安装提示"，众议院照常可用。

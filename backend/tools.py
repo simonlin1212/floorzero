@@ -12,6 +12,16 @@ from typing import Any, Callable
 
 from sources import cboe
 from modules import greeks
+from modules import congress as congress_parse
+from modules import congress_store
+from modules import insider as insider_parse
+from modules import insider_store
+from modules import institution_store
+from modules import shorts_store
+from modules import market as market_parse
+from modules import market_store
+from sources import macro as macro_src
+from modules import shorts as shorts_parse
 
 # ── 工具 schema（MCP / function-calling 通用）──
 TOOLS: list[dict] = [
@@ -32,6 +42,146 @@ TOOLS: list[dict] = [
                                "description": "行权价范围 ±比例，默认 0.05（±5%）"},
             },
             "required": ["ticker"],
+        },
+    },
+    {
+        "name": "get_short_fails",
+        "description": (
+            "查询 SEC 交割失败（fails-to-deliver）数据。"
+            "⚠️ **三条必须一起读的口径**：(1) 它是**某结算日的累计余额**不是当日新增，"
+            "SEC 明说相邻两日「may have little or no relationship」、"
+            "「the age of fails cannot be determined」；"
+            "(2) SEC 明说交割失败**既可能来自多头也可能来自空头**，"
+            "**不是裸卖空的证据**；(3) 按标的汇总用的是各结算日余额的**均值**不是加总"
+            "（同一笔未交割会在连续多日重复出现）。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string", "description": "股票代码"},
+                "settlement_date": {"type": "string", "description": "结算日 YYYY-MM-DD"},
+                "since": {"type": "string", "description": "结算日下限 YYYY-MM-DD"},
+                "min_quantity": {"type": "number", "description": "余额下限（股）"},
+                "top": {"type": "integer", "description": "榜单取前几名，默认 10"},
+            },
+        },
+    },
+    {
+        "name": "get_institution_holdings",
+        "description": (
+            "查询机构 13F 持仓（SEC 季度申报）。"
+            "⚠️ **13F 只报季末时点、13(f) 证券的多头持仓** —— 不含空头（SEC 另立 Form SHO）、"
+            "现金、债券、仅境外上市股票、私募持仓。看跌期权按标的列示，是**看空**，"
+            "默认已排除在持仓统计外。申报至少滞后 45 天。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "cusip": {"type": "string", "description": "CUSIP（不是股票代码 —— 13F 只给 CUSIP）"},
+                "manager": {"type": "string", "description": "机构名（模糊匹配），如 Berkshire"},
+                "period": {"type": "string", "description": "报告期 YYYY-MM-DD（季末）"},
+                "kind": {"type": "string", "enum": ["share", "call", "put", "all"],
+                         "description": "持仓类型，默认 share"},
+                "top": {"type": "integer", "description": "各榜单取前几名，默认 10"},
+            },
+        },
+    },
+    {
+        "name": "get_institution_changes",
+        "description": (
+            "机构持仓的季度环比：新建仓 / 加仓 / 减仓 / 清仓。"
+            "⭐ 13F 的主要价值在变动，单季持仓只是静态快照。"
+            "⚠️ 「清仓」只代表该标的不再出现在 13(f) 多头持仓里，不等于机构看空。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "period": {"type": "string", "description": "本期报告期 YYYY-MM-DD"},
+                "prev_period": {"type": "string", "description": "上期报告期 YYYY-MM-DD"},
+                "manager": {"type": "string", "description": "只看某家机构"},
+                "top": {"type": "integer", "description": "各榜单取前几名，默认 10"},
+            },
+        },
+    },
+    {
+        "name": "get_insider_trades",
+        "description": (
+            "查询美股上市公司内部人（高管/董事/10%股东）依 SEC Form 4 申报的交易。"
+            "⚠️ **默认只返回公开市场主动买卖（代码 P/S）** —— Form 4 里约七成是"
+            "授予/期权行权/代扣税等薪酬类交易，把它们当成'内部人买入'会把买盘夸大数倍。"
+            "读的是本地已同步的缓存。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "股票代码，如 NVDA"},
+                "owner": {"type": "string", "description": "内部人姓名（模糊匹配）"},
+                "direction": {"type": "string", "enum": ["buy", "sell"]},
+                "role": {"type": "string", "enum": ["officer", "director", "ten_pct"],
+                         "description": "身份：高管/董事/10%股东"},
+                "group": {"type": "string",
+                          "enum": ["open_market", "compensation", "other", "all"],
+                          "description": "交易大类，默认 open_market"},
+                "plan": {"type": "string", "enum": ["yes", "no"],
+                         "description": "是否 10b5-1 预设计划交易"},
+                "since": {"type": "string", "description": "交易日下限 YYYY-MM-DD"},
+                "min_value": {"type": "number", "description": "成交金额下限（美元）"},
+                "limit": {"type": "integer", "description": "最多返回几笔，默认 50"},
+            },
+        },
+    },
+    {
+        "name": "get_insider_summary",
+        "description": (
+            "内部人交易聚合：净买卖金额、集群买入榜（多少位不同内部人买同一只）、"
+            "活跃内部人。只统计公开市场交易。⚠️ 只呈现事实，不给买卖建议。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string"},
+                "since": {"type": "string", "description": "交易日下限 YYYY-MM-DD"},
+                "role": {"type": "string", "enum": ["officer", "director", "ten_pct"]},
+                "min_value": {"type": "number"},
+                "top": {"type": "integer", "description": "各榜单取前几名，默认 10"},
+            },
+        },
+    },
+    {
+        "name": "get_congress_trades",
+        "description": (
+            "查询美国国会议员依 STOCK Act 公开申报的股票交易（众议院 + 参议院）。"
+            "可按标的、议员、院别、方向、起始交易日筛选。"
+            "⚠️ 金额是**区间**不是精确值；披露天然滞后数十天；"
+            "读的是本地已同步的缓存，未同步则为空。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "股票代码，如 NVDA"},
+                "member": {"type": "string", "description": "议员姓名（模糊匹配）"},
+                "chamber": {"type": "string", "enum": ["house", "senate"],
+                            "description": "院别，不传=两院"},
+                "tx_type": {"type": "string", "enum": ["buy", "sell"],
+                            "description": "买入/卖出，不传=全部"},
+                "since": {"type": "string", "description": "交易日下限 YYYY-MM-DD"},
+                "limit": {"type": "integer", "description": "最多返回几笔，默认 50"},
+            },
+        },
+    },
+    {
+        "name": "get_congress_summary",
+        "description": (
+            "国会议员交易的聚合视图：最活跃标的、交易最多的议员、买卖比、披露延迟统计。"
+            "⚠️ 金额为区间中值加总，只能横向比较，不是真实成交额。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "since": {"type": "string", "description": "交易日下限 YYYY-MM-DD"},
+                "chamber": {"type": "string", "enum": ["house", "senate"]},
+                "top": {"type": "integer", "description": "各榜单取前几名，默认 10"},
+            },
         },
     },
     {
@@ -63,6 +213,37 @@ TOOLS: list[dict] = [
             "type": "object",
             "properties": {"ticker": {"type": "string"}},
             "required": ["ticker"],
+        },
+    },
+    {
+        "name": "get_yield_curve",
+        "description": (
+            "获取美债收益率曲线：最新一天的完整期限结构 + 两条利差"
+            "（10Y-2Y 与 10Y-3M）的历史。"
+            "⚠️ 「倒挂」有两条常用口径且时点可差数月，本工具两条都给、不挑一条。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "years": {"type": "integer",
+                          "description": "往前看几年，默认 3（1 年常看不到穿越零轴）"},
+            },
+        },
+    },
+    {
+        "name": "get_cot",
+        "description": (
+            "获取 CFTC 金融期货持仓报告（TFF）：杠杆基金 / 资产管理 / 交易商"
+            "三类的多空与净持仓。⚠️ 有三天时滞（报周二持仓、周五发布）。"
+            "不传 market 则返回可选合约清单。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "market": {"type": "string",
+                           "description": "合约名关键词，如 'E-MINI S&P 500' / 'TREASURY'"},
+                "periods": {"type": "integer", "description": "取最近几期，默认 12"},
+            },
         },
     },
 ]
@@ -129,10 +310,422 @@ def _tool_get_option_chain_summary(ticker: str) -> dict:
     }
 
 
+def _row_to_trade(r: dict):
+    """DB 行 → Trade。与 REST 层同一套派生逻辑，避免两条出口字段不一致。"""
+    from datetime import date as _d
+
+    def d(v):
+        return _d.fromisoformat(v) if v else None
+
+    return congress_parse.Trade(
+        chamber=r["chamber"], member=r["member"],
+        state_district=r["state_district"] or "", ticker=r["ticker"],
+        asset_name=r["asset_name"] or "", asset_type=r["asset_type"],
+        asset_type_label=r["asset_type_label"] or "", tx_type=r["tx_type"] or "",
+        tx_type_label=r["tx_type_label"] or "", tx_date=d(r["tx_date"]),
+        notification_date=d(r["notification_date"]), filing_date=d(r["filing_date"]),
+        amount_low=r["amount_low"], amount_high=r["amount_high"],
+        amount_raw=r["amount_raw"] or "", owner=r["owner"] or "self",
+        doc_id=r["doc_id"], source_url=r["source_url"] or "")
+
+
+def _tool_get_congress_trades(ticker: str | None = None, member: str | None = None,
+                              chamber: str | None = None, tx_type: str | None = None,
+                              since: str | None = None, limit: int = 50) -> dict:
+    rows = congress_store.query_trades(chamber=chamber, ticker=ticker, member=member,
+                                       since=since, tx_type=tx_type,
+                                       limit=max(1, min(limit, 500)))
+    trades = [congress_parse.to_dict(_row_to_trade(r)) for r in rows]
+    st = congress_store.stats()
+    if not trades and st["trades"] == 0:
+        # 空结果有两种成因，必须说清是哪一种
+        return {"trades": [], "count": 0,
+                "summary": "本地还没有同步任何国会申报数据 —— "
+                           "这是**尚未同步**，不是没有交易。先调用 POST /api/congress/sync。"}
+    # ⚠️ 交易类型不止买卖：还有 E（交换）。用 len-buys 当卖出数会把交换算成卖出。
+    # 判定规则与 summarize() 保持一致：P=买入，S 开头=卖出（含"部分卖出"），其余单列。
+    buys = sum(1 for t in trades if t["tx_type"] == "P")
+    sells = sum(1 for t in trades if str(t["tx_type"]).startswith("S"))
+    others = len(trades) - buys - sells
+    return {
+        "trades": trades, "count": len(trades),
+        "buys": buys, "sells": sells, "other_types": others,
+        "coverage": {"cached_trades": st["trades"],
+                     "unparsed_filings": st["unparsed_filings"],
+                     "last_sync": st["last_sync"]},
+        "summary": (f"返回 {len(trades)} 笔（买入 {buys} / 卖出 {sells}"
+                    + (f" / 其他类型 {others}（如交换）" if others else "") + "）。"
+                    f"本地共缓存 {st['trades']} 笔，另有 {st['unparsed_filings']} 份申报"
+                    f"为纸质扫描件未能解析。金额均为区间不是精确值；"
+                    f"披露滞后数十天，不代表当前持仓。"),
+    }
+
+
+#: Congress 汇总的取数上限。⚠️ 命中超过它就只是"最新 N 笔"的统计。
+_CONGRESS_SUMMARY_LIMIT = 5000
+
+
+def _tool_get_congress_summary(since: str | None = None, chamber: str | None = None,
+                               top: int = 10) -> dict:
+    rows = congress_store.query_trades(chamber=chamber, since=since,
+                                       limit=_CONGRESS_SUMMARY_LIMIT)
+    out = congress_parse.summarize([_row_to_trade(r) for r in rows])
+    n = max(1, min(top, 50))
+    out["by_ticker"] = out["by_ticker"][:n]
+    out["by_member"] = out["by_member"][:n]
+    if not rows:
+        out["summary"] = "该条件下本地无数据（可能是尚未同步，或该时间段确实无申报）。"
+        return out
+    hot = "、".join(f"{t['ticker']}({t['trades']}笔)" for t in out["by_ticker"][:5])
+    # ⚠️ 命中超上限时必须说出来：REST 端点有 truncated 标记，
+    # MCP 这边不说的话，AI 会把"最新 5000 笔的统计"当成整段时间的结论。
+    truncated = len(rows) >= _CONGRESS_SUMMARY_LIMIT
+    out["scope"] = {"chamber": chamber, "since": since, "sampled": len(rows),
+                    "limit": _CONGRESS_SUMMARY_LIMIT, "truncated": truncated}
+    prefix = (f"⚠️ 命中已达上限 {_CONGRESS_SUMMARY_LIMIT} 笔，"
+              f"以下统计**只覆盖最新 {len(rows)} 笔**，不是该时间段全部。"
+              if truncated else "")
+    out["summary"] = (prefix +
+        f"共 {out['total_trades']} 笔（买 {out['buys']} / 卖 {out['sells']}）。"
+        f"最活跃标的：{hot}。披露延迟中位 {out['delay']['median_days']} 天，"
+        f"其中 {out['delay']['over_45d_count']} 笔超过 45 天 —— "
+        f"这是事实统计不是违规认定（期限有周末顺延等情形）。"
+        f"金额为区间中值加总，仅供横向比较。")
+    return out
+
+
+def _ins_row(r: dict):
+    """DB 行 → InsiderTrade。与 REST 层同一条派生路径。"""
+    from datetime import date as _d
+
+    def d(v):
+        return _d.fromisoformat(v) if v else None
+
+    return insider_parse.InsiderTrade(
+        accession=r["accession"], seq=r["seq"], ticker=r["ticker"],
+        company=r["company"] or "", issuer_cik=r["issuer_cik"] or "",
+        owner=r["owner"] or "", owner_cik=r["owner_cik"] or "",
+        is_officer=bool(r["is_officer"]), is_director=bool(r["is_director"]),
+        is_ten_pct=bool(r["is_ten_pct"]), officer_title=r["officer_title"] or "",
+        security=r["security"] or "", tx_code=r["tx_code"] or "",
+        tx_date=d(r["tx_date"]), filing_date=d(r["filing_date"]),
+        shares=r["shares"], price=r["price"],
+        acquired_disposed=r["acquired_disposed"] or "",
+        shares_after=r["shares_after"], is_direct=bool(r["is_direct"]),
+        is_10b5_1=None if r["is_10b5_1"] is None else bool(r["is_10b5_1"]),
+        form_type=r["form_type"] or "4",
+        source_url=r["source_url"] or "")
+
+
+def _tool_get_insider_trades(ticker: str | None = None, owner: str | None = None,
+                             direction: str | None = None, role: str | None = None,
+                             group: str = "open_market", plan: str | None = None,
+                             since: str | None = None, min_value: float | None = None,
+                             limit: int = 50) -> dict:
+    rows = insider_store.query(
+        ticker=ticker, owner=owner, group=None if group == "all" else group,
+        direction=direction, role=role, plan=plan, since=since,
+        min_value=min_value, limit=max(1, min(limit, 500)))
+    st = insider_store.stats()
+    if not rows and st["trades"] == 0:
+        return {"trades": [], "count": 0,
+                "summary": "本地还没有同步任何 Form 4 数据 —— 这是**尚未同步**，"
+                           "不是没有内部人交易。先调用 POST /api/insider/sync。"}
+    out = [insider_parse.to_dict(_ins_row(r)) for r in rows]
+    buys = sum(1 for t in out if t["direction"] == "buy")
+    sells = sum(1 for t in out if t["direction"] == "sell")
+    bv = sum(t["value"] or 0 for t in out if t["direction"] == "buy")
+    sv = sum(t["value"] or 0 for t in out if t["direction"] == "sell")
+    scope = ("公开市场主动买卖" if group == "open_market"
+             else "薪酬类（授予/行权/代扣税）" if group == "compensation"
+             else "其他类型" if group == "other" else "全部类型")
+    return {
+        "trades": out, "count": len(out), "buys": buys, "sells": sells,
+        "coverage": {"cached_trades": st["trades"],
+                     "open_market_pct": st["open_market_pct"],
+                     "range": [st["earliest"], st["latest"]],
+                     "last_sync": st["last_sync"]},
+        "summary": (f"返回 {len(out)} 笔（{scope}）：买入 {buys} 笔 ${bv:,.0f}、"
+                    f"卖出 {sells} 笔 ${sv:,.0f}。本地共 {st['trades']:,} 行，"
+                    f"其中公开市场仅占 {st['open_market_pct']}% —— "
+                    f"其余是授予/行权/代扣税等薪酬类，不代表买卖决策。"),
+    }
+
+
+def _tool_get_insider_summary(ticker: str | None = None, since: str | None = None,
+                              role: str | None = None, min_value: float | None = None,
+                              top: int = 10) -> dict:
+    # ⚠️ 与 REST 走同一条 SQL 全量聚合，不是"取最新 N 行再算" ——
+    # 否则 MCP 报出的总额会是「最新 N 行」的，却被 AI 当成整个区间的结论。
+    agg = insider_store.aggregate(top=max(1, min(top, 50)), ticker=ticker,
+                                  since=since, role=role, group="open_market",
+                                  min_value=min_value)
+    lib = insider_store.stats()
+    c = agg["counts"]
+    out = {
+        "open_market": {"count": c["n"] or 0, "buys": c["buys"] or 0,
+                        "sells": c["sells"] or 0,
+                        "buy_value": round(c["bv"] or 0),
+                        "sell_value": round(c["sv"] or 0)},
+        "by_ticker": agg["by_ticker"], "cluster_buys": agg["cluster_buys"],
+        "by_owner": agg["by_owner"], "plan_sells": c["plan_sells"] or 0,
+        "notes": insider_parse.summary_notes(lib), "stats": lib,
+    }
+    if not c["n"]:
+        out["summary"] = "该条件下本地无公开市场交易（可能尚未同步，或该区间确无）。"
+        return out
+    om = out["open_market"]
+    cluster = "、".join(f"{c['ticker']}({c['insider_count']}人)"
+                        for c in out["cluster_buys"][:5]) or "无"
+    out["summary"] = (
+        f"公开市场买入 {om['buys']} 笔 ${om['buy_value']:,}、"
+        f"卖出 {om['sells']} 笔 ${om['sell_value']:,}。"
+        f"多人买入的标的：{cluster}。其中 {out['plan_sells']} 笔卖出属 10b5-1 预设计划"
+        f"（几个月前排定，非临时决定）。以上只是已申报事实的统计，不构成投资建议。")
+    return out
+
+
+def _tool_get_institution_holdings(cusip: str | None = None,
+                                   manager: str | None = None,
+                                   period: str | None = None,
+                                   kind: str = "share", top: int = 10) -> dict:
+    st = institution_store.stats()
+    if not st["holdings"]:
+        return {"holdings": [], "count": 0,
+                "summary": "本地还没有导入任何 13F 数据 —— 这是**尚未导入**，"
+                           "不是机构没有持仓。先调用 POST /api/institution/sync。"}
+    p = period or (st["periods"][0] if st["periods"] else None)
+    agg = institution_store.aggregate(top=max(1, min(top, 50)), cusip=cusip,
+                                      manager=manager, period=p, kind=kind)
+    c = agg["counts"]
+    puts = (agg["by_kind"].get("put") or {}).get("value") or 0
+    hot = "、".join(f"{x['issuer'][:22]}({_money(x['value'])}, {x['holders']}家)"
+                    for x in agg["by_issuer"][:5]) or "无"
+    return {
+        **agg, "period": p, "stats": st,
+        "summary": (f"{p} 报告期：{c['n']:,} 条持仓、{c['mgrs']:,} 家机构、"
+                    f"合计 {_money(c['val'] or 0)}。持仓最大：{hot}。"
+                    f"⚠️ 13F 只含**多头**且只含 13(f) 证券，不含空头/现金/债券/"
+                    f"境外上市股票；看跌期权（本期 {_money(puts)}）按标的列示、"
+                    f"已单独归类不计入持仓；数据至少滞后 45 天。"),
+    }
+
+
+def _tool_get_institution_changes(period: str | None = None,
+                                  prev_period: str | None = None,
+                                  manager: str | None = None,
+                                  top: int = 10) -> dict:
+    have = institution_store.known_periods()
+    if len(have) < 2:
+        return {"summary": f"需要至少两个报告期才能比对，当前只有 {have or '零'} —— "
+                           f"先导入更多季度（13F 的价值在变动，不在静态快照）。"}
+    p = period or have[0]
+    pp = prev_period or next((x for x in have if x < p), None)
+    if not pp:
+        return {"summary": f"{p} 之前没有已导入的报告期，无法比对。已有：{'、'.join(have)}"}
+    out = institution_store.changes(period=p, prev_period=pp,
+                                    top=max(1, min(top, 50)), manager=manager)
+    fmt = lambda rows: "、".join(f"{r['issuer'][:20]}({_money(r['delta_value'])})"
+                                 for r in rows[:4]) or "无"
+    out["summary"] = (
+        f"{pp} → {p}：新建仓 {out['counts']['new']} / 加仓 {out['counts']['increased']} / "
+        f"减仓 {out['counts']['decreased']} / 清仓 {out['counts']['exited']}。"
+        f"加仓最多：{fmt(out['increased'])}；减仓最多：{fmt(out['decreased'])}。"
+        f"⚠️ 「清仓」只代表不再出现在 13(f) 多头持仓里，不等于看空。{out['floor_note']}")
+    return out
+
+
+def _money(n: float) -> str:
+    a = abs(n or 0)
+    sign = "-" if (n or 0) < 0 else ""
+    for div, unit in ((1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if a >= div:
+            return f"{sign}${a / div:.1f}{unit}"
+    return f"{sign}${a:.0f}"
+
+
+def _tool_get_short_fails(symbol: str | None = None,
+                          settlement_date: str | None = None,
+                          since: str | None = None,
+                          min_quantity: float | None = None,
+                          top: int = 10) -> dict:
+    st = shorts_store.stats()
+    if not st["rows"]:
+        return {"fails": [], "count": 0,
+                "summary": "本地还没有导入 FTD 数据 —— 这是**尚未导入**，"
+                           "不是市场上没有交割失败。先调用 POST /api/shorts/sync。"}
+    agg = shorts_store.aggregate(top=max(1, min(top, 50)), symbol=symbol,
+                                 settlement_date=settlement_date, since=since,
+                                 min_quantity=min_quantity)
+    c = agg["counts"]
+    hot = "、".join(
+        f"{x['symbol']}(均 {(x['avg_quantity'] or 0):,.0f} 股)"
+        for x in agg["by_symbol"][:5]) or "无"
+    return {
+        **agg, "stats": st, "notes": shorts_parse.OFFICIAL_NOTES,
+        "summary": (
+            f"{c['lo']} ~ {c['hi']} 共 {c['n']:,} 条记录、{c['syms']:,} 只标的、"
+            f"{c['days']} 个结算日。余额最大：{hot}。"
+            f"⚠️ 这是**某结算日的累计余额**不是当日新增（SEC：相邻两日"
+            f"「may have little or no relationship」、无法判断 fails 的存续时长）；"
+            f"⚠️ SEC 明说交割失败**既可能来自多头也可能来自空头、不是裸卖空的证据**；"
+            f"⚠️ 榜单用的是各结算日余额的**均值**不是加总。"
+            f"以上只是已公开数据的统计，不构成投资建议。"),
+    }
+
+
+def _n(v: float | None, spec: str = ",.0f") -> str:
+    """空值安全的数字格式化。
+
+    ⚠️ 解析层把这些字段声明成 `Optional[float]`，API 与前端都按 "—" 呈现空值，
+    只有工具层直接 `f"{v:,.0f}"` —— 同一份数据在 REST 能看、在 MCP 崩掉，
+    正是本项目反复踩的「同数据两视图口径不一致」。
+    （实测抽样 1000 期 TFF 未见空字段，属**尚未触发**的不一致，不是必现崩溃。）
+    """
+    return "—" if v is None else format(v, spec)
+
+
+def _tool_get_yield_curve(years: int = 3) -> dict:
+    from datetime import date as _d
+    y = _d.today().year
+    wanted = list(range(y - max(1, min(years, 15)) + 1, y + 1))
+    status = market_store.year_status(wanted)
+    failed: dict[int, str] = {}
+    missing: list[int] = []
+    for yy in wanted:
+        if not status[yy]["stale"]:
+            continue
+        try:
+            if not market_store.save_year(yy, macro_src.yield_curve(yy)):
+                missing.append(yy)
+        except macro_src.DataNotAvailable:
+            # ⚠️ 「那一年确实没有」要**带出去**：REST 视图有 missing_years，
+            #    工具视图吞掉的话，AI 看到的窗口就悄悄变短了。
+            missing.append(yy)
+        except RuntimeError as e:
+            failed[yy] = str(e)
+    pts = [p for p in (market_parse.parse_curve(r)
+                       for r in market_store.load_years(wanted)) if p]
+    if not pts:
+        return {"error": "取不到收益率数据" + (f"：{failed}" if failed else ""),
+                "note": "这是**取数失败**，不是「没有收益率」。"}
+    out = market_parse.curve_series(pts)
+    L = out["latest"]
+    # ⚠️ 三态，不是两态：倒挂 / 未倒挂 / **算不出来**（某个期限当天缺值）。
+    #    压成两态就会在缺值时输出"三条口径均为正"——那是把「不知道」说成了事实。
+    inv = [k for k, v in L["inverted"].items() if v is True]
+    pos = [k for k, v in L["inverted"].items() if v is False]
+    unk = [k for k, v in L["inverted"].items() if v is None]
+    parts = []
+    if inv:
+        parts.append("、".join(f"{k}={_n(L['spreads'][k], '+.2f')}%" for k in inv) + " 为负")
+    if pos and not inv:
+        parts.append(f"{len(pos)} 条口径为正")
+    elif pos:
+        parts.append(f"其余 {len(pos)} 条为正")
+    if unk:
+        parts.append(f"{'、'.join(unk)} **当日缺期限数据、算不出**")
+    inv_txt = "；".join(parts) if parts else "无可用口径"
+    return {
+        **out, "failed": failed, "missing_years": missing,
+        "summary": (
+            f"截至 {L['date']}：10Y {L['yields'].get('10Y')}%、"
+            f"2Y {L['yields'].get('2Y')}%、3M {L['yields'].get('3M')}%。"
+            f"利差 10Y-2Y {_n(L['spreads']['10Y-2Y'], '+.2f')}%、"
+            f"10Y-3M {_n(L['spreads']['10Y-3M'], '+.2f')}%（{inv_txt}）。"
+            + (f"⚠️ Treasury 没有 {'、'.join(map(str, missing))} 年的数据"
+               f"（与取数失败不同）。" if missing else "")
+            + (f"⚠️ {'、'.join(map(str, failed))} 年**取数失败**，"
+               f"下面用的是本地已有数据、可能不是最新：{failed}。" if failed else "")
+            + "⚠️ 「倒挂」的两条口径时点可差数月，说结论必须讲清用的哪条。"
+              "以上为美国财政部公开数据的呈现，不构成投资建议。"),
+    }
+
+
+def _tool_get_cot(market: str | None = None, periods: int = 12) -> dict:
+    """CFTC 持仓。
+
+    ⚠️ **先把合约定死，再取时间序列。** 直接拿关键词去 like 查有两个坑：
+    ① 一个关键词能命中多个合约（"E-MINI S&P 500" 同时命中 E-MINI 与 MICRO E-MINI），
+       而按日期倒序取 N 行，同一天里哪个合约排前面是**任意的** ——
+       问 E-MINI 却答 MICRO 的数字，比报错还糟。
+    ② limit 是**总行数**，多合约命中时 N 行会散在几个合约上，
+       根本凑不出一条时间序列。
+    """
+    periods = max(1, min(periods, 200))
+    ms = macro_src.cot_markets()
+    latest = max((m["last_date"] or "" for m in ms), default="")
+    live = [m for m in ms if m["last_date"] == latest]
+
+    if not market:
+        return {"markets": [m["market"] for m in live], "count": len(live),
+                "latest_report": latest, "notes": market_parse.NOTES,
+                "summary": (f"TFF 当前在报 {len(live)} 个合约（共收录 {len(ms)} 个，"
+                            f"其余已停更）。最新一期 {latest}。"
+                            f"传 market 参数取具体合约的持仓。")}
+
+    key = market.strip().upper()
+    matches = [m for m in ms if key in m["market"].upper()]
+    exact = [m for m in matches if m["market"].upper() == key]
+    if exact:
+        chosen = exact[0]
+    elif len(matches) == 1:
+        chosen = matches[0]
+    elif matches:
+        # 命中多个 → **不替调用方挑**，把候选连同各自最后一期给回去
+        return {"candidates": [{"market": m["market"], "last_date": m["last_date"],
+                                "reports": m["reports"]} for m in matches[:25]],
+                "count": 0, "rows": [], "notes": market_parse.NOTES,
+                "summary": (
+                    f"「{market}」命中 {len(matches)} 个合约，"
+                    f"**没有替你挑**（它们是不同合约，数字不能混着看）："
+                    + "、".join(m["market"] for m in matches[:6])
+                    + ("…" if len(matches) > 6 else "")
+                    + "。用完整合约名再调一次。")}
+    else:
+        return {"rows": [], "count": 0, "candidates": [],
+                "summary": f"没有匹配「{market}」的合约。不传 market 可取全部清单。"}
+
+    name = chosen["market"]
+    stale = chosen["last_date"] != latest
+    raw = macro_src.cot_rows(limit=periods, market_contains=name, exact=True)
+    rows = [market_parse.cot_to_dict(c)
+            for c in (market_parse.parse_cot(r) for r in raw) if c]
+    if not rows:
+        return {"rows": [], "count": 0, "market": name,
+                "summary": f"{name} 没有记录。"}
+    r0 = rows[0]
+    # ⚠️ 停更合约要说清 —— 否则用户会把 2022 年的数字当成当下的持仓
+    stale_txt = (f"⚠️ 该合约**已停更**，最后一期是 {chosen['last_date']}"
+                 f"（全库最新一期为 {latest}）。" if stale else "")
+    return {
+        "rows": rows, "count": len(rows), "market": name,
+        "last_date": chosen["last_date"], "stale": stale,
+        "notes": market_parse.NOTES,
+        "summary": (
+            f"{stale_txt}{name} 于 {r0['report_date']}（周二收盘）："
+            f"杠杆基金净 {_n(r0['lev_net'])} 手"
+            f"（多 {_n(r0['lev_long'])} / 空 {_n(r0['lev_short'])}）、"
+            f"资产管理净 {_n(r0['asset_net'])} 手、"
+            f"总持仓 {_n(r0['open_interest'])} 手。"
+            f"⚠️ CFTC 有**三天时滞**：这是周二的状态、周五才发布，不是当下。"
+            f"以上为 CFTC 公开数据的呈现，不构成投资建议。"),
+    }
+
+
 _IMPL: dict[str, Callable[..., dict]] = {
+    "get_short_fails": _tool_get_short_fails,
+    "get_institution_holdings": _tool_get_institution_holdings,
+    "get_institution_changes": _tool_get_institution_changes,
+    "get_insider_trades": _tool_get_insider_trades,
+    "get_insider_summary": _tool_get_insider_summary,
+    "get_congress_trades": _tool_get_congress_trades,
+    "get_congress_summary": _tool_get_congress_summary,
     "get_gex": _tool_get_gex,
     "get_gex_curve": _tool_get_gex_curve,
     "get_option_chain_summary": _tool_get_option_chain_summary,
+    "get_yield_curve": _tool_get_yield_curve,
+    "get_cot": _tool_get_cot,
 }
 
 

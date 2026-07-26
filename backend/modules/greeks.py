@@ -54,7 +54,8 @@ class GexProfile:
     call_wall: Optional[float]        # call GEX 最大的行权价（常表现为阻力）
     put_wall: Optional[float]         # put GEX 最负的行权价（常表现为支撑）
     convention: str
-    scope: str                        # 本次计算覆盖了哪些合约
+    scope: str                        # 展示用：含合约数，一眼看出样本量
+    scope_key: str                    # ⭐ 稳定键：不含合约数，历史库按它归档
 
 
 def contract_gex(c: Contract, spot: float,
@@ -192,6 +193,14 @@ def compute(chain: Chain,
         call_wall=call_wall,
         put_wall=put_wall,
         convention=convention,
+        # ⚠️ scope_key 与 scope 必须分开：
+        # scope 带合约数（给人看，一眼知道样本量），但合约数**每天都在变**
+        # （到期日滚动、新挂行权价）。历史库拿 scope 当主键的一部分，
+        # 若把数量混进去，明天的快照就落进另一个 scope，序列永远攒不起来 ——
+        # 而且是**静默**失效：页面只显示"已积累 1 条"，看不出哪里错了。
+        # 键里放**精确值**：`.0%` 会把 0.051 与 0.054 都压成 "±5%"，
+        # 两组不同合约集的快照会被并进同一条序列。展示串才用四舍五入的百分比。
+        scope_key=f"{scope} · k±{strike_pct:.4f}",
         scope=f"{scope} · 行权价 ±{strike_pct:.0%} · {len(cs)} 个合约",
     )
 
@@ -226,6 +235,138 @@ def to_dict(p: GexProfile) -> dict:
                 "这是假设，不是事实。"
             ),
             "scope": p.scope,
+            "scope_key": p.scope_key,
             "unit": "十亿美元 / 标的每 1% 变动",
         },
+    }
+
+# ══════════════════════════════════════════════════════════════
+#  Vanna / Charm 曝险 + 二维曲面
+# ══════════════════════════════════════════════════════════════
+
+@dataclass(frozen=True)
+class ExposureProfile:
+    """Vanna / Charm 曝险画像（与 GEX 同一套 dealer 假设）。"""
+    ticker: str
+    spot: float
+    total_vanna: float                       # 名义美元 / IV 每 +1 个百分点
+    total_charm: float                       # 名义美元 / 每过去 1 天
+    vanna_by_strike: tuple[tuple[float, float], ...]
+    charm_by_strike: tuple[tuple[float, float], ...]
+    convention: str
+    scope: str
+
+
+def _dealer_sign(c: Contract, convention: DealerConvention) -> float:
+    """做市商方向假设 —— 与 GEX 完全一致（call 记正 / put 记负）。"""
+    if convention == "long_call_short_put":
+        return 1.0 if c.type == "call" else -1.0
+    return -1.0 if c.type == "call" else 1.0
+
+
+def compute_exposures(chain: Chain,
+                      expiry: Optional[str] = None,
+                      dte_max: Optional[int] = None,
+                      strike_pct: float = 0.05,
+                      convention: DealerConvention = "long_call_short_put",
+                      rate: float = 0.04) -> ExposureProfile:
+    """Vanna / Charm 曝险。
+
+    归一化口径（与 GEX 的「每 1% 股价变动」对应）：
+      · Vanna 曝险 = vanna × OI × 100 × spot × **0.01**  → IV 每 +1 个百分点
+      · Charm 曝险 = charm × OI × 100 × spot × **(1/365)** → 每过去 1 天
+
+    ⚠️ CBOE 只给 delta/gamma/vega/theta/rho，**不给二阶交叉希腊字母**，
+    所以这里用 Black-Scholes 自算（用合约自身的 IV）。
+    """
+    spot = chain.spot
+    lo, hi = spot * (1 - strike_pct), spot * (1 + strike_pct)
+    cs = [c for c in chain.filter(expiry=expiry, dte_max=dte_max)
+          if lo <= c.strike <= hi]
+    if not cs:
+        scope = expiry or (f"≤{dte_max}DTE" if dte_max is not None else "全链")
+        raise ValueError(f"{chain.ticker} 在 {scope} / ±{strike_pct:.0%} 范围内无合约")
+
+    v_agg: dict[float, float] = defaultdict(float)
+    c_agg: dict[float, float] = defaultdict(float)
+    for c in cs:
+        if not c.open_interest or not c.iv or c.iv <= 0:
+            continue
+        t = bs.years_to_expiry(c.dte)
+        sign = _dealer_sign(c, convention)
+        notional = c.open_interest * CONTRACT_SIZE * spot
+        v_agg[c.strike] += sign * bs.bs_vanna(spot, c.strike, t, c.iv, rate) * notional * 0.01
+        c_agg[c.strike] += sign * bs.bs_charm(spot, c.strike, t, c.iv, rate) * notional / bs.DAYS_PER_YEAR
+
+    scope = expiry or (f"≤{dte_max}DTE" if dte_max is not None else "全链")
+    return ExposureProfile(
+        ticker=chain.ticker, spot=spot,
+        total_vanna=sum(v_agg.values()),
+        total_charm=sum(c_agg.values()),
+        vanna_by_strike=tuple(sorted(v_agg.items())),
+        charm_by_strike=tuple(sorted(c_agg.items())),
+        convention=convention,
+        scope=f"{scope} · 行权价 ±{strike_pct:.0%} · {len(cs)} 个合约",
+    )
+
+
+def exposures_to_dict(p: ExposureProfile) -> dict:
+    M = 1e6
+    return {
+        "ticker": p.ticker,
+        "spot": round(p.spot, 2),
+        "total_vanna_mm": round(p.total_vanna / M, 3),
+        "total_charm_mm": round(p.total_charm / M, 3),
+        "vanna_by_strike": [{"strike": k, "vanna_mm": round(v / M, 3)}
+                            for k, v in p.vanna_by_strike],
+        "charm_by_strike": [{"strike": k, "charm_mm": round(v / M, 3)}
+                            for k, v in p.charm_by_strike],
+        "meta": {
+            "convention": p.convention,
+            "scope": p.scope,
+            "vanna_unit": "百万美元 / IV 每 +1 个百分点",
+            "charm_unit": "百万美元 / 每过去 1 天",
+            "note": ("Vanna/Charm 由 Black-Scholes 自算（CBOE 只提供一阶希腊字母）。"
+                     "做市商持仓方向沿用与 GEX 相同的假设：call 记正 / put 记负 —— 是假设不是事实。"),
+        },
+    }
+
+
+def gex_surface(chain: Chain,
+                dte_max: Optional[int] = 45,
+                strike_pct: float = 0.06,
+                convention: DealerConvention = "long_call_short_put") -> dict:
+    """expiry × strike 的二维 GEX 曲面。
+
+    对标 UW 的 "Greek Exposure By Strike And Expiry"。
+    返回 ECharts heatmap 直接可用的结构：[[x_index, y_index, value], ...]
+    """
+    spot = chain.spot
+    lo, hi = spot * (1 - strike_pct), spot * (1 + strike_pct)
+    cs = [c for c in chain.filter(dte_max=dte_max) if lo <= c.strike <= hi]
+    if not cs:
+        raise ValueError(f"{chain.ticker} 在 ≤{dte_max}DTE / ±{strike_pct:.0%} 内无合约")
+
+    expiries = sorted({c.expiry for c in cs})
+    strikes = sorted({c.strike for c in cs})
+    xi = {e: i for i, e in enumerate(expiries)}
+    yi = {k: i for i, k in enumerate(strikes)}
+
+    grid: dict[tuple[int, int], float] = defaultdict(float)
+    for c in cs:
+        grid[(xi[c.expiry], yi[c.strike])] += contract_gex(c, spot, convention)
+
+    B = 1e9
+    data = [[x, y, round(v / B, 4)] for (x, y), v in grid.items() if v]
+    vals = [d[2] for d in data] or [0.0]
+    return {
+        "ticker": chain.ticker,
+        "spot": round(spot, 2),
+        "expiries": expiries,
+        "strikes": strikes,
+        "data": data,
+        "min": min(vals),
+        "max": max(vals),
+        "unit": "十亿美元 / 标的每 1% 变动",
+        "scope": f"≤{dte_max}DTE · 行权价 ±{strike_pct:.0%} · {len(cs)} 个合约",
     }

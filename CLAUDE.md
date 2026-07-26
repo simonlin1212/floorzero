@@ -24,17 +24,38 @@
 3. **输出数据不输出结论。** 可以展示 GEX 数值、异动排名、空头占比；**不打「买入/卖出/低估/高估」标签、不给点位、不做主观评分、不预测涨跌**。
 4. **各数据源标注合规级**（S/B/C + 条款原文）进 UI 与 README——既是差异化叙事，也是自我保护。
 5. **key 用户自备**，绝不内置任何凭据；`.env` 进 `.gitignore`。
+   ⚠️ **联系方式也算凭据**：SEC/国会站点要求 UA 带邮箱，
+   **绝不能把作者邮箱硬编码进代码** —— 开源后每个用户的流量都会以作者身份发出，
+   谁把上游打到封禁都算在他头上。走 `VF_CONTACT` 环境变量 + 未配置即 fail-fast
+   （见 `backend/sources/contact.py`）。
 6. 完整法律背景见项目0记忆 `project_vibe-astock-commercialization-legal`（五轮调研）与 `project_global-stock-data-v2`。
 
 ## 数据源合规级（取用前必看）
 
 | 级 | 源 | 商用 | 再分发 |
 |---|---|---|---|
-| **S** | SEC EDGAR / Treasury / CFTC / House-Senate 披露 | ✅ | ✅ |
-| **B** | FINRA（Reg SHO / ATS） | ⚠️自行确认 | ❌ |
+| **S** | SEC EDGAR / Treasury / CFTC | ✅ | ✅ |
+| **S⁻** | **国会两院财产申报** | ❌ **法律禁止商用** | ✅（公开记录） |
+| **B** | FINRA（Reg SHO / ATS） | ❌ **条款限非商用** | ❌ |
 | **C** | CBOE / Nasdaq / Yahoo / 东财等 | ❌需授权 | ❌ |
 
 ⭐ 做**展示型**功能时优先用 S 级源；C 级源（尤其 CBOE 期权）只能在用户本地跑。
+
+⚠️ **S⁻ 的坑（2026-07-26 查法条原文更正，此前标错过）**：国会披露虽是政府公开记录，
+但 **5 U.S.C. §13107(c)(1)(B)** 明文规定「为任何商业目的获取或使用这些报告均属违法」
+（新闻媒体面向公众传播除外），§13107(c)(2) 罚款上限 $10,000，**两院均适用**。
+→ 免费开源 + 用户自部署做个人研究 ✅；**任何收费产品/商业服务不得包含这条线** ❌。
+这与 SEC EDGAR 不同（EDGAR 只限速率 10 请求/秒 + 要求声明 UA，不限商用），
+**两者不可混为一谈**。
+
+⚠️ **B 级（FINRA）的实况（2026-07-26 实读条款原文）**：Terms of Use 限
+「**ONLY for your own non-commercial personal or professional use**」，
+且限制 (d) 明文禁止「**develop or create a database of data using the FINRA Website**」——
+**这直接冲击本项目「下载→落 SQLite」的架构**。另有模糊之处：条款范围写的是
+"the FINRA.**ORG** site"，而数据文件在 `cdn.finra.org`；FINRA 还有一套需注册接受的
+API Terms of Service。→ **做法：FINRA 源一律默认关闭**（`VF_ENABLE_FINRA=1` 才启用），
+UI 上把条款原文与模糊之处原样摆出来，**judgment 交给用户，我们不替他解释**。
+任何分栏都不得把 FINRA 作为唯一数据源。
 
 ## 架构速览
 

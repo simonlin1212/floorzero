@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import ReactECharts from "echarts-for-react";
+import { Card, PageHead } from "../components/Shell";
 
 /* ── 类型（与后端 greeks.to_dict 对齐）── */
 type StrikeRow = {
@@ -20,10 +21,41 @@ type GexData = {
   regime: "positive" | "negative" | "neutral";
   by_strike: StrikeRow[];
   by_expiry: { expiry: string; gex_bn: number }[];
-  meta: { convention: string; convention_note: string; scope: string; unit: string };
+  meta: {
+    convention: string;
+    convention_note: string;
+    scope: string;
+    /** 稳定归档键（不含合约数）—— 拉历史必须用它，不能用 scope */
+    scope_key: string;
+    unit: string;
+  };
   timestamp?: string;
 };
 type CurvePoint = { price: number; gex_bn: number };
+type Exposures = {
+  total_vanna_mm: number;
+  total_charm_mm: number;
+  vanna_by_strike: { strike: number; vanna_mm: number }[];
+  charm_by_strike: { strike: number; charm_mm: number }[];
+  meta: { vanna_unit: string; charm_unit: string; note: string };
+};
+type Surface = {
+  expiries: string[];
+  strikes: number[];
+  data: [number, number, number][];
+  min: number;
+  max: number;
+  scope: string;
+};
+
+type HistRow = {
+  captured_at: string;
+  scope: string;
+  spot: number;
+  total_gex: number;
+  gamma_flip: number | null;
+  regime: string;
+};
 
 const PRESETS = ["SPY", "QQQ", "NVDA", "TSLA", "AAPL", "IWM"];
 const DTE_OPTS = [
@@ -33,12 +65,33 @@ const DTE_OPTS = [
   { v: 0, label: "全部", all: true },
 ];
 
+/** 取增强视图的 JSON；失败一律返回 null（由各卡片自行提示），不冒到外层清空主数据。 */
+async function pickJson<T>(r: PromiseSettledResult<Response>): Promise<T | null> {
+  if (r.status !== "fulfilled" || !r.value.ok) return null;
+  try {
+    return (await r.value.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+/** 口径 → 查询串。**所有端点共用这一个函数**，避免各处各写一份而画岔口径。 */
+function scopeQuery(dte: number | null): string {
+  if (dte === null) return "";
+  return dte === 0 ? "&expiry=0DTE" : `&dte_max=${dte}`;
+}
+
 export default function Gex() {
   const [ticker, setTicker] = useState("SPY");
   const [input, setInput] = useState("SPY");
   const [dte, setDte] = useState<number | null>(7);
   const [data, setData] = useState<GexData | null>(null);
   const [curve, setCurve] = useState<CurvePoint[]>([]);
+  const [exp, setExp] = useState<Exposures | null>(null);
+  const [surface, setSurface] = useState<Surface | null>(null);
+  const [hist, setHist] = useState<HistRow[]>([]);
+  const [histBusy, setHistBusy] = useState(false);
+  const [histMsg, setHistMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -47,11 +100,13 @@ export default function Gex() {
     (async () => {
       setLoading(true);
       setErr(null);
+      setExp(null);
+      setSurface(null);
       try {
         // ⚠️ 两个端点必须用**同一套过滤条件**，否则指标卡的 flip
         // 和曲线的零点会来自不同合约集合，曲线不在标注的 flip 处穿越 0。
         // 0DTE 档走 expiry 参数（后端两端点都支持），其余档走 dte_max
-        const q = dte === null ? "" : dte === 0 ? "&expiry=0DTE" : `&dte_max=${dte}`;
+        const q = scopeQuery(dte);
         const [a, b] = await Promise.all([
           fetch(`/api/gex/${ticker}?strike_pct=0.05${q}`),
           fetch(`/api/gex/${ticker}/curve?points=60&strike_pct=0.05${q}`),
@@ -66,6 +121,24 @@ export default function Gex() {
           setData(gex);
           setCurve(cv);
         }
+        // 曝险与曲面是**增强视图**：失败只置空该卡片并各自提示，
+        // 不阻断已经取到的主数据（但也不静默——卡片会说明取不到）。
+        // ⚠️ 用 allSettled 而非 all：这三个是**增强视图**，任一网络异常
+        // （fetch reject / JSON 解析失败）若冒到外层 catch，会把已经取到的
+        // 主数据一并清掉 —— 让一个可选卡片的故障掀翻整页。
+        // ⚠️ 历史必须按 **scope_key**（稳定键）筛：用带合约数的 scope 会导致
+        // 每天落进不同分组；不筛则会把 ≤7DTE 与全链混成无意义的锯齿。
+        const [ex, sf, h] = await Promise.allSettled([
+          fetch(`/api/exposures/${ticker}?strike_pct=0.05${q}`),
+          fetch(`/api/gex/${ticker}/surface?dte_max=45`),
+          fetch(`/api/history/${ticker}?scope=${encodeURIComponent(gex.meta.scope_key)}`),
+        ]);
+        if (!cancelled) {
+          setExp(await pickJson<Exposures>(ex));
+          setSurface(await pickJson<Surface>(sf));
+          const hj = await pickJson<{ series: HistRow[] }>(h);
+          setHist(hj?.series ?? []);
+        }
       } catch (e) {
         if (!cancelled) {
           setErr(e instanceof Error ? e.message : String(e));
@@ -79,6 +152,78 @@ export default function Gex() {
       cancelled = true;
     };
   }, [ticker, dte]);
+
+  /* ── 采集一次快照 ── */
+  async function snapshot() {
+    setHistBusy(true);
+    setHistMsg(null);
+    try {
+      // 与主端点共用同一套过滤参数，保证存进库的 scope 就是页面正在看的口径
+      const r = await fetch(
+        `/api/history/snapshot/${ticker}?strike_pct=0.05${scopeQuery(dte)}`,
+        { method: "POST" });
+      if (!r.ok) throw new Error((await r.json()).detail ?? `HTTP ${r.status}`);
+      const j = await r.json();
+      // 按**数据自身时点**入库，所以"没新增"= CBOE 还没发布新数据，而不是出错
+      setHistMsg(
+        j.created
+          ? `已记录一条（数据时点 ${j.captured_at ?? "未知"}）`
+          : `上游数据尚未更新（仍是 ${j.captured_at}），未重复记录`,
+      );
+      const h = await fetch(
+        `/api/history/${ticker}?scope=${encodeURIComponent(j.scope_key)}`);
+      if (h.ok) setHist((await h.json()).series as HistRow[]);
+    } catch (e) {
+      setHistMsg(`采集失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setHistBusy(false);
+    }
+  }
+
+  /* ── 历史序列（旧→新）── */
+  const histOption = useMemo(() => {
+    // 少于 2 点画不出趋势：单点会让双 Y 轴退化成荒谬的自动量程（一个点撑开 300~1200），
+    // 而"第一天只有 1 条"正是自部署用户必然遇到的状态 —— 这里改用文字如实呈现。
+    if (hist.length < 2) return {};
+    const rows = [...hist].reverse();
+    return {
+      backgroundColor: "transparent",
+      animation: false,
+      grid: { left: 66, right: 62, top: 30, bottom: 44 },
+      tooltip: { trigger: "axis", backgroundColor: "#131316",
+        borderColor: "#2a2a31", textStyle: { color: "#f2efe9", fontSize: 12 } },
+      legend: { data: ["总 GEX", "标的价"], textStyle: { color: "#8e8a83", fontSize: 11 },
+        top: 2, left: "center", itemWidth: 12, itemHeight: 8 },
+      xAxis: { type: "category",
+        data: rows.map((r) => r.captured_at.replace("T", " ").slice(5, 16)),
+        axisLine: { lineStyle: { color: "#2a2a31" } },
+        axisLabel: { color: "#8e8a83", fontSize: 9, fontFamily: "JetBrains Mono" } },
+      yAxis: [
+        { type: "value", name: "B$",
+          nameTextStyle: { color: "#8e8a83", fontSize: 10 },
+          splitLine: { lineStyle: { color: "#1e1e24" } },
+          axisLabel: { color: "#8e8a83", fontSize: 10, fontFamily: "JetBrains Mono" } },
+        { type: "value", name: "$", scale: true,
+          nameTextStyle: { color: "#8e8a83", fontSize: 10 },
+          splitLine: { show: false },
+          axisLabel: { color: "#8e8a83", fontSize: 10, fontFamily: "JetBrains Mono" } },
+      ],
+      series: [
+        // ⚠️ 不用 smooth：快照点之间可能隔几十分钟，样条会在两点之间
+        // 拟合出实际没发生过的走势（冲高/回落），直线连才是如实呈现。
+        { name: "总 GEX", type: "line", symbol: "circle", symbolSize: 5,
+          lineStyle: { color: "#F35D2B", width: 2 }, itemStyle: { color: "#F35D2B" },
+          data: rows.map((r) => +(r.total_gex / 1e9).toFixed(3)),
+          markLine: { silent: true, symbol: "none",
+            // 关掉默认标签：它落在右轴刻度上，和标的价刻度叠字
+            label: { show: false },
+            data: [{ yAxis: 0, lineStyle: { color: "#8e8a83", type: "dashed" } }] } },
+        { name: "标的价", type: "line", yAxisIndex: 1, symbol: "circle", symbolSize: 3,
+          lineStyle: { color: "#3b82f6", width: 1.5, opacity: 0.7 },
+          data: rows.map((r) => r.spot) },
+      ],
+    };
+  }, [hist]);
 
   /* ── 按行权价的 GEX 柱状图 ── */
   const strikeOption = useMemo(() => {
@@ -240,25 +385,101 @@ export default function Gex() {
     };
   }, [data, curve]);
 
+  /* ── Vanna / Charm 按行权价 ── */
+  const expOption = useMemo(() => {
+    // ⚠️ 必须挡空数组：合约存在但 IV 缺失/OI 全为 0 时，后端会如实返回一个
+    // "成功但没有可用行"的画像。下面的 reduce 没有初值，空数组会抛
+    // "Reduce of empty array"，而这段在 useMemo 里 —— 崩的是整页，不是这张卡。
+    if (!exp || !data || exp.vanna_by_strike.length === 0) return {};
+    const strikes = exp.vanna_by_strike.map((r) => r.strike);
+    const charmMap = new Map(exp.charm_by_strike.map((r) => [r.strike, r.charm_mm]));
+    return {
+      backgroundColor: "transparent",
+      animation: false,
+      grid: { left: 66, right: 24, top: 34, bottom: 42 },
+      tooltip: { trigger: "axis", axisPointer: { type: "shadow" },
+        backgroundColor: "#131316", borderColor: "#2a2a31",
+        textStyle: { color: "#f2efe9", fontSize: 12 } },
+      legend: { data: ["Vanna", "Charm"], textStyle: { color: "#8e8a83", fontSize: 11 },
+        top: 4, right: 8, itemWidth: 12, itemHeight: 8 },
+      xAxis: { type: "category", data: strikes,
+        axisLine: { lineStyle: { color: "#2a2a31" } },
+        axisLabel: { color: "#8e8a83", fontSize: 10, fontFamily: "JetBrains Mono" } },
+      yAxis: { type: "value", name: "MM$",
+        nameTextStyle: { color: "#8e8a83", fontSize: 10 },
+        splitLine: { lineStyle: { color: "#1e1e24" } },
+        axisLabel: { color: "#8e8a83", fontSize: 10, fontFamily: "JetBrains Mono" } },
+      series: [
+        { name: "Vanna", type: "bar", itemStyle: { color: "#3b82f6" },
+          data: exp.vanna_by_strike.map((r) => r.vanna_mm) },
+        { name: "Charm", type: "bar", itemStyle: { color: "#a78bfa" },
+          data: strikes.map((k) => charmMap.get(k) ?? 0),
+          markLine: { silent: true, symbol: "none", data: [{
+            xAxis: String(strikes.reduce((p, c) =>
+              Math.abs(c - data.spot) < Math.abs(p - data.spot) ? c : p)),
+            lineStyle: { color: "#ff5a1f", width: 2 },
+            label: { formatter: "现价", color: "#ff5a1f", fontSize: 10 } }] } },
+      ],
+    };
+  }, [exp, data]);
+
+  /* ── expiry × strike 二维曲面 ── */
+  const surfaceOption = useMemo(() => {
+    if (!surface || surface.data.length === 0) return {};
+    // ⚠️ GEX 曲面是极端长尾分布（实测 SPY 中位 0.002 / 最大 0.89，差 400 倍）。
+    // 线性色阶会让 95% 的格子退化成同一个颜色 —— 图看着"有数据"，实则读不出结构。
+    // 取 p95 封顶，并在图例上明示"已封顶"，不把裁剪偷偷藏起来。
+    const mags = surface.data.map((d) => Math.abs(d[2])).sort((a, b) => a - b);
+    const p95 = mags[Math.floor(mags.length * 0.95)] || 0;
+    const peak = Math.max(Math.abs(surface.min), Math.abs(surface.max)) || 1;
+    const bound = p95 > 0 ? p95 : peak;
+    const clipped = bound < peak;
+    return {
+      backgroundColor: "transparent",
+      animation: false,
+      grid: { left: 66, right: 78, top: 20, bottom: 70 },
+      tooltip: {
+        backgroundColor: "#131316", borderColor: "#2a2a31",
+        textStyle: { color: "#f2efe9", fontSize: 12 },
+        formatter: (p: any) => {
+          const [x, y, v] = p.data as [number, number, number];
+          const over = Math.abs(v) > bound ? '  <span style="color:#ff5a1f">超出色阶</span>' : "";
+          return `到期 <b>${surface.expiries[x]}</b><br/>行权价 <b>$${surface.strikes[y]}</b><br/>GEX <b>${v.toFixed(3)} B</b>${over}`;
+        },
+      },
+      xAxis: { type: "category", data: surface.expiries.map((e) => e.slice(5)),
+        splitArea: { show: false },
+        axisLabel: { color: "#8e8a83", fontSize: 9, fontFamily: "JetBrains Mono", rotate: 45 } },
+      yAxis: { type: "category", data: surface.strikes.map(String),
+        splitArea: { show: false },
+        axisLabel: { color: "#8e8a83", fontSize: 9, fontFamily: "JetBrains Mono" } },
+      visualMap: {
+        min: -bound, max: bound, calculable: true, orient: "vertical",
+        right: 8, top: "middle", itemHeight: 160,
+        textStyle: { color: "#8e8a83", fontSize: 10 },
+        // 中间色 = 卡片底色，让近零格子自然隐去，只剩真正有敞口的地方显形
+        inRange: { color: ["#ef4444", "#131316", "#22c55e"] },
+        formatter: (v: number) =>
+          clipped && Math.abs(Math.abs(v) - bound) < 1e-9
+            ? `${v > 0 ? "≥" : "≤"}${v.toFixed(2)}`
+            : v.toFixed(2),
+      },
+      series: [{ type: "heatmap", data: surface.data, progressive: 2000,
+        itemStyle: { borderWidth: 0 } }],
+    };
+  }, [surface]);
+
   const regime = data?.regime;
   const neg = regime === "negative";
   const neutral = regime === "neutral";
 
   return (
-    <div className="min-h-screen grid-bg">
-      <div className="mx-auto max-w-[1180px] px-6 py-8">
-        {/* 头部 */}
-        <header className="mb-7">
-          <div className="mb-2 font-mono text-[11px] uppercase tracking-[0.25em] text-brand">
-            ■ Gamma Exposure
-          </div>
-          <h1 className="text-3xl font-bold tracking-tight">GEX 伽马敞口</h1>
-          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-dim">
-            做市商卖出期权后必须对冲，股价每动一点就要买卖正股。GEX 衡量的是
-            <b className="text-ink"> 股价每变动 1%，做市商需要买卖多少名义金额的正股</b>。
-            正 GEX 抑制波动，负 GEX 放大波动。
-          </p>
-        </header>
+    <>
+      <PageHead kicker="Gamma Exposure" title="GEX 伽马敞口">
+        做市商卖出期权后必须对冲，股价每动一点就要买卖正股。GEX 衡量的是
+        <b className="text-ink"> 股价每变动 1%，做市商需要买卖多少名义金额的正股</b>。
+        正 GEX 抑制波动，负 GEX 放大波动。
+      </PageHead>
 
         {/* 控制条 */}
         <div className="mb-5 flex flex-wrap items-center gap-2">
@@ -387,6 +608,86 @@ export default function Gex() {
               </div>
             </Card>
 
+            {/* Vanna / Charm */}
+            <Card
+              title="Vanna / Charm 曝险"
+              sub={
+                exp && exp.vanna_by_strike.length > 0
+                  ? `蓝=Vanna（${exp.meta.vanna_unit}）· 紫=Charm（${exp.meta.charm_unit}）`
+                  : exp
+                    ? "该口径下所有合约缺 IV 或持仓量为 0，算不出二阶希腊字母"
+                    : "取数失败"
+              }
+            >
+              {exp && exp.vanna_by_strike.length > 0 ? (
+                <>
+                  <div className="mb-3 flex flex-wrap gap-3">
+                    <MiniStat label="总 Vanna" value={`${exp.total_vanna_mm > 0 ? "+" : ""}${exp.total_vanna_mm.toFixed(0)} MM`} />
+                    <MiniStat label="总 Charm" value={`${exp.total_charm_mm > 0 ? "+" : ""}${exp.total_charm_mm.toFixed(0)} MM`} />
+                  </div>
+                  <ReactECharts option={expOption} style={{ height: 300 }} notMerge />
+                  <div className="mt-2 text-[11px] leading-relaxed text-dim">⚠️ {exp.meta.note}</div>
+                </>
+              ) : (
+                <div className="py-8 text-center text-sm text-dim">暂无数据</div>
+              )}
+            </Card>
+
+            {/* 二维曲面 */}
+            <Card
+              title="GEX 曲面（到期日 × 行权价）"
+              sub={surface ? `绿=正 gamma · 红=负 gamma · ${surface.scope} · 色阶按 p95 封顶（极值 ${surface.min.toFixed(2)}~${surface.max.toFixed(2)} B）` : "取数失败或无数据"}
+            >
+              {surface && surface.data.length > 0 ? (
+                <ReactECharts option={surfaceOption} style={{ height: 420 }} notMerge />
+              ) : (
+                <div className="py-8 text-center text-sm text-dim">暂无数据</div>
+              )}
+            </Card>
+
+            {/* 本地历史沉淀 */}
+            <Card
+              title="本地历史"
+              sub={
+                data
+                  ? `口径 ${data.meta.scope} · 已积累 ${hist.length} 条 · 落在你自己机器上（~/.vibe-flow/history.db）`
+                  : ""
+              }
+            >
+              <div className="mb-3 flex flex-wrap items-center gap-3">
+                <button
+                  onClick={snapshot}
+                  disabled={histBusy || !data}
+                  className="rounded-lg border border-brand/40 bg-brand/10 px-3.5 py-1.5 font-mono
+                             text-xs text-brand transition hover:bg-brand/20 disabled:opacity-40"
+                >
+                  {histBusy ? "采集中…" : "采集一次快照"}
+                </button>
+                {histMsg && <span className="text-xs text-dim">{histMsg}</span>}
+              </div>
+              {hist.length >= 2 ? (
+                <ReactECharts option={histOption} style={{ height: 260 }} notMerge />
+              ) : hist.length === 1 ? (
+                <div className="rounded-lg border border-line bg-card2 px-4 py-3 text-sm">
+                  <div className="text-dim">已记录 1 条，再采集一次就能画出趋势线。</div>
+                  <div className="mt-1.5 font-mono text-xs text-ink">
+                    {hist[0].captured_at} · GEX{" "}
+                    {(hist[0].total_gex / 1e9).toFixed(3)} B · 标的 $
+                    {hist[0].spot.toFixed(2)}
+                  </div>
+                </div>
+              ) : (
+                <div className="py-6 text-center text-sm text-dim">
+                  该口径下还没有历史 —— 点上面的按钮开始积累。
+                </div>
+              )}
+              <div className="mt-2 text-[11px] leading-relaxed text-dim">
+                ⚠️ 期权链的历史快照<b className="text-ink">补不回来</b>（CBOE 只给当下），
+                自部署第一天必然是零历史。这正是 Unusual Whales 真正的护城河 ——
+                他们跑了很多年。装上就开始攒，越用越值钱。
+              </div>
+            </Card>
+
             {/* 口径与免责 —— 这是我们的差异化，不藏着 */}
             <div className="mt-6 rounded-xl border border-line bg-card px-5 py-4 text-[13px] leading-relaxed text-dim">
               <div className="mb-1.5 font-mono text-[11px] uppercase tracking-wider text-brand">
@@ -405,7 +706,15 @@ export default function Gex() {
             </div>
           </>
         )}
-      </div>
+    </>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-line bg-card2 px-3.5 py-2">
+      <div className="font-mono text-[10px] uppercase tracking-wider text-dim">{label}</div>
+      <div className="mt-0.5 font-mono text-lg font-bold text-ink">{value}</div>
     </div>
   );
 }
@@ -431,14 +740,3 @@ function Stat({
   );
 }
 
-function Card({ title, sub, children }: { title: string; sub?: string; children: React.ReactNode }) {
-  return (
-    <div className="mb-5 rounded-2xl border border-line bg-card p-5">
-      <div className="mb-3">
-        <div className="text-base font-bold">{title}</div>
-        {sub && <div className="mt-0.5 text-xs text-dim">{sub}</div>}
-      </div>
-      {children}
-    </div>
-  );
-}
