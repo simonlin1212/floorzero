@@ -6,3 +6,6 @@ dist/
 .DS_Store
 .env
 *.db
+
+# 私有工作笔记：含指向作者其它项目的路径，不进公开仓库
+.private/
