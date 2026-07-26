@@ -28,6 +28,30 @@
 
 ---
 
+## Screenshots
+
+There is no demo site — that constraint is the whole point — so these are the only way to
+see it before running it. They illustrate the software; they are not a data service.
+
+**Market** — Treasury and CFTC, the one lane with no licence attached at all. Two
+inversion definitions side by side, because they cross zero months apart and "the curve
+inverted" means nothing without saying which one.
+
+![Market section](docs/screenshots/market.png)
+
+**Stock** — nine lanes on one ticker, sorted by how old each one is. The banner reports
+the span between newest and oldest; here, 126 days. Two lanes are empty and each says why
+it is empty rather than showing a blank.
+
+![Stock section](docs/screenshots/stock.png)
+
+**Scanner** — the IV Rank column reads "59 more sessions" all the way down, because the
+history it needs cannot be backfilled and had not accrued yet. That column is the whole
+argument of this project in one screenshot: the honest output of an unavailable metric is
+not a number.
+
+![Scanner section](docs/screenshots/scanner.png)
+
 ## What this is
 
 A local market-data workbench covering roughly what a paid options-flow service covers,
