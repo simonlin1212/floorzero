@@ -26,6 +26,7 @@ from modules import scanner as scanner_parse
 from modules import scanner_store
 from sources import darkpool as darkpool_src
 from modules import darkpool as darkpool_parse
+from modules import stock as stock_parse
 from sources import macro as macro_src
 from modules import shorts as shorts_parse
 
@@ -294,6 +295,23 @@ TOOLS: list[dict] = [
                 "ticker": {"type": "string"},
                 "week": {"type": "string", "description": "周起始日 YYYY-MM-DD，不传=最新"},
             },
+            "required": ["ticker"],
+        },
+    },
+    {
+        "name": "get_stock",
+        "description": (
+            "一只美股在九条数据线上的全部画像：行情/期权链、GEX、期权流、IV 排名、"
+            "内部人 Form 4、交割失败、国会申报、机构 13F、场外/暗池。"
+            "⚠️ **这九块的新鲜度相差两个数量级**（期权链是上一个交易时段，"
+            "13F 是三个月前的季末），每块都带自己的时点与滞后天数 —— "
+            "⛔ **不要把它们当成同一时刻的事**，本工具也**不做任何跨源综合评分**。"
+            "⚠️ 某块缺失时会给出**它自己的原因**（还没同步/没攒够/源被关着/"
+            "取数失败/定位不到），这些**都不等于**「这只票没有那类活动」。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"ticker": {"type": "string"}},
             "required": ["ticker"],
         },
     },
@@ -889,6 +907,49 @@ def _tool_get_darkpool(ticker: str, week: str | None = None) -> dict:
     }
 
 
+def _tool_get_stock(ticker: str) -> dict:
+    from app import get_stock as _get
+    out = _get(ticker)
+    ok = [l for l in out["lanes"] if l["ok"]]
+    miss = [l for l in out["lanes"] if not l["ok"]]
+    have = "；".join(
+        f"{l['title']}（{l['as_of'] or '时点未知'}"
+        + (f"，{l['lag_days']} 天前）" if l["lag_days"] is not None else "）")
+        for l in ok) or "无"
+    # ⚠️ 缺的那些必须**逐条给出自己的原因**，而且**不能笼统说成"没有"** ——
+    #    `disabled` / `fetch_failed` / `no_mapping` 说的是"我们拿不到"，
+    #    只有 `no_data` 才是"这只票确实没有那类记录"。上一版把两者混在一句
+    #    "X 条没有 …… 这些都不等于没有活动"里，自相矛盾且两头都不对。
+    truly_none = [l for l in miss if l["reason"] == "no_data"]
+    cant_get = [l for l in miss if l["reason"] != "no_data"]
+    gone = ""
+    if truly_none:
+        gone += ("**确实没有记录**的：" + "、".join(l["title"] for l in truly_none)
+                 + "（这几条是真的没有那类活动）。")
+    if cant_get:
+        gone += ("**我们拿不到**的：" + "；".join(
+            f"{l['title']}（{l['reason_label'] or l['reason']}）" for l in cant_get)
+            + " —— ⛔ 这几条**不等于**「这只票没有那类活动」。")
+    spread = out.get("lag_spread_days")
+    spread_txt = (
+        f"⚠️ 这些数据**横跨 {spread['oldest'] - spread['newest']} 天**"
+        f"（最新 {spread['newest']} 天前、最旧 {spread['oldest']} 天前）——"
+        f"**它们不是同一时刻的事**，串成一个叙事之前先看清各自时点。"
+        if spread else "")
+    return {
+        **out,
+        "summary": (
+            # ⚠️ 首句也不能说"X 条没有" —— 那里头大多是"我们拿不到"。
+            f"{out['ticker']}：{out['available']} 条线有数据、"
+            f"{out['unavailable']} 条空着（原因见下，多数不是「没有」）。{spread_txt}"
+            f"有数据的：{have}。"
+            f"{gone}"
+            f"⛔ 本工具**不做跨源综合评分**：把不同时点、不同口径的数据"
+            f"加权成一个「多空分数」，等于把三个月前的持仓和昨天的期权成交"
+            f"当成同一件事。以上为公开数据的呈现，不构成投资建议。"),
+    }
+
+
 def _n(v: float | None, spec: str = ",.0f") -> str:
     """空值安全的数字格式化。
 
@@ -1043,6 +1104,7 @@ _IMPL: dict[str, Callable[..., dict]] = {
     "get_oi_change": _tool_get_oi_change,
     "scan_market": _tool_scan_market,
     "get_darkpool": _tool_get_darkpool,
+    "get_stock": _tool_get_stock,
     "get_yield_curve": _tool_get_yield_curve,
     "get_cot": _tool_get_cot,
 }

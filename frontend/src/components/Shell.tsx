@@ -2,6 +2,8 @@ import { NavLink } from "react-router-dom";
 
 /** 分栏导航。加新分栏时只改这里。 */
 const NAV = [
+  // 个股页把九条线汇合 —— 放最前面，多数人从这里进
+  { to: "/stock", label: "个股", tag: "九条线汇合" },
   // CBOE = C 级：需授权，只能本地跑，绝不对外展示
   { to: "/flow", label: "期权流", tag: "CBOE·仅本地" },
   { to: "/gex", label: "GEX 伽马", tag: "CBOE·仅本地" },

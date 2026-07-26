@@ -40,6 +40,7 @@ from modules import scanner as scanner_parse
 from modules import scanner_store, scanner_sync
 from sources import darkpool as darkpool_src
 from modules import darkpool as darkpool_parse
+from modules import stock as stock_parse
 
 app = FastAPI(
     title="Vibe-Flow API",
@@ -1189,3 +1190,201 @@ def darkpool_status() -> dict:
             "所以它默认关闭，条款原文原样摆在这里，**判断权在你**。"
             "开启后 FINRA 只出分子；分母（同期总成交量）来自 CBOE 的本地行情沉淀。"),
     }
+
+
+# ═══════════════════════ 个股页（九条线汇合）═══════════════════════
+# ⚠️ 难点不是聚合，是**时间轴对不齐**：期权链是昨天收盘，13F 是三个月前的季末。
+#    每一块必须带自己的时点与滞后，⛔ 不做任何跨源综合评分。
+
+@app.get("/api/stock/{ticker}")
+def get_stock(ticker: str) -> dict:
+    """一只票在九条线上的全部画像。
+
+    ⚠️ **每条线各自兜异常，而且兜的是"任何异常"**：本页的立意就是
+    一条线挂掉不带倒整页。只捕获 `RuntimeError` 是不够的 ——
+    上游结构变了会抛 `KeyError` / `IndexError` / `AttributeError`，
+    那些同样只该让**那一块**变成"取数失败"，不该让整页 500。
+    """
+    tk = ticker.strip().upper()
+    L = stock_parse.lane
+    lanes: list = []
+
+    # ⚠️ 代码不合法要**在入口就判**。不然 CBOE 那三条报 bad_symbol、
+    #    其余各条却各自去查、各报各的 no_data —— 同一个非法代码
+    #    在同一页上得到互相矛盾的解释。
+    try:
+        tk = cboe.assert_us_ticker(tk)
+    except ValueError as e:
+        return {**stock_parse.assemble(
+            [L(k, reason="bad_symbol", detail=str(e)) for k in stock_parse.LANES]),
+            "ticker": tk}
+
+    def run(key: str, fn, *, as_of_on_error: Optional[str] = None) -> None:
+        """跑一条线；**任何**异常都只影响这一条。
+
+        `as_of_on_error`：失败时若**已经知道**这块数据的时点（比如期权链
+        已经拿到了、只是后续计算炸了），就把它带上 —— 丢掉已知信息
+        会让这块沉到时间轴末尾，看起来像"从来没有过数据"。
+        """
+        try:
+            lanes.append(fn())
+        except cboe.DataNotAvailable as e:
+            lanes.append(L(key, as_of=as_of_on_error, reason="no_data", detail=str(e)))
+        except ValueError as e:
+            # ⚠️ 代码合法性**入口已经验过**，所以走到这里的 ValueError
+            #    是下游脏数据，不是"代码不合法" —— 标成 bad_symbol 会让用户
+            #    去改一个本来没问题的代码。
+            lanes.append(L(key, as_of=as_of_on_error, reason="fetch_failed",
+                           detail=f"ValueError: {e}"))
+        except Exception as e:                       # noqa: BLE001 —— 刻意兜全部
+            lanes.append(L(key, as_of=as_of_on_error, reason="fetch_failed",
+                           detail=f"{type(e).__name__}: {e}"))
+
+    # ── 1. 行情 / GEX / 期权流（同一份快照，只拉一次）──
+    chain = None
+    try:
+        chain = cboe.cached_option_chain(tk)
+    except cboe.DataNotAvailable as e:
+        for k in ("quote", "gex", "flow"):
+            lanes.append(L(k, reason="no_data", detail=str(e)))
+    except Exception as e:                           # noqa: BLE001
+        for k in ("quote", "gex", "flow"):
+            lanes.append(L(k, reason="fetch_failed", detail=f"{type(e).__name__}: {e}"))
+
+    if chain is not None:
+        # ⚠️ 连读 `chain.session` 都要兜：快照结构漂移时这里抛 AttributeError，
+        #    它在 run() **外面**，会直接把整页打成 500。
+        try:
+            sess = chain.session
+        except Exception:                            # noqa: BLE001
+            sess = None
+        run("quote", lambda: L("quote", as_of=sess, data={
+            "spot": chain.spot, "timestamp": chain.timestamp,
+            "contracts": len(chain.contracts),
+            "expiries": chain.expiries()[:12]}), as_of_on_error=sess)
+        run("gex", lambda: L("gex", as_of=sess,
+                             data=greeks.to_dict(greeks.compute(chain, dte_max=30))),
+            as_of_on_error=sess)
+
+        def _flow():
+            scope = flow_parse.parse(chain, dte_max=30, traded_only=False)
+            traded = [r for r in scope if r.volume > 0]
+            f = flow_parse.summarize(chain, traded, all_rows=scope, top=8)
+            return L("flow", as_of=sess, data={
+                "counts": f["counts"], "ratios": f["ratios"],
+                "unusual_rows": f["unusual_rows"], "limits": f["limits"]})
+        run("flow", _flow, as_of_on_error=sess)
+
+    # ── 2. IV 排名（本地沉淀）──
+    def _scanner():
+        sess2 = scanner_store.latest_session()
+        if not sess2:
+            return L("scanner", reason="not_enough",
+                     detail="本地还没扫过任何标的 —— 去扫描器跑一轮。")
+        q = [x for x in scanner_store.quotes_at(sess2) if x.get("symbol") == tk]
+        if not q:
+            # ⚠️ 已知本地最新时段，失败时也把它带上 —— 这块不是"从来没有数据"，
+            #    而是"我们扫过别的票、没扫这只"。
+            return L("scanner", as_of=sess2, reason="not_synced",
+                     detail=f"{tk} 不在本地已扫过的标的里（最新时段 {sess2}）。")
+        h = scanner_store.history([tk], as_of=sess2).get(tk, {})
+        row = scanner_parse.build_row(q[0], h.get("iv", []), h.get("volume", []))
+        return L("scanner", as_of=q[0].get("session") or sess2,
+                 data=scanner_parse.to_dict(row))
+    # 已知本地最新时段时，失败也把它带上 —— 这块不是"从来没有过数据"
+    try:
+        _sess2 = scanner_store.latest_session()
+    except Exception:                                # noqa: BLE001
+        _sess2 = None
+    run("scanner", _scanner, as_of_on_error=_sess2)
+
+    # ── 3. 内部人 Form 4（本地缓存）──
+    def _insider():
+        st = insider_store.stats()
+        if not st.get("trades"):
+            return L("insider", reason="not_synced", detail="本地还没同步 Form 4。")
+        agg = insider_store.aggregate(ticker=tk, top=8)
+        if not (agg.get("counts") or {}).get("n"):
+            return L("insider", reason="no_data",
+                     detail=f"已同步的 Form 4 里没有 {tk} 的公开市场交易。")
+        # 用**这只票最近一笔**交易日做时点，不是全库最新日 ——
+        # 后者会把一只三个月没动静的票显示成"昨天的数据"。
+        recent = insider_store.query(ticker=tk, limit=1) or []
+        latest = (recent[0].get("tx_date") if recent else None) or None
+        return L("insider", as_of=latest, data=agg)
+    run("insider", _insider)
+
+    # ── 4. 交割失败 FTD（本地缓存）──
+    def _shorts():
+        st = shorts_store.stats()
+        if not st.get("rows"):
+            return L("shorts", reason="not_synced", detail="本地还没导入 FTD 数据。")
+        agg = shorts_store.aggregate(top=8, symbol=tk)
+        c = agg.get("counts") or {}
+        if not c.get("n"):
+            return L("shorts", reason="no_data", detail=f"已导入的 FTD 里没有 {tk}。")
+        return L("shorts", as_of=c.get("hi"), data=agg)
+    run("shorts", _shorts)
+
+    # ── 5. 国会议员申报（本地缓存）──
+    def _congress():
+        st = congress_store.stats()
+        if not st.get("trades"):
+            return L("congress", reason="not_synced", detail="本地还没同步国会申报。")
+        tr = congress_store.query_trades(ticker=tk, limit=12)
+        if not tr:
+            return L("congress", reason="no_data", detail=f"已同步的申报里没有 {tk}。")
+        return L("congress", as_of=tr[0].get("tx_date"),
+                 data={"trades": tr, "count": len(tr)})
+    run("congress", _congress)
+
+    # ── 6. 机构 13F（本地缓存；按 CUSIP，不是代码）──
+    def _institution():
+        st = institution_store.stats()
+        if not st.get("holdings"):
+            return L("institution", reason="not_synced", detail="本地还没导入 13F。")
+        # ⚠️ **本页刻意不做代码 → CUSIP 的映射。**
+        #    13F 只给 CUSIP，SEC 不提供映射表（那是商业数据）；
+        #    按发行人名称匹配实测命中率仅 42.8%，而拿股票代码（"NVDA"）
+        #    去匹配发行人名（"NVIDIA CORP"）几乎必然落空 ——
+        #    那样这一栏会对绝大多数票显示"没有机构持有"，
+        #    把「我们做不到映射」伪装成「没有机构持有」。
+        return L("institution", reason="no_mapping", detail=(
+            f"本地已导入 {st.get('holdings', 0):,} 条 13F 持仓"
+            f"（{st.get('cusips', 0):,} 个 CUSIP、{st.get('managers', 0):,} 家机构）。"
+            f"但 13F **只给 CUSIP**，SEC 不提供代码→CUSIP 映射，"
+            f"所以无法从 {tk} 这个代码可靠地定位到持仓 —— "
+            f"这是**我们做不到这个映射**，不是「没有机构持有它」。"
+            f"去「机构持仓」分栏按**发行人名称**检索。"))
+    run("institution", _institution)
+
+    # ── 7. 场外 / 暗池（默认关闭）──
+    def _darkpool():
+        raw = darkpool_src.weekly(tk)
+        parsed = darkpool_parse.parse(raw)
+        weeks = darkpool_parse.weeks_of(parsed)
+        if not weeks:
+            if parsed["unknown_types"]:
+                return L("darkpool", reason="fetch_failed", detail=(
+                    f"FINRA 返回了不认识的记录类型 {parsed['unknown_types']} —— "
+                    f"解析规则可能已过时，这是**解析不兼容**不是没有数据。"))
+            return L("darkpool", reason="no_data",
+                     detail=f"FINRA 没有 {tk} 的场外记录。")
+        out = _consolidated(tk, weeks[-1], parsed)
+        return L("darkpool", as_of=weeks[-1], data={
+            "week": out["week"], "ats": out["ats"], "otc": out["otc"],
+            "ats_over_otc": out["ats_over_otc"],
+            "share": out["share"], "share_note": out["share_note"]})
+    try:
+        lanes.append(_darkpool())
+    except darkpool_src.FinraDisabled as e:
+        lanes.append(L("darkpool", reason="disabled", detail=str(e)))
+    except darkpool_src.DataNotAvailable as e:
+        lanes.append(L("darkpool", reason="no_data", detail=str(e)))
+    except Exception as e:                           # noqa: BLE001
+        lanes.append(L("darkpool", reason="fetch_failed",
+                       detail=f"{type(e).__name__}: {e}"))
+
+    out = stock_parse.assemble(lanes)
+    out["ticker"] = tk
+    return out

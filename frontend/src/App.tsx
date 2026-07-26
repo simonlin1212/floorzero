@@ -13,6 +13,7 @@ import Gex from "./pages/Gex";
 import Flow from "./pages/Flow";
 import Scanner from "./pages/Scanner";
 import Darkpool from "./pages/Darkpool";
+import StockPage from "./pages/Stock";
 import Congress from "./pages/Congress";
 import Insiders from "./pages/Insiders";
 import Institutions from "./pages/Institutions";
@@ -24,6 +25,7 @@ export default function App() {
     <HashRouter>
       <Shell>
         <Routes>
+          <Route path="/stock" element={<StockPage />} />
           <Route path="/flow" element={<Flow />} />
           <Route path="/gex" element={<Gex />} />
           <Route path="/scanner" element={<Scanner />} />
