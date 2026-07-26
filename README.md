@@ -163,6 +163,37 @@ REST and MCP can never drift apart. Point any MCP client at `backend/mcp_server.
 Tool summaries carry the same caveats the UI does — an assistant asking for options flow
 is told, in the response, that direction cannot be inferred from this data.
 
+## Tests
+
+```bash
+cd backend
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+48 tests, none of which touch the network. What they cover is the arithmetic and the
+semantics — the invariants that adversarial review kept catching in the first place:
+
+- a value that cannot be computed never renders as zero, in each of the shapes that
+  failure took (missing greeks on one side only, absent quotes, a zero denominator,
+  a zero-median volume history, a spread whose tenor is missing)
+- the reason a value is absent survives to the caller, since `iv_rank` can be null for
+  three distinct causes and only one of them is "wait a few more days"
+- local history is keyed by trading session, so the same Friday close cannot become two
+  observations; IV history is bounded by the requested session, so a past scan cannot
+  borrow from the future
+- expired contracts are not net closings, and contracts missing from an incomplete fetch
+  are not positions gone to zero
+- aggregate rows and per-firm rows are never summed together, which would double
+- one lane failing does not take down the stock page
+
+The suite was itself checked by mutation: five invariants were deliberately broken —
+median reverted to the upper median, null delta back to zero, reconciliation tolerance
+back to a relative epsilon, vol/OI given a sentinel, future dates unclamped — and all
+five were caught.
+
+Tests use a throwaway `VF_DATA_DIR`; they will not write to the history you have accrued.
+
 ## Architecture
 
 ```

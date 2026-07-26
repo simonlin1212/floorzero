@@ -1,0 +1,8 @@
+# 开发依赖。运行本身只需要 requirements.txt 里那四个。
+#
+# 跑测试：
+#     pip install -r requirements-dev.txt
+#     python -m pytest
+#
+# 测试不打网络、也不碰 ~/.vibe-flow —— 每个落库的用例都走一次性目录。
+pytest>=8.0

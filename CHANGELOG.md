@@ -50,6 +50,17 @@ First complete version. Ten sections, seventeen MCP tools, ten public data sourc
   the present. Both are keyed by the data's own trading session, not wall-clock date.
 - Data lives in `~/.vibe-flow/`, outside the repository.
 
+### Tests
+
+48 tests, no network. They pin the invariants that review kept finding: unavailable
+never rendering as zero (in each shape it took), reason codes surviving to the caller,
+history keyed by trading session, IV history bounded by the requested session, expired
+contracts distinguished from closings, aggregate rows never summed with per-firm rows,
+and one failing lane not taking down the stock page.
+
+Verified by mutation — five invariants were deliberately broken and all five were caught.
+Tests use a throwaway data directory and never write to accrued history.
+
 ### Verified
 
 - Vanna and charm checked against finite-difference derivatives; a formula from a

@@ -75,6 +75,24 @@ These recur throughout and are worth internalising before editing:
    no-op through, and grep to confirm afterwards. A green build proves the file is valid,
    not that it changed.
 
+## Tests
+
+```bash
+cd backend && pip install -r requirements-dev.txt && python -m pytest
+```
+
+`backend/tests/` — 48 cases, no network. They exist to pin the seven rules above rather
+than to chase coverage, so when you add a rule, add the case that would catch its
+violation. Two conventions:
+
+- **Never touch `~/.vibe-flow`.** The `tmp_db` fixture redirects `VF_DATA_DIR` *and
+  reloads the modules* — `db.py` computes its path at import time, so setting the
+  variable alone leaves tests writing into the user's real history, silently and while
+  passing.
+- **Verify the tests, not just the code.** Break an invariant on purpose and confirm the
+  suite goes red. Five were checked this way; a test that passes against broken code is
+  worse than no test.
+
 ## Stack
 
 Python 3.9+ · FastAPI · React 19 · Vite · Tailwind · ECharts · SQLite.
