@@ -1,7 +1,7 @@
-"""Vibe-Flow 后端 API。
+"""FloorZero 后端 API。
 
 ⚠️ 合规：本服务**只应跑在用户自己的机器上**（localhost）。
-Vibe-Flow 分发的是代码，不是数据 —— 用户自部署运行 = personal use。
+FloorZero 分发的是代码，不是数据 —— 用户自部署运行 = personal use。
 ⛔ 绝不可把本服务部署成对公网提供期权数据的站点（= OPRA redistributor，$1,500/月）。
 默认只监听 127.0.0.1，就是这个原因。
 
@@ -43,7 +43,7 @@ from modules import darkpool as darkpool_parse
 from modules import stock as stock_parse
 
 app = FastAPI(
-    title="Vibe-Flow API",
+    title="FloorZero API",
     description="开源版 Unusual Whales · 自部署 · 数据留在你自己机器上",
     version="0.1.0",
 )
@@ -58,7 +58,7 @@ app.add_middleware(
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"ok": True, "service": "vibe-flow", "version": app.version}
+    return {"ok": True, "service": "floorzero", "version": app.version}
 
 
 @app.get("/api/gex/{ticker}")
@@ -715,7 +715,7 @@ def shorts_finra_status() -> dict:
     """
     return {
         "enabled": shorts_src.finra_enabled(),
-        "env_var": "VF_ENABLE_FINRA",
+        "env_var": "FZ_ENABLE_FINRA",
         "terms": shorts_src.FINRA_TERMS,
     }
 
@@ -1180,7 +1180,7 @@ def darkpool_status() -> dict:
     """这一栏当前是开是关，以及为什么。"""
     return {
         "enabled": darkpool_src.finra_enabled(),
-        "env_var": "VF_ENABLE_FINRA",
+        "env_var": "FZ_ENABLE_FINRA",
         "terms": darkpool_src.FINRA_TERMS,
         "notes": darkpool_parse.NOTES,
         "why_gated": (

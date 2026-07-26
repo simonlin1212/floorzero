@@ -214,21 +214,21 @@ def test_未配置联系方式时直接报错(monkeypatch):
     """内置占位值会让每个用户的上游流量都以作者身份发出，
     而且被限流时毫无线索。"""
     from sources import contact
-    monkeypatch.delenv("VF_CONTACT", raising=False)
+    monkeypatch.delenv("FZ_CONTACT", raising=False)
     with pytest.raises(contact.ContactNotConfigured):
         contact.user_agent()
 
 
 def test_联系方式必须像个邮箱(monkeypatch):
     from sources import contact
-    monkeypatch.setenv("VF_CONTACT", "just a name")
+    monkeypatch.setenv("FZ_CONTACT", "just a name")
     with pytest.raises(contact.ContactNotConfigured):
         contact.user_agent()
 
 
 def test_配好之后_ua_带上联系方式(monkeypatch):
     from sources import contact
-    monkeypatch.setenv("VF_CONTACT", "Someone one@example.com")
+    monkeypatch.setenv("FZ_CONTACT", "Someone one@example.com")
     assert "one@example.com" in contact.user_agent()
 
 

@@ -650,7 +650,7 @@ export default function Gex() {
               title="本地历史"
               sub={
                 data
-                  ? `口径 ${data.meta.scope} · 已积累 ${hist.length} 条 · 落在你自己机器上（~/.vibe-flow/history.db）`
+                  ? `口径 ${data.meta.scope} · 已积累 ${hist.length} 条 · 落在你自己机器上（~/.floorzero/history.db）`
                   : ""
               }
             >

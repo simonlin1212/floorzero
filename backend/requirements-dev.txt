@@ -4,5 +4,5 @@
 #     pip install -r requirements-dev.txt
 #     python -m pytest
 #
-# 测试不打网络、也不碰 ~/.vibe-flow —— 每个落库的用例都走一次性目录。
+# 测试不打网络、也不碰 ~/.floorzero —— 每个落库的用例都走一次性目录。
 pytest>=8.0

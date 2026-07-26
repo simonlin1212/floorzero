@@ -1,9 +1,9 @@
 <p align="center"><a href="README.md">English</a> | <b>简体中文</b></p>
 
-<h1 align="center">vibe-flow</h1>
+<h1 align="center">FloorZero</h1>
 
 <p align="center">
-  <b>自部署的市场数据分析台。十个分栏，十个免费公开源，全跑在你自己机器上。</b><br>
+  <b>自己的交易大厅。十个分栏，零托管数据。</b><br>
   期权流 · GEX · 扫描器 · 暗池 · 国会交易 · 内部人 · 13F · 做空数据 · 宏观 · MCP
 </p>
 
@@ -81,19 +81,19 @@ Cboe 的延时期权数据属于 OPRA。OPRA 的规则很直白 ——
 ## 快速开始
 
 ```bash
-git clone <本仓库> && cd vibe-flow
+git clone <本仓库> && cd floorzero
 
 # 后端
 cd backend
 pip install -r requirements.txt
-cp ../.env.example ../.env        # 然后填 VF_CONTACT，见下
-VF_CONTACT="你的名字 you@example.com" python -m uvicorn app:app --host 127.0.0.1 --port 8920
+cp ../.env.example ../.env        # 然后填 FZ_CONTACT，见下
+FZ_CONTACT="你的名字 you@example.com" python -m uvicorn app:app --host 127.0.0.1 --port 8920
 
 # 前端（另开一个终端）
 cd frontend && npm install && npm run dev
 ```
 
-`VF_CONTACT` **必填且没有默认值**。SEC 与国会披露站点要求 User-Agent 带上
+`FZ_CONTACT` **必填且没有默认值**。SEC 与国会披露站点要求 User-Agent 带上
 可识别调用方的联系方式。与其内置一个占位值 —— 那会让你在毫不知情的情况下被限流 ——
 程序选择在你没配之前**直接拒绝启动**。它只是让那些站点认得**你自己**，不会发往任何第三方。
 
@@ -133,7 +133,7 @@ cd frontend && npm install && npm run dev
 **任何收费产品或商业服务都不得包含这条线**。
 这与 EDGAR **不是**一回事 —— EDGAR 只限请求速率与 User-Agent，不限商用。
 
-**FINRA 默认关闭**（`VF_ENABLE_FINRA=1` 才启用）。其 Terms of Use 限
+**FINRA 默认关闭**（`FZ_ENABLE_FINRA=1` 才启用）。其 Terms of Use 限
 「**仅供你自己的非商业个人或专业用途**」，且限制 (d) 明文禁止
 「**用 FINRA 网站的数据建立数据库**」—— 而"下载→落 SQLite"正是这个动作。
 其中确有模糊之处（条款写的是 FINRA.**org**，而数据文件在 `cdn.finra.org`）。
@@ -190,7 +190,7 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-48 个用例，**一个都不打网络**。测的是算术与语义 ——
+49 个用例，**一个都不打网络**。测的是算术与语义 ——
 也就是当初被对抗式审计反复抓出来的那些不变量：
 
 - **算不出来的东西不能渲染成 0**，且覆盖它当初出现过的每一种形状
@@ -215,7 +215,7 @@ python -m pytest
 
 两轮合计做了**十次变异测试**（刻意改坏十处不变量），**十次全被抓住**。
 
-测试走一次性的 `VF_DATA_DIR`，而且 fixture 在放行前会**先断言解析后的库路径
+测试走一次性的 `FZ_DATA_DIR`，而且 fixture 在放行前会**先断言解析后的库路径
 确实落在临时目录里**。这道闸不是仪式：`db.py` 哪天不再认那个变量，
 测试就会一声不响地写进补不回来的历史。
 
@@ -231,7 +231,7 @@ docs/               模块设计.md（架构） · 开发日志.md（逐栏建�
 ```
 
 Python 3.9+ · FastAPI · React 19 · Vite · Tailwind · ECharts · SQLite。
-后端只有四个依赖。数据存在 `~/.vibe-flow/`、在仓库之外 ——
+后端只有四个依赖。数据存在 `~/.floorzero/`、在仓库之外 ——
 更新代码永远不会弄丢你攒下的历史。
 
 ## 更新日志

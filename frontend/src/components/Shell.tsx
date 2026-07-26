@@ -35,7 +35,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
       <nav className="sticky top-0 z-10 flex items-center gap-1 border-b border-line
                       bg-bg/90 px-4 py-2.5 backdrop-blur lg:hidden">
         <span className="mr-2 font-mono text-[11px] uppercase tracking-[0.2em] text-brand">
-          ■ Vibe-Flow
+          ■ FLOORZERO
         </span>
         {NAV.map((n) => (
           <NavLink
@@ -55,7 +55,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         <aside className="hidden w-[150px] shrink-0 lg:block">
           <div className="sticky top-8">
             <div className="mb-5 font-mono text-[11px] uppercase tracking-[0.2em] text-brand">
-              ■ Vibe-Flow
+              ■ FLOORZERO
             </div>
             <nav className="flex flex-col gap-1">
               {NAV.map((n) => (

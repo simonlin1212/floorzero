@@ -36,10 +36,10 @@ First complete version. Ten sections, seventeen MCP tools, ten public data sourc
 - **Code is distributed, data is not.** Backend binds to localhost; there is no demo
   site. Showing OPRA data externally would make the project a redistributor
   (US$1,500/month, no exemption for free or open-source use).
-- **`VF_CONTACT` is required with no default.** SEC and congressional sites want a
+- **`FZ_CONTACT` is required with no default.** SEC and congressional sites want a
   User-Agent identifying the caller; shipping a placeholder would attribute every
   user's traffic to the author and get people rate-limited without explanation.
-- **FINRA is off by default** (`VF_ENABLE_FINRA=1`), with its terms reproduced verbatim
+- **FINRA is off by default** (`FZ_ENABLE_FINRA=1`), with its terms reproduced verbatim
   in the UI. No section uses FINRA as its only source.
 - **Congressional data is tagged S− and excluded from any commercial use**, per
   5 U.S.C. §13107(c)(1)(B).
@@ -48,11 +48,11 @@ First complete version. Ten sections, seventeen MCP tools, ten public data sourc
   each carry their own reason code.
 - **Open interest and iv30 accrue locally** and cannot be backfilled — Cboe serves only
   the present. Both are keyed by the data's own trading session, not wall-clock date.
-- Data lives in `~/.vibe-flow/`, outside the repository.
+- Data lives in `~/.floorzero/`, outside the repository.
 
 ### Tests
 
-48 tests, no network. They pin the invariants that review kept finding: unavailable
+49 tests, no network. They pin the invariants that review kept finding: unavailable
 never rendering as zero (in each shape it took), reason codes surviving to the caller,
 history keyed by trading session, IV history bounded by the requested session, expired
 contracts distinguished from closings, aggregate rows never summed with per-firm rows,

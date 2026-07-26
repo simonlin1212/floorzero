@@ -850,7 +850,7 @@ def _tool_get_darkpool(ticker: str, week: str | None = None) -> dict:
         return {"enabled": False, "error": str(e),
                 "summary": (f"暗池/场外数据源**当前关闭**，取不到 {tk} 的数据。"
                             f"这是**配置状态**，不是「这只票没有场外成交」。"
-                            f"设置 VF_ENABLE_FINRA=1 才启用；关闭是刻意的，"
+                            f"设置 FZ_ENABLE_FINRA=1 才启用；关闭是刻意的，"
                             f"因为 FINRA 条款限非商业用途且禁止用其数据建库。")}
     parsed = darkpool_parse.parse(raw)
     weeks = darkpool_parse.weeks_of(parsed)

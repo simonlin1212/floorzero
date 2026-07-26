@@ -1,6 +1,6 @@
 """本地 SQLite 存储的公共底座。
 
-所有「装上就开始攒」的本地数据都落在同一个库里（`~/.vibe-flow/history.db`），
+所有「装上就开始攒」的本地数据都落在同一个库里（`~/.floorzero/history.db`），
 由各模块注册自己的表。
 
 ⚠️ **不放仓库内**：更新代码 / 重新 clone 不该弄丢用户攒的历史
@@ -14,7 +14,7 @@ import threading
 from contextlib import contextmanager
 from typing import Iterator
 
-DEFAULT_DIR = os.environ.get("VF_DATA_DIR") or os.path.expanduser("~/.vibe-flow")
+DEFAULT_DIR = os.environ.get("FZ_DATA_DIR") or os.path.expanduser("~/.floorzero")
 DB_PATH = os.path.join(DEFAULT_DIR, "history.db")
 
 _LOCK = threading.Lock()

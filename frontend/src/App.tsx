@@ -2,7 +2,7 @@ import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
 
 /*
  * ⚠️ 用 HashRouter 而不是 BrowserRouter，是**刻意的**：
- * Vibe-Flow 的模式是用户自己部署 —— 很多人就是拿 `python -m http.server`
+ * FloorZero 的模式是用户自己部署 —— 很多人就是拿 `python -m http.server`
  * 或裸 nginx 把 `dist/` 丢上去。BrowserRouter 需要服务端把所有路径
  * 重写到 index.html，没配的话直接打开或刷新 /insiders 就是 404。
  * 我们控制不了用户的服务器，所以选零配置、到处都能跑的哈希路由。

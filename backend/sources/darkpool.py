@@ -2,7 +2,7 @@
 
 ━━━━━━━━━━━━━━ ⚠️ 合规：B 级，**默认关闭** ━━━━━━━━━━━━━━
 
-与 `sources/shorts.py` 的 FINRA 部分同一套条款与同一个开关（`VF_ENABLE_FINRA`）。
+与 `sources/shorts.py` 的 FINRA 部分同一套条款与同一个开关（`FZ_ENABLE_FINRA`）。
 条款原文、模糊之处、以及"我们不替你解释条款"的立场，见 `shorts.FINRA_TERMS`。
 
 ⚠️ **项目铁律：任何分栏都不得把 FINRA 作为唯一数据源。**
@@ -74,7 +74,7 @@ def _post(body: dict) -> list[dict]:
     """
     if not finra_enabled():
         raise FinraDisabled(
-            "FINRA 数据源默认关闭。设置环境变量 VF_ENABLE_FINRA=1 才启用。\n"
+            "FINRA 数据源默认关闭。设置环境变量 FZ_ENABLE_FINRA=1 才启用。\n"
             "关闭是刻意的：FINRA Terms of Use 限「仅供非商业的个人或专业用途」，"
             "且明文禁止「用本站数据建立数据库」，而本项目正是下载→落 SQLite。\n"
             "条款原文与模糊之处见界面上的说明 —— 我们不替你解释条款，判断权在你。")

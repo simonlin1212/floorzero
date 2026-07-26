@@ -1,7 +1,7 @@
 """CBOE 官方延时期权数据源。
 
 ⚠️ 合规（C 级）：Cboe 的 Use of Content 政策要求使用前取得书面批准与 license。
-本模块**仅供用户在自己机器上做个人研究**；Vibe-Flow 只分发代码、不托管数据，
+本模块**仅供用户在自己机器上做个人研究**；FloorZero 只分发代码、不托管数据，
 所以运行它的用户是 personal use，我们不是 OPRA redistributor。
 ⛔ 绝不能把本模块的输出做成对外展示的在线服务（=$1,500/月 redistributor fee）。
 

@@ -1,9 +1,9 @@
 <p align="center"><b>English</b> | <a href="README_zh.md">简体中文</a></p>
 
-<h1 align="center">vibe-flow</h1>
+<h1 align="center">FloorZero</h1>
 
 <p align="center">
-  <b>Self-hosted market data analysis. Ten sections, ten free public sources, your machine.</b><br>
+  <b>Your own trading floor. Ten sections, zero hosted data.</b><br>
   Options flow · GEX · Screener · Dark pools · Congress · Insiders · 13F · Short data · Macro · MCP
 </p>
 
@@ -82,19 +82,19 @@ their own machine, and each user is doing personal research. So:
 ## Quick start
 
 ```bash
-git clone <this repo> && cd vibe-flow
+git clone <this repo> && cd floorzero
 
 # Backend
 cd backend
 pip install -r requirements.txt
-cp ../.env.example ../.env        # then set VF_CONTACT — see below
-VF_CONTACT="Your Name you@example.com" python -m uvicorn app:app --host 127.0.0.1 --port 8920
+cp ../.env.example ../.env        # then set FZ_CONTACT — see below
+FZ_CONTACT="Your Name you@example.com" python -m uvicorn app:app --host 127.0.0.1 --port 8920
 
 # Frontend (another terminal)
 cd frontend && npm install && npm run dev
 ```
 
-`VF_CONTACT` is **required and has no default**. SEC and the congressional disclosure
+`FZ_CONTACT` is **required and has no default**. SEC and the congressional disclosure
 sites ask for a User-Agent that identifies who is calling. Rather than ship a placeholder —
 which would get you rate-limited without you ever knowing why — the program refuses to
 start until you set it. It identifies *you* to those sites and is sent nowhere else.
@@ -135,7 +135,7 @@ to $10,000. Free, open-source, self-hosted personal research is fine. Any paid p
 commercial service must not include this lane. This is *not* the same as EDGAR, which
 constrains request rate and User-Agent but not commercial use.
 
-**FINRA is off by default** (`VF_ENABLE_FINRA=1` to enable). Their Terms of Use permit
+**FINRA is off by default** (`FZ_ENABLE_FINRA=1` to enable). Their Terms of Use permit
 "ONLY your own non-commercial personal or professional use" and restriction (d) forbids
 "develop or create a database of data using the FINRA Website" — which is precisely what
 downloading into SQLite does. There is genuine ambiguity (the terms name FINRA.**org**
@@ -195,7 +195,7 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-48 tests, none of which touch the network. What they cover is the arithmetic and the
+49 tests, none of which touch the network. What they cover is the arithmetic and the
 semantics — the invariants that adversarial review kept catching in the first place:
 
 - a value that cannot be computed never renders as zero, in each of the shapes that
@@ -222,7 +222,7 @@ text. All four now assert against the stored rows or against a constant the code
 
 Both rounds were then mutation-checked — ten invariants broken on purpose, ten caught.
 
-Tests use a throwaway `VF_DATA_DIR`, and the fixture asserts the resolved database path
+Tests use a throwaway `FZ_DATA_DIR`, and the fixture asserts the resolved database path
 really is inside it before letting anything run. That guard is not ceremony: if `db.py`
 ever stopped honouring the variable, the tests would silently write into history that
 cannot be rebuilt.
@@ -239,7 +239,7 @@ docs/               模块设计.md (architecture) · 开发日志.md (build log
 ```
 
 Python 3.9+ · FastAPI · React 19 · Vite · Tailwind · ECharts · SQLite.
-Four backend dependencies. Data lives in `~/.vibe-flow/`, outside the repo, so updating
+Four backend dependencies. Data lives in `~/.floorzero/`, outside the repo, so updating
 the code never costs you the history you have accrued.
 
 ## Changelog

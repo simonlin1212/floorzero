@@ -1,4 +1,4 @@
-# vibe-flow — notes for Claude Code
+# FloorZero — notes for Claude Code
 
 Read `docs/模块设计.md` (architecture) and `docs/开发日志.md` (build log) before
 changing anything structural. The build log records, per section, which sources were
@@ -29,11 +29,11 @@ So:
 
 - Congressional data must never appear in a paid product or commercial service.
   It is *not* equivalent to EDGAR, which limits request rate but not commercial use.
-- FINRA is **off by default** (`VF_ENABLE_FINRA`). Its terms are reproduced verbatim in
+- FINRA is **off by default** (`FZ_ENABLE_FINRA`). Its terms are reproduced verbatim in
   the UI; we do not interpret them for the user. **No section may use FINRA as its only
   source.**
 - Credentials are never embedded — and **contact details count as credentials**.
-  `VF_CONTACT` has no default and fails fast; hardcoding an address would attribute every
+  `FZ_CONTACT` has no default and fails fast; hardcoding an address would attribute every
   user's upstream traffic to whoever wrote it.
 
 ## Rules the code follows
@@ -81,11 +81,11 @@ These recur throughout and are worth internalising before editing:
 cd backend && pip install -r requirements-dev.txt && python -m pytest
 ```
 
-`backend/tests/` — 48 cases, no network. They exist to pin the seven rules above rather
+`backend/tests/` — 49 cases, no network. They exist to pin the seven rules above rather
 than to chase coverage, so when you add a rule, add the case that would catch its
 violation. Two conventions:
 
-- **Never touch `~/.vibe-flow`.** The `tmp_db` fixture redirects `VF_DATA_DIR` *and
+- **Never touch `~/.floorzero`.** The `tmp_db` fixture redirects `FZ_DATA_DIR` *and
   reloads the modules* — `db.py` computes its path at import time, so setting the
   variable alone leaves tests writing into the user's real history, silently and while
   passing.
@@ -104,4 +104,4 @@ violation. Two conventions:
 Python 3.9+ · FastAPI · React 19 · Vite · Tailwind · ECharts · SQLite.
 Four backend dependencies; keep it that way. Tools are defined once in `backend/tools.py`
 and inherited by the MCP server, so REST and MCP cannot diverge. Data lives in
-`~/.vibe-flow/`, outside the repo, so updating code never destroys accrued history.
+`~/.floorzero/`, outside the repo, so updating code never destroys accrued history.

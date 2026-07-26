@@ -1,8 +1,8 @@
 # Python 3.9+（zoneinfo 与 str.removesuffix 是硬下限；未用任何 3.10+ 特性）
 # 启动时由 backend/pyversion.py 强制检查，版本不够会直接给出人话提示。
-# ⚠️ 启动前必须设置 VF_CONTACT（见项目根 .env.example）——
+# ⚠️ 启动前必须设置 FZ_CONTACT（见项目根 .env.example）——
 #    SEC 与国会站点要求 UA 带联系方式，未配置会直接报错。
-# Vibe-Flow 后端依赖 —— 刻意保持极简（延续 global-stock-data「零重依赖」原则）
+# FloorZero 后端依赖 —— 刻意保持极简（延续 global-stock-data「零重依赖」原则）
 fastapi>=0.110
 uvicorn[standard]>=0.27
 requests>=2.31

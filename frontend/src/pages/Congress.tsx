@@ -816,7 +816,7 @@ export default function Congress() {
             <br />
             所以：公众查阅、个人研究、学术与新闻用途 ✅；
             <b className="text-ink">把本页数据用于任何收费产品或商业服务 ❌</b>。
-            Vibe-Flow 免费开源、由你自己部署运行，用于个人研究落在允许范围内。
+            FloorZero 免费开源、由你自己部署运行，用于个人研究落在允许范围内。
             <br />
             <span className="text-dim">
               注：这与 SEC EDGAR 不同 —— EDGAR 只限制请求速率、不限制商用，

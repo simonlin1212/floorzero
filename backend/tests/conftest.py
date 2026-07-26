@@ -6,7 +6,7 @@
    上游是否可达属于运行时的事，写进单元测试只会让测试随行情变红。
    （数据源层的实况以及"哪年哪月实测到什么"记在 `docs/开发日志.md`。）
 
-2. **不碰用户的真实数据库。** `modules/db.py` 默认落 `~/.vibe-flow/history.db`，
+2. **不碰用户的真实数据库。** `modules/db.py` 默认落 `~/.floorzero/history.db`，
    跑一次测试就把人家攒了几个月的持仓量历史写脏了 —— 而那份历史**补不回来**。
    所以每个用到落库的测试都走 `tmp_db`，指向一次性目录，
    并且**在放行之前先自证隔离生效**（见下）。
@@ -34,23 +34,23 @@ def tmp_db(tmp_path, monkeypatch):
     这个坑不显眼：测试会全部通过，只是顺手污染了别人的数据。
 
     ⚠️ 更要命的是**光重载也不够**。如果哪天 `db.py` 把变量名拼错、
-    或改回写死 `~/.vibe-flow`，这个 fixture 会一声不响地放行，
+    或改回写死 `~/.floorzero`，这个 fixture 会一声不响地放行，
     第一次 `record()` 就污染真实历史 —— 而那份历史补不回来。
     所以这里 **fail-closed**：放行前先断言 `DB_PATH` 确实落在临时目录里，
     不满足就当场终止，绝不"先跑了再说"。
     """
-    monkeypatch.setenv("VF_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("FZ_DATA_DIR", str(tmp_path))
     db = _reload_db_stack()
 
     # ⭐ 隔离自证。这一句是整个 fixture 存在的理由。
     resolved = Path(db.DB_PATH).resolve()
     assert resolved.is_relative_to(tmp_path.resolve()), (
         f"隔离失效：DB_PATH 落在 {resolved}，不在临时目录 {tmp_path} 里。\n"
-        f"在写任何东西之前中止 —— 用户 ~/.vibe-flow 里的历史补不回来。\n"
-        f"多半是 db.py 不再认 VF_DATA_DIR 了。")
+        f"在写任何东西之前中止 —— 用户 ~/.floorzero 里的历史补不回来。\n"
+        f"多半是 db.py 不再认 FZ_DATA_DIR 了。")
 
     yield tmp_path
-    monkeypatch.delenv("VF_DATA_DIR", raising=False)
+    monkeypatch.delenv("FZ_DATA_DIR", raising=False)
     _reload_db_stack()
 
 
@@ -76,7 +76,7 @@ def _reload_db_stack():
 def _contact(monkeypatch):
     """给个占位联系方式。
 
-    真实运行时 `VF_CONTACT` 未配会 fail-fast（那是刻意的）；
+    真实运行时 `FZ_CONTACT` 未配会 fail-fast（那是刻意的）；
     测试里不需要每个用例都去演一遍那件事，另有专门的用例测它。
     """
-    monkeypatch.setenv("VF_CONTACT", "Test Runner test@example.invalid")
+    monkeypatch.setenv("FZ_CONTACT", "Test Runner test@example.invalid")

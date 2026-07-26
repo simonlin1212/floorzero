@@ -38,7 +38,7 @@ import requests
 
 from sources.contact import user_agent
 
-#: ⚠️ UA 由**部署者自行配置**（VF_CONTACT），绝不硬编码任何人的邮箱 ——
+#: ⚠️ UA 由**部署者自行配置**（FZ_CONTACT），绝不硬编码任何人的邮箱 ——
 #: 否则开源后每个用户的流量都以作者身份发出，限流封禁都算在他头上。
 #: 详见 sources/contact.py。
 

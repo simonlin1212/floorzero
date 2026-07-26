@@ -25,7 +25,7 @@ FINRA Terms of Use（https://www.finra.org/terms-of-use，2023-11-09 版）原�
 - FINRA 另有一套 **API Terms of Service**（developer.finra.org），是**点击同意式许可**，
   需要每个用户自己注册并接受 —— 我们无法代为接受。
 
-→ 所以：**FINRA 这条默认关闭**，要用必须显式开启（`VF_ENABLE_FINRA=1`），
+→ 所以：**FINRA 这条默认关闭**，要用必须显式开启（`FZ_ENABLE_FINRA=1`），
   开启处会把上述原文摆出来。判断由用户自己做，我们只保证他看得到条款。
   本分栏的**主源是 SEC FTD**，不开 FINRA 也完全可用。
 """
@@ -66,14 +66,14 @@ FINRA_TERMS = {
                   "另有一套需注册接受的 API Terms of Service（developer.finra.org），"
                   "我们无法代为接受。"),
     "our_stance": ("本项目不替你解释这些条款：FINRA 这条**默认关闭**，"
-                   "要用请设 VF_ENABLE_FINRA=1 并自行判断你的用途是否合规。"
+                   "要用请设 FZ_ENABLE_FINRA=1 并自行判断你的用途是否合规。"
                    "本分栏主源是 SEC FTD（S 级、不限商用），不开 FINRA 也完全可用。"),
 }
 
 
 def finra_enabled() -> bool:
     """FINRA 源是否被用户显式开启。"""
-    return (os.environ.get("VF_ENABLE_FINRA") or "").strip().lower() in (
+    return (os.environ.get("FZ_ENABLE_FINRA") or "").strip().lower() in (
         "1", "true", "yes", "on")
 
 
@@ -146,7 +146,7 @@ def ftd_rows(tag: str) -> Iterator[dict]:
 def finra_short_volume(day: date, market: str = "CNMS") -> Iterator[dict]:
     """某日的 FINRA 场外空头成交量。
 
-    ⚠️ **默认不可用**：需用户设 `VF_ENABLE_FINRA=1` 显式开启（见模块文档的条款原文）。
+    ⚠️ **默认不可用**：需用户设 `FZ_ENABLE_FINRA=1` 显式开启（见模块文档的条款原文）。
 
     `market`：CNMS = 综合（NMS 证券，最常用）/ FNSQ / FNYX / FNRA 为各设施明细。
     """
@@ -154,7 +154,7 @@ def finra_short_volume(day: date, market: str = "CNMS") -> Iterator[dict]:
         raise FinraDisabled(
             "FINRA 数据源未开启。它的条款限「非商用个人/专业用途」，"
             "且禁止「建数据库」与批量抓取，而本工具会把数据落进本地 SQLite —— "
-            "是否合规请你自行判断。确认后设 VF_ENABLE_FINRA=1 开启。")
+            "是否合规请你自行判断。确认后设 FZ_ENABLE_FINRA=1 开启。")
 
     url = f"{FINRA_CDN}/{market}shvol{day:%Y%m%d}.txt"
     _limiter.wait()

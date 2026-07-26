@@ -16,7 +16,7 @@ MIN = (3, 9)
 
 if sys.version_info < MIN:
     raise SystemExit(
-        "Vibe-Flow 需要 Python %d.%d 或更高，当前是 %d.%d。\n"
+        "FloorZero 需要 Python %d.%d 或更高，当前是 %d.%d。\n"
         "原因：美东时区换算依赖标准库 zoneinfo（3.9 引入）。\n"
         "装个新版 Python 再跑，或用 pyenv/conda 建一个 3.9+ 的环境。"
         % (MIN[0], MIN[1], sys.version_info[0], sys.version_info[1]))

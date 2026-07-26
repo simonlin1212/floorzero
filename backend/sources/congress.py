@@ -20,7 +20,7 @@ User-Agent，明写 "Anyone can access and download this information for free"�
 没有商用限制。别把两条线的合规级混为一谈 ——
 本文件早前曾错标为「商用 ✅ 再分发 ✅」，是错的。
 
-→ 对 Vibe-Flow 的含义：本项目是**免费开源、用户自部署**，用户自己跑来做个人研究
+→ 对 FloorZero 的含义：本项目是**免费开源、用户自部署**，用户自己跑来做个人研究
   落在允许范围内；但**这条线不能成为任何收费产品的一部分**，
   也不适合当作"可以放心商用"的对外招牌。
 
@@ -63,7 +63,7 @@ import requests
 
 from sources.contact import user_agent
 
-# ⚠️ UA 由**部署者自行配置**（VF_CONTACT），绝不硬编码任何人的邮箱。
+# ⚠️ UA 由**部署者自行配置**（FZ_CONTACT），绝不硬编码任何人的邮箱。
 # 详见 sources/contact.py。
 
 HOUSE_BASE = "https://disclosures-clerk.house.gov/public_disc"
@@ -93,7 +93,7 @@ class DataNotAvailable(RuntimeError):
 
     与「被拒绝 / 缺依赖 / 网络故障」区分开：后者必须冒泡。
     这条边界在本项目已经踩错过两次（global-stock-data v2.0.1 的 403、
-    Vibe-Flow 九轮审计的 #6），不要再犯第三次。
+    FloorZero 九轮审计的 #6），不要再犯第三次。
     """
 
 

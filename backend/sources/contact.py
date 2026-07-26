@@ -12,7 +12,7 @@ SEC / 众议院 / 参议院都要求请求带可识别的 User-Agent（含联系
 那会让用户在毫不知情的情况下被上游限流，最难排查）。
 
 配置方式：
-    export VF_CONTACT="你的名字 your@email.com"
+    export FZ_CONTACT="你的名字 your@email.com"
 
 （global-stock-data v2.0.1 已经踩过一次「fail-fast 提示被自己的
  `except Exception` 吃掉」的坑，所以这里用独立的异常类型，
@@ -28,20 +28,20 @@ class ContactNotConfigured(RuntimeError):
 
 
 _HINT = (
-    "未配置 VF_CONTACT。SEC 与国会披露站点要求请求带可识别的 User-Agent"
+    "未配置 FZ_CONTACT。SEC 与国会披露站点要求请求带可识别的 User-Agent"
     "（含联系方式），否则会被限流或封禁。\n"
     "  请设置环境变量后重启：\n"
-    '    export VF_CONTACT="Your Name your@email.com"\n'
+    '    export FZ_CONTACT="Your Name your@email.com"\n'
     "  （这是给上游站点识别你自己的身份，不会发送到任何第三方。）"
 )
 
 
-def user_agent(product: str = "Vibe-Flow/0.1") -> str:
+def user_agent(product: str = "FloorZero/0.1") -> str:
     """构造合规 UA。未配置联系方式时**直接抛错**。"""
-    contact = (os.environ.get("VF_CONTACT") or "").strip()
+    contact = (os.environ.get("FZ_CONTACT") or "").strip()
     if not contact:
         raise ContactNotConfigured(_HINT)
     if "@" not in contact:
         raise ContactNotConfigured(
-            f"VF_CONTACT 需要包含可联系的邮箱，当前值：{contact!r}\n{_HINT}")
+            f"FZ_CONTACT 需要包含可联系的邮箱，当前值：{contact!r}\n{_HINT}")
     return f"{product} ({contact})"

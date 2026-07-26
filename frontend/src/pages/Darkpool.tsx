@@ -253,7 +253,7 @@ export default function Darkpool() {
 
       {/* status 拿不到时的降级关闭卡 —— 别让页面变空白 */}
       {gated && !status && (
-        <Card title="这一栏当前是关着的" sub="设置环境变量 VF_ENABLE_FINRA=1 才启用">
+        <Card title="这一栏当前是关着的" sub="设置环境变量 FZ_ENABLE_FINRA=1 才启用">
           <p className="text-xs leading-relaxed text-dim">{gated}</p>
         </Card>
       )}
@@ -277,7 +277,7 @@ export default function Darkpool() {
             <Emph>{status.why_gated}</Emph>
           </p>
           <pre className="mb-3 overflow-x-auto rounded-lg border border-line bg-card2/60 p-3 font-mono text-[11px] text-ink">
-            VF_ENABLE_FINRA=1 python -m uvicorn app:app --host 127.0.0.1 --port 8920
+            FZ_ENABLE_FINRA=1 python -m uvicorn app:app --host 127.0.0.1 --port 8920
           </pre>
           {showTerms && (
             <div className="space-y-2 rounded-lg border border-line bg-card2/40 p-3 text-[11px] leading-relaxed text-dim">

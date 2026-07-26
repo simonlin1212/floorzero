@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Vibe-Flow MCP server —— 让任何 AI agent 直接问期权数据。
+"""FloorZero MCP server —— 让任何 AI agent 直接问期权数据。
 
 ⭐ 这是相对 Unusual Whales 的核心差异：他们的 MCP 要先买订阅，这个开箱免费。
 
@@ -7,7 +7,7 @@
 工具定义从 `tools.py` 自动继承 —— 那里是唯一定义处。
 
 挂载：
-    claude mcp add vibe-flow -- /path/to/python /path/to/backend/mcp_server.py
+    claude mcp add floorzero -- /path/to/python /path/to/backend/mcp_server.py
 
 ⚠️ 合规：本 server 跑在用户自己机器上，数据不出本机。
 """
@@ -31,7 +31,7 @@ import tools  # noqa: E402
 # 那等于声称支持自己没实现的语义，新版客户端会按它不支持的能力去调用。
 SUPPORTED_PROTOCOLS = ("2024-11-05",)
 DEFAULT_PROTOCOL = SUPPORTED_PROTOCOLS[0]
-SERVER_INFO = {"name": "vibe-flow", "version": "0.1.0"}
+SERVER_INFO = {"name": "floorzero", "version": "0.1.0"}
 
 
 def _send(obj: dict) -> None:
