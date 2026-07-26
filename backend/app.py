@@ -38,6 +38,8 @@ from modules import flow as flow_parse
 from modules import flow_store
 from modules import scanner as scanner_parse
 from modules import scanner_store, scanner_sync
+from sources import darkpool as darkpool_src
+from modules import darkpool as darkpool_parse
 
 app = FastAPI(
     title="Vibe-Flow API",
@@ -1015,3 +1017,175 @@ def get_universe() -> dict:
         raise HTTPException(status_code=502, detail=str(e)) from e
     return {"count": len(roots), "symbols": roots[:200],
             "note": scanner_parse.NOTES["universe"]}
+
+
+# ═══════════════════════ 暗池 / 场外（B 级 FINRA，**默认关闭**）═══════════════════════
+# ⚠️ 铁律：任何分栏都不得把 FINRA 作为唯一数据源。
+#    这里 FINRA 出**分子**（ATS / 非 ATS 场外成交量），
+#    CBOE 的本地行情沉淀出**分母**（同期总成交量）—— 占比真的需要两边。
+#    关掉 FINRA 时本栏只剩条款说明，这是**刻意的**，不拿别的数凑一个像的答案。
+
+def _week_days(week: str) -> list[str]:
+    """周起始日 → 该周的五个自然工作日（FINRA 的周从周一算）。"""
+    from datetime import date, timedelta
+    try:
+        y, m, d = (int(x) for x in week.split("-"))
+    except ValueError:
+        return []
+    start = date(y, m, d)
+    return [(start + timedelta(days=i)).isoformat() for i in range(5)]
+
+
+def _trading_days(days: list[str]) -> list[str]:
+    """这几天里**哪些是真的开市日**。
+
+    ⚠️ 不能拿"周一到周五"当交易日历：美股一年十来个假日，
+    把休市日当成"本地缺数据"，含假日的那些周就**永远**算不出占比。
+    我们没有假日表，但有个更硬的判据 —— **本地行情沉淀里有没有那一天**：
+    只要**任何一只**标的在那天有快照，市场就是开着的。
+    这是用数据反推日历，不需要额外依赖、也不会随年份过期。
+
+    代价：本地那周一只票都没扫过时，检测出 0 个交易日 → 占比算不出。
+    那是正确结果（确实没有分母），不是误判。
+    """
+    if not days:
+        return []
+    from modules import db
+    q = ",".join("?" * len(days))
+    with db.connect() as conn:
+        rows = conn.execute(
+            f"SELECT DISTINCT session FROM quote_snapshot "
+            f"WHERE session IN ({q})", tuple(days)).fetchall()
+    have = {r["session"] for r in rows}
+    return [d for d in days if d in have]
+
+
+def _calendar_note(days: list[str], observed: list[str]) -> Optional[str]:
+    """本地观测不到整周时的说明。
+
+    ⚠️ **两级不确定性，别把第二级当成没有：**
+    ① 本地有那天的快照 → 那天肯定开市；
+    ② 本地**没有**那天的快照 → **分不清**是"那天休市"还是"我们没扫"。
+    没有交易日历就没法区分，所以只要五个工作日没凑齐，就不给占比 ——
+    含假日的那些周也一样不给。这是宁可不答，不答错。
+    """
+    if len(observed) >= len(days):
+        return None
+    miss = [d for d in days if d not in observed]
+    return (f"本地那周只观测到 {len(observed)}/{len(days)} 个工作日"
+            f"（缺 {'、'.join(miss)}）。**没有交易日历**，"
+            f"分不清这几天是休市还是我们没扫过 —— 所以不给占比。"
+            f"（含美股假日的那些周会一直这样，这是刻意的取舍。）")
+
+
+@app.get("/api/darkpool/{ticker}")
+def get_darkpool(
+    ticker: str,
+    week: Optional[str] = Query(None, description="周起始日 YYYY-MM-DD，不传=最新"),
+) -> dict:
+    """单只标的的场外成交（ATS 与非 ATS **分开**）。"""
+    tk = ticker.strip().upper()
+    try:
+        raw = darkpool_src.weekly(tk)
+    except darkpool_src.FinraDisabled as e:
+        # ⚠️ 这是**配置状态**，不是「没有数据」—— 用 409 而不是 404
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except darkpool_src.DataNotAvailable as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+
+    parsed = darkpool_parse.parse(raw)
+    weeks = darkpool_parse.weeks_of(parsed)
+    if not weeks:
+        if parsed["unknown_types"]:
+            # ⚠️ 认得的类型一行都没有、却出现了未知类型 = **解析已不兼容**，
+            #    不是"这只票没有场外成交"。502 让它冒泡，别报成 404。
+            raise HTTPException(
+                status_code=502,
+                detail=(f"FINRA 返回了本程序不认识的记录类型 "
+                        f"{parsed['unknown_types']} —— 解析规则可能已过时。"
+                        f"这是**解析不兼容**，不是「{tk} 没有场外成交」。"))
+        raise HTTPException(status_code=404, detail=f"{tk} 无场外成交记录")
+    wk = week or weeks[-1]
+    if wk not in weeks:
+        raise HTTPException(
+            status_code=404,
+            detail=f"没有 {wk} 这一周（可选：{'、'.join(weeks[-8:])}）")
+
+    # 分母：那一周本地已沉淀的 CBOE 日成交量之和。
+    # ⚠️ 逐日精确取，**不插值也不外推** —— 少哪天就少哪天，列出来给用户看。
+    #    分母偏小会让占比偏高，这种偏差必须让人知道方向。
+    out = _consolidated(tk, wk, parsed)
+    out["ticker"] = tk
+    out["weeks"] = weeks[-52:]
+    out["series"] = darkpool_parse.series(parsed)[-52:]
+    out["unknown_types"] = parsed["unknown_types"]
+    out["null_shares"] = parsed["null_shares"]
+    out["truncated"] = parsed["truncated"]
+    out["finra"] = {"enabled": True, "terms": darkpool_src.FINRA_TERMS}
+    return out
+
+
+def _sessions_for(symbol: str, days: list[str]) -> list[tuple]:
+    """本地沉淀里这几天各自的成交量（没有的就没有，**不插值不外推**）。
+
+    表主键是 (symbol, session)，所以同一天不可能有两行、分母不会被重复累加。
+    """
+    if not days:
+        return []
+    from modules import db
+    q = ",".join("?" * len(days))
+    with db.connect() as conn:
+        rows = conn.execute(
+            f"SELECT session, volume FROM quote_snapshot "
+            f"WHERE symbol = ? AND session IN ({q})", (symbol, *days)).fetchall()
+    return [(r["session"], r["volume"]) for r in rows]
+
+
+def _consolidated(tk: str, wk: str, parsed: dict) -> dict:
+    """算出该周汇总（含分母）。**REST 与 MCP 共用这一个函数**。
+
+    ⚠️ 抽出来是因为上一版 MCP 根本没读本地分母 —— 同一只票同一周，
+    网页端能给出占比而工具端永远是 null，正是"同一份数据两个视图口径不一致"。
+    """
+    weekdays = _week_days(wk)
+    observed = _trading_days(weekdays)          # 本地确认开市的日子
+    cal_note = _calendar_note(weekdays, observed)
+    covered, total = [], 0.0
+    for d, v in _sessions_for(tk, observed):
+        if v is not None:
+            covered.append(d)
+            total += v
+    missing = [d for d in observed if d not in covered]
+    # ⚠️ 整周五天都观测到、且这只票五天都有量，才给占比。
+    #    少一天就系统性偏高，而偏多少看不出来。
+    full = cal_note is None and not missing
+    out = darkpool_parse.week_summary(
+        parsed, wk,
+        consolidated_shares=total if full else None,
+        covered_days=covered,
+        missing_days=missing if not cal_note else weekdays)
+    out["weekdays"] = weekdays
+    out["locally_observed_days"] = observed
+    out["calendar_note"] = cal_note
+    if cal_note:
+        out["share_note"] = cal_note
+    return out
+
+
+@app.get("/api/darkpool-status")
+def darkpool_status() -> dict:
+    """这一栏当前是开是关，以及为什么。"""
+    return {
+        "enabled": darkpool_src.finra_enabled(),
+        "env_var": "VF_ENABLE_FINRA",
+        "terms": darkpool_src.FINRA_TERMS,
+        "notes": darkpool_parse.NOTES,
+        "why_gated": (
+            "本栏的核心数据（ATS 与非 ATS 场外成交量）**只有 FINRA 一家发布**，"
+            "没有第二个公开来源。而 FINRA 的条款限「非商业的个人或专业用途」、"
+            "并明文禁止「用本站数据建立数据库」—— 本项目正是下载→落 SQLite。"
+            "所以它默认关闭，条款原文原样摆在这里，**判断权在你**。"
+            "开启后 FINRA 只出分子；分母（同期总成交量）来自 CBOE 的本地行情沉淀。"),
+    }

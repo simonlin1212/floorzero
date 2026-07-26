@@ -24,6 +24,8 @@ from modules import flow as flow_parse
 from modules import flow_store
 from modules import scanner as scanner_parse
 from modules import scanner_store
+from sources import darkpool as darkpool_src
+from modules import darkpool as darkpool_parse
 from sources import macro as macro_src
 from modules import shorts as shorts_parse
 
@@ -275,6 +277,24 @@ TOOLS: list[dict] = [
                          "description": "iv_rank/iv_percentile/iv30/volume/volume_x/change_pct"},
                 "top": {"type": "integer", "description": "返回几只，默认 20"},
             },
+        },
+    },
+    {
+        "name": "get_darkpool",
+        "description": (
+            "查询某只美股的场外成交（FINRA 周度）。"
+            "⚠️ **ATS（真暗池）与非 ATS 场外（批发商内部化）是两类不同的成交，"
+            "本工具分开返回，绝不相加叫「暗池成交量」** —— 实测非 ATS 常比 ATS 大一倍以上。"
+            "⚠️ 数据**滞后约四周**，非 ATS 场外**不披露机构名**。"
+            "⚠️ 该数据源默认关闭（FINRA 条款），未开启时会明确说明。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string"},
+                "week": {"type": "string", "description": "周起始日 YYYY-MM-DD，不传=最新"},
+            },
+            "required": ["ticker"],
         },
     },
     {
@@ -803,6 +823,72 @@ def _tool_scan_market(min_iv_rank: float | None = None,
     }
 
 
+def _tool_get_darkpool(ticker: str, week: str | None = None) -> dict:
+    tk = (ticker or "").strip().upper()
+    try:
+        raw = darkpool_src.weekly(tk)
+    except darkpool_src.FinraDisabled as e:
+        # ⚠️ 这是**配置状态**，不是「这只票没有场外成交」
+        return {"enabled": False, "error": str(e),
+                "summary": (f"暗池/场外数据源**当前关闭**，取不到 {tk} 的数据。"
+                            f"这是**配置状态**，不是「这只票没有场外成交」。"
+                            f"设置 VF_ENABLE_FINRA=1 才启用；关闭是刻意的，"
+                            f"因为 FINRA 条款限非商业用途且禁止用其数据建库。")}
+    parsed = darkpool_parse.parse(raw)
+    weeks = darkpool_parse.weeks_of(parsed)
+    if not weeks:
+        # ⚠️ 与 REST 同语义：认得的类型一行没有、却有未知类型 = **解析不兼容**，
+        #    不能说成"这只票没有场外成交"。
+        if parsed["unknown_types"]:
+            return {"error": "解析不兼容", "unknown_types": parsed["unknown_types"],
+                    "summary": (f"FINRA 返回了本程序不认识的记录类型 "
+                                f"{parsed['unknown_types']} —— 解析规则可能已过时。"
+                                f"这是**解析不兼容**，"
+                                f"**不是**「{tk} 没有场外成交」。")}
+        return {"rows": [], "summary": f"{tk} 无场外成交记录。"}
+    wk = week or weeks[-1]
+    if wk not in weeks:
+        return {"weeks": weeks[-8:],
+                "summary": f"没有 {wk} 这一周。可选：{'、'.join(weeks[-8:])}。"}
+    # ⚠️ **与 REST 走同一个函数**（含本地分母）—— 上一版 MCP 不读分母，
+    #    同一只票同一周网页端能给占比、工具端永远 null，两个视图口径不一致。
+    from app import _consolidated
+    out = _consolidated(tk, wk, parsed)
+    a, o = out["ats"], out["otc"]
+    # ⚠️ `shares` 可能为空（上游字段缺失）—— 无条件 `:,.0f` 会抛 TypeError，
+    #    整个工具结果丢失，而 REST/UI 那边能正常显示"—"。
+    def _v(x: dict) -> str:
+        sh = "—" if x["shares"] is None else f"{x['shares']:,.0f} 股"
+        avg = ("" if x["avg_trade_size"] is None
+               else f"（均 {x['avg_trade_size']:,.0f} 股/笔）")
+        return f"{x['mpid'] or '（不披露）'} {(x['name'] or '')[:24]} {sh}{avg}"
+    top = "；".join(_v(v) for v in out["venues"]["ats"][:3]) or "无"
+    return {
+        **out, "ticker": tk, "weeks": weeks[-12:],
+        "summary": (
+            f"{tk} {wk} 起那周："
+            f"**ATS（真暗池）{a['shares']:,.0f} 股**（{a['firms']} 家、"
+            f"{a['trades']:,.0f} 笔）；"
+            f"**非 ATS 场外（批发商内部化）{o['shares']:,.0f} 股**"
+            f"（{o['records']} 条记录，其中能点名 {o['firms']} 家）。"
+            + (f"⚠️ 有 {a['null_share_records'] + o['null_share_records']} 条记录"
+               f"成交量为空、已排除（未当成 0），合计因此偏小。"
+               if (a["null_share_records"] + o["null_share_records"]) else "")
+            + "⛔ **这两个数不能相加叫「暗池成交量」** —— 内部化不是暗池，"
+            + f"相加会把数字虚高一倍以上。ATS 前几家：{top}。"
+            + f"⚠️ 数据**滞后约四周**（最新一周 {weeks[-1]}），是事后统计不是实时监控。"
+            + (f"场外占比：ATS {out['share']['ats_pct']:.2f}%、"
+               f"非 ATS {out['share']['otc_pct']:.2f}%"
+               f"（分母为本地沉淀的该周日成交量之和）。"
+               if out.get("share") else
+               f"⚠️ **场外占比算不出**：{out['share_note']}")
+            + (f"⚠️ 本次取满了 {darkpool_src.MAX_LIMIT} 行上限、周序列可能不全，"
+               f"且该接口不支持排序，截掉了哪几周无从得知。"
+               if parsed.get("truncated") else "")
+            + "以上为公开数据的呈现，不构成投资建议。"),
+    }
+
+
 def _n(v: float | None, spec: str = ",.0f") -> str:
     """空值安全的数字格式化。
 
@@ -956,6 +1042,7 @@ _IMPL: dict[str, Callable[..., dict]] = {
     "get_option_flow": _tool_get_option_flow,
     "get_oi_change": _tool_get_oi_change,
     "scan_market": _tool_scan_market,
+    "get_darkpool": _tool_get_darkpool,
     "get_yield_curve": _tool_get_yield_curve,
     "get_cot": _tool_get_cot,
 }

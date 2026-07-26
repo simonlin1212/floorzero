@@ -12,6 +12,7 @@ import Shell from "./components/Shell";
 import Gex from "./pages/Gex";
 import Flow from "./pages/Flow";
 import Scanner from "./pages/Scanner";
+import Darkpool from "./pages/Darkpool";
 import Congress from "./pages/Congress";
 import Insiders from "./pages/Insiders";
 import Institutions from "./pages/Institutions";
@@ -26,6 +27,7 @@ export default function App() {
           <Route path="/flow" element={<Flow />} />
           <Route path="/gex" element={<Gex />} />
           <Route path="/scanner" element={<Scanner />} />
+          <Route path="/darkpool" element={<Darkpool />} />
           <Route path="/congress" element={<Congress />} />
           <Route path="/insiders" element={<Insiders />} />
           <Route path="/institutions" element={<Institutions />} />
