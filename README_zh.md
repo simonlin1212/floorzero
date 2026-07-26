@@ -1,0 +1,197 @@
+<p align="center"><a href="README.md">English</a> | <b>简体中文</b></p>
+
+<h1 align="center">vibe-flow</h1>
+
+<p align="center">
+  <b>自部署的市场数据分析台。十个分栏，十个免费公开源，全跑在你自己机器上。</b><br>
+  期权流 · GEX · 扫描器 · 暗池 · 国会交易 · 内部人 · 13F · 做空数据 · 宏观 · MCP
+</p>
+
+<p align="center">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-blue">
+  <img alt="Python" src="https://img.shields.io/badge/python-3.9%2B-3776AB">
+  <img alt="React" src="https://img.shields.io/badge/react-19-61DAFB">
+  <img alt="Sections" src="https://img.shields.io/badge/分栏-10-ff5a1f">
+  <img alt="MCP tools" src="https://img.shields.io/badge/MCP%20工具-17-ff5a1f">
+</p>
+
+<p align="center">
+  <a href="#这是什么">这是什么</a> ·
+  <a href="#为什么必须你自己跑">为什么必须你自己跑</a> ·
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#十个分栏">十个分栏</a> ·
+  <a href="#数据源与它们的条款">数据源与条款</a> ·
+  <a href="#它刻意不做的事">它刻意不做的事</a> ·
+  <a href="#mcp">MCP</a> ·
+  <a href="CHANGELOG.md">更新日志</a>
+</p>
+
+---
+
+## 这是什么
+
+一个本地跑的市场数据工作台，覆盖范围大致相当于付费期权流服务，
+但完全建立在免费公开源上。你 clone、你运行，数据落在你自己的硬盘。
+
+它**不是**数据服务、不是 SaaS、不是在线看板。没有 demo 站，以后也不会有 ——
+下面会说清为什么这是设计约束而不是偷懒。
+
+面向的是想自己做分析、自己造工具、或者把数据喂给大模型的人。
+它不是"打开就看盘"的 App —— 那是券商的活，免费而且更好。
+
+## 为什么必须你自己跑
+
+塑造整个项目的那一个决定：**我们只分发代码，绝不托管数据。**
+
+Cboe 的延时期权数据属于 OPRA。OPRA 的规则很直白 ——
+*只要你在 app、工具或网站里对外展示 OPRA 数据，你就是 redistributor* ——
+那是 **每月 $1,500**，且**免费、开源、非商业一律不豁免**。
+
+做一个在线看板，这笔钱就得交。分发代码让每个用户自己跑，
+每个用户就都是在做个人研究。所以：
+
+- 后端默认只监听 `127.0.0.1`。
+- 永远不做 demo 站。推广只能靠截图和 README。
+- 每个源的合规级直接标在侧栏上，不藏在脚注里。
+
+## 快速开始
+
+```bash
+git clone <本仓库> && cd vibe-flow
+
+# 后端
+cd backend
+pip install -r requirements.txt
+cp ../.env.example ../.env        # 然后填 VF_CONTACT，见下
+VF_CONTACT="你的名字 you@example.com" python -m uvicorn app:app --host 127.0.0.1 --port 8920
+
+# 前端（另开一个终端）
+cd frontend && npm install && npm run dev
+```
+
+`VF_CONTACT` **必填且没有默认值**。SEC 与国会披露站点要求 User-Agent 带上
+可识别调用方的联系方式。与其内置一个占位值 —— 那会让你在毫不知情的情况下被限流 ——
+程序选择在你没配之前**直接拒绝启动**。它只是让那些站点认得**你自己**，不会发往任何第三方。
+
+需要 Python 3.9 或更新（`zoneinfo`）；启动闸会检查并给出人话提示。
+
+## 十个分栏
+
+| 分栏 | 内容 | 源 |
+|---|---|---|
+| **个股** | 一只票在其余九条线上的画像，**每块标注自己的时点** | 全部 |
+| **期权流** | vol/OI 异动、三口径认沽认购比、绝对 delta 敞口、本地持仓量沉淀 | Cboe |
+| **GEX 伽马** | 伽马敞口、flip、call/put wall、vanna 与 charm、到期 × 行权价曲面 | Cboe |
+| **扫描器** | 全市场按 IV Rank、量比、价格筛选 | Cboe |
+| **暗池** | ATS 场所与非 ATS 内部化，**始终分开** | FINRA |
+| **国会交易** | 众议院与参议院 PTR 申报、披露延迟 | 两院 |
+| **内部人** | Form 4，公开市场交易与薪酬类分开 | SEC EDGAR |
+| **机构持仓** | 13F 持仓与季度环比 | SEC EDGAR |
+| **做空数据** | SEC 交割失败；FINRA 场外空头量可选 | SEC / FINRA |
+| **宏观** | 美债收益率曲线（两条倒挂口径）、CFTC 持仓 | 财政部 / CFTC |
+
+## 数据源与它们的条款
+
+每个源都带一个合规级，直接显示在对应分栏旁边：
+
+| 级 | 源 | 商用 | 再分发 |
+|---|---|---|---|
+| **S** | SEC EDGAR · 财政部 · CFTC | ✅ | ✅ |
+| **S−** | 国会两院财产申报 | ❌ **法律明文禁止** | ✅（公开记录）|
+| **B** | FINRA（Reg SHO / ATS）| ❌ 仅限非商业 | ❌ |
+| **C** | Cboe | ❌ 需授权 | ❌ |
+
+其中两条值得单独一段。
+
+**国会申报虽是公开记录，但 5 U.S.C. §13107(c)(1)(B) 明文规定
+「为任何商业目的获取或使用这些报告均属违法」**（新闻媒体面向公众传播除外），
+罚款上限 $10,000。免费、开源、自部署做个人研究没问题；
+**任何收费产品或商业服务都不得包含这条线**。
+这与 EDGAR **不是**一回事 —— EDGAR 只限请求速率与 User-Agent，不限商用。
+
+**FINRA 默认关闭**（`VF_ENABLE_FINRA=1` 才启用）。其 Terms of Use 限
+「**仅供你自己的非商业个人或专业用途**」，且限制 (d) 明文禁止
+「**用 FINRA 网站的数据建立数据库**」—— 而"下载→落 SQLite"正是这个动作。
+其中确有模糊之处（条款写的是 FINRA.**org**，而数据文件在 `cdn.finra.org`）。
+**我们不替你解释这些条款**：原文原样摆在界面上，开关在你手里。
+任何分栏都不以 FINRA 作为唯一数据源。
+
+## 它刻意不做的事
+
+这几条是刻意的，而且是承重的。
+
+**不给期权流任何方向标签。** 判断一笔成交是买方还是卖方发起，
+必须知道它打在 ask 还是 bid，那需要逐笔成交带，而那需要 OPRA。
+免费接口给的是链的**快照**：当日累计成交量、持仓量、报价、希腊字母。
+所以 sweep 检测、大单分级、主动买卖方向、开仓平仓判定**全都做不了** ——
+这一栏把这句话放在最前面，而不是猜一个。
+
+**算不出来的地方不给数字。** IV Rank 需要一年历史，而 Cboe 只给当下 ——
+所以攒够 60 个交易日之前，这个字段是空的、并告诉你还差几天，
+**绝不**拿 20 天的样本硬算一个：那个数看着一样专业，衡量的却是另一回事。
+这条贯穿全项目：缺失的希腊字母、没有的报价、没扫到的交易日、到期消失的合约，
+一律显示为"算不出 + 原因"，而不是 0。
+
+**不做跨源综合评分。** 个股页上九条线的新鲜度相差两个数量级 ——
+实测 NVDA：期权链 2 天前，最近一笔 Form 4 是 128 天前。
+压成一个"多空分数"，等于把三个月前的持仓和昨天的期权成交当成同一件事。
+
+**其实是一个结论都不给。** 输出的是数据和算术。
+没有买卖标签、没有目标位、没有预测。
+
+## 有些历史只能自己攒
+
+有两份数据补不回来，因为 Cboe 只给当下：
+
+- **逐合约持仓量** —— 它的日间变化是"有人在建仓"最干净的证据，
+  而且**不需要猜方向**（不像 tape 那套）。
+- **逐标的 iv30** —— 没有它就没有 IV Rank。
+
+两者从你装上那天开始积累，跑得越久越值钱。
+EDGAR 与 FINRA 那几条线自带历史，随时可以回补。
+
+## MCP
+
+十七个工具，**只在 `backend/tools.py` 定义一次**，MCP server 自动继承 ——
+所以 REST 与 MCP 不可能各说各话。任意 MCP 客户端指向 `backend/mcp_server.py` 即可。
+
+工具的返回摘要带着与界面**同样的**告诫 ——
+助手来问期权流，响应里就会告诉它：这份数据推断不出方向。
+
+## 架构
+
+```
+backend/sources/    cboe · edgar · edgar13f · congress · shorts · darkpool · macro · contact
+backend/modules/    greeks · bs · flow · scanner · darkpool · insider · institution ·
+                    congress · shorts · market · stock · history · *_store · *_sync
+backend/            app.py(FastAPI) · tools.py(工具唯一定义处) · mcp_server.py
+frontend/src/pages  十个分栏
+docs/               模块设计.md（架构） · 开发日志.md（逐栏建造记录）
+```
+
+Python 3.9+ · FastAPI · React 19 · Vite · Tailwind · ECharts · SQLite。
+后端只有四个依赖。数据存在 `~/.vibe-flow/`、在仓库之外 ——
+更新代码永远不会弄丢你攒下的历史。
+
+## 更新日志
+
+见 [CHANGELOG.md](CHANGELOG.md)。
+
+## 免责声明
+
+本软件呈现的是公开可得的数据，以及基于这些数据的算术。
+它不是投资建议，作者也不是持牌投资顾问。
+每个数据源都有自己的边界 —— 滞后、修订、口径怪癖 —— 软件已尽力把它们说清楚，
+但你要为自己得出的结论负责，也要为在你所在法域与使用场景下遵守各数据源的条款负责。
+
+## 赞赏
+
+<p align="center">
+  <a href="https://buymeacoffee.com/simonlin1212"><img src="./assets/bmc-qr.png" width="180" alt="Buy Me a Coffee"></a>
+</p>
+
+## License
+
+MIT — 见 [LICENSE](LICENSE)。
+
+**作者：** Simon 林 · X [@linsizhen](https://x.com/linsizhen) · 邮箱：[simonlin0423@gmail.com](mailto:simonlin0423@gmail.com)

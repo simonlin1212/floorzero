@@ -102,5 +102,5 @@ research/          调研与竞品拆解
 
 - README 版式：语言切换行 → `<h1 align="center">` → 副标 → 徽章 → 导航 → 正文 → CHANGELOG → 免责 → 赞赏(BMC 二维码) → License(含署名行)
 - 章节标题**不带 emoji**；主档语言=**英文**（全球向）+ `README_zh.md`
-- 联系方式只三样：X `@linsizhen` · TikTok `@simonlin0423` · Email `simonlin0423@gmail.com`
+- 联系方式只两样（2026-07-26 全局统一，已去掉 TikTok）：X `@linsizhen` · Email `simonlin0423@gmail.com`
 - commit message 用英文（2026-07-25 起）
