@@ -27,29 +27,41 @@ def _oi(expiry, typ, strike, oi, vol=0.0):
 
 # ─────────────────── 归档键 = 交易时段，不是墙上日期 ───────────────────
 
-def test_同一交易时段重复归档不会伪造出第二天(tmp_db):
+def test_归档键用的是传入的交易时段而不是墙上日期(tmp_db):
     """周末连开两次页面，拿到的是同一份周五收盘数据。
 
     按墙上日期存 → 库里出现"两天"，OI 差值全是 0 ——
     看着像"持仓没变"，其实是**根本没有新数据**。
+
+    ⚠️ 只断言"只有一天"是**假阳性**：两次调用发生在同一个墙上日期，
+    哪怕实现完全忽略传入的 session 改用 `date.today()`，结果照样是一天。
+    所以这里直接断言**归档键等于传进去的那个值**。
     """
     from modules import flow_store as fs
     rows = [_oi("2260-02-20", "call", 100.0, 500.0, 10.0)]
     fs.record("X", "2260-01-05", 100.0, rows)
     fs.record("X", "2260-01-05", 100.0, rows)      # 同一时段再来一次
-    assert len(fs.dates("X")) == 1, "同一时段不该变成两天"
+    got = [d["snapshot_date"] for d in fs.dates("X")]
+    assert got == ["2260-01-05"], "归档键必须是传入的时段，不是今天"
 
 
 def test_同一时段重录是整段替换而不是逐行合并(tmp_db):
     """只用 `INSERT OR REPLACE`，本次没带的旧行会留着 ——
     于是同一时段下混着两次不同口径的抓取，差值算的是拼接结果。"""
     from modules import flow_store as fs
+    from modules import db
     fs.record("X", "2260-01-05", 100.0,
               [_oi("2260-02-20", "call", 100.0, 500.0),
                _oi("2260-02-20", "call", 110.0, 300.0)])
     fs.record("X", "2260-01-05", 100.0,
               [_oi("2260-02-20", "call", 100.0, 500.0)])   # 这次只给一行
-    assert fs.dates("X")[0]["contracts"] == 1, "旧行不该留着"
+    # ⚠️ 直接查明细行，不看 `dates()` 的汇总字段 ——
+    #    否则是"被测的写入逻辑"与"被测的汇总逻辑"互相作证。
+    with db.connect() as conn:
+        strikes = [r["strike"] for r in conn.execute(
+            "SELECT strike FROM oi_snapshot WHERE ticker='X' "
+            "AND snapshot_date='2260-01-05'")]
+    assert strikes == [100.0], "110 那行不该留着"
 
 
 def test_持仓量为空时当场报错而不是记个零(tmp_db):
@@ -61,13 +73,21 @@ def test_持仓量为空时当场报错而不是记个零(tmp_db):
                     "open_interest": None, "volume": 1.0}])
 
 
-def test_缺交易时段的行情被丢弃且计数(tmp_db):
+def test_缺交易时段的行情真的没进库(tmp_db):
     """归档键错了 IV 样本就串了，而串掉之后从数据里看不出来。
-    所以宁可丢，但**必须报出来丢了几条**。"""
-    from modules import scanner_store as ss
+    所以宁可丢，但**必须报出来丢了几条**。
+
+    ⚠️ 只看返回的计数是**假阳性**：实现完全可以一边返回 `dropped=1`、
+    一边把 B 用墙上日期或 NULL 写进去 —— 计数对了，历史已经脏了。
+    所以这里**直接查库**。
+    """
+    from modules import db, scanner_store as ss
     rec = ss.record_quotes([_q("A", "2260-01-05"), _q("B", None)])
-    assert rec["stored"] == 1
-    assert rec["dropped_no_session"] == 1
+    assert rec == {"stored": 1, "dropped_no_session": 1}
+    with db.connect() as conn:
+        syms = [r["symbol"] for r in conn.execute(
+            "SELECT symbol FROM quote_snapshot")]
+    assert syms == ["A"], "B 不该以任何形式落库"
 
 
 # ─────────────────── 前视偏差 ───────────────────

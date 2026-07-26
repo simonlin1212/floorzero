@@ -90,8 +90,14 @@ violation. Two conventions:
   variable alone leaves tests writing into the user's real history, silently and while
   passing.
 - **Verify the tests, not just the code.** Break an invariant on purpose and confirm the
-  suite goes red. Five were checked this way; a test that passes against broken code is
-  worse than no test.
+  suite goes red. Ten were checked this way across two rounds — and the first round of
+  tests contained four cases that passed against broken implementations, because they
+  asserted on a function's own return value rather than on the stored rows, or on the
+  wording of a label rather than on a constant. A test that passes against broken code
+  is worse than no test.
+- **Classify in code, not in prose.** `MEANS_ABSENT` exists because a test was checking
+  whether a label contained a particular word. UI, MCP and tests now read the same
+  constant instead of each inferring the category from the text.
 
 ## Stack
 

@@ -98,13 +98,27 @@ def test_未来时点不会被排到最前():
 
 def test_只有_no_data_才表示这只票没有那类活动():
     """七种原因码里，其余六种说的都是"我们拿不到"。
-    混为一谈会让读者以为"这只票没有内部人交易"。"""
-    assert "no_data" in st.REASON_LABEL
-    for code in ("not_synced", "not_enough", "disabled", "fetch_failed",
-                 "no_mapping", "bad_symbol"):
-        assert code in st.REASON_LABEL, f"{code} 缺人话映射"
-        assert "没有" not in st.REASON_LABEL[code] or "不是" in st.REASON_LABEL[code], \
-            f"{code} 的说法不能读成「没有」"
+    混为一谈会让读者以为"这只票没有内部人交易"。
+
+    ⚠️ 早先这个用例是靠**在文案里找"没有"两个字**来判断的 —— 那是启发式，
+    随便换个措辞就能骗过去（`no_data: "数据获取失败"` 也能通过）。
+    正确做法是让**代码自己**带上分类（`MEANS_ABSENT`），
+    UI / MCP / 测试都引用同一个常量，而不是各自去读文案猜。
+    """
+    assert st.MEANS_ABSENT == {"no_data"}
+    # 两个集合必须不相交、且合起来覆盖全部原因码 —— 不能有归不了类的
+    assert not (st.MEANS_ABSENT & st.MEANS_UNAVAILABLE)
+    assert st.MEANS_ABSENT | st.MEANS_UNAVAILABLE == set(st.REASON_LABEL)
+
+
+def test_每条_lane_都带上是否真的没有():
+    """前端与工具层直接用这个字段，不必自己判断哪条算"没有"。"""
+    absent = st.to_dict(st.lane("insider", reason="no_data", detail=""))
+    cant = st.to_dict(st.lane("darkpool", reason="disabled", detail=""))
+    fine = st.to_dict(st.lane("quote", as_of="2020-01-01", data={}))
+    assert absent["means_absent"] is True
+    assert cant["means_absent"] is False
+    assert fine["means_absent"] is None, "有数据的块无所谓"
 
 
 def test_时间轴按滞后排序而不是按写死的顺序():
@@ -149,12 +163,23 @@ def test_gamma_是_delta_对现价的导数():
     assert bs.bs_gamma(S, K, t, v, r) == pytest.approx(numeric, rel=1e-5)
 
 
-def test_gamma_在平值处最大():
-    """gamma 的形状：平值最高，两侧衰减。形状错了符号对也没用。"""
+def test_gamma_的峰在平值附近且两侧单调衰减():
+    """形状错了，符号对也没用。
+
+    ⚠️ 只比"平值 vs 很远的两点"是**假阳性**：峰跑到 110 也照样比 70/130 高。
+    所以这里扫一遍行权价网格，验两件事 ——
+    ① 峰确实落在现价附近（带利率时未必**恰好**在 K=S，所以给一个窄带）
+    ② 从峰往两边是单调下降的
+    """
     from modules import bs
-    atm = bs.bs_gamma(100.0, 100.0, 0.25, 0.3)
-    assert atm > bs.bs_gamma(100.0, 130.0, 0.25, 0.3)
-    assert atm > bs.bs_gamma(100.0, 70.0, 0.25, 0.3)
+    S = 100.0
+    ks = [70 + 2 * i for i in range(31)]              # 70 … 130
+    gs = [bs.bs_gamma(S, float(k), 0.25, 0.3) for k in ks]
+    peak = ks[gs.index(max(gs))]
+    assert abs(peak - S) <= 6, f"峰落在 {peak}，不在现价附近"
+    top = gs.index(max(gs))
+    assert all(gs[i] < gs[i + 1] for i in range(top)), "峰左侧应递增"
+    assert all(gs[i] > gs[i + 1] for i in range(top, len(gs) - 1)), "峰右侧应递减"
 
 
 def test_退化输入返回零而不是抛异常或_nan():

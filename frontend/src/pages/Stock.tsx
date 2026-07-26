@@ -15,6 +15,8 @@ type Lane = {
   // not_synced / not_enough / disabled / fetch_failed / no_data / no_mapping / bad_symbol
   reason: string | null;
   reason_label: string | null;
+  // 只有它为 true 才表示"这只票确实没有那类活动"；其余都是"我们拿不到"
+  means_absent: boolean | null;
   detail: string | null;
   data: Record<string, unknown> | null;
 };
@@ -250,7 +252,8 @@ export default function StockPage() {
             <div className="rounded-lg border border-line bg-card2/40 px-3 py-3 text-xs leading-relaxed text-dim">
               <Emph>{l.detail ?? ""}</Emph>
               {/* ⚠️ 只有 no_data 才是"这只票没有那类活动"，别的都不是 */}
-              {l.reason !== "no_data" && (
+              {/* 后端直接给 means_absent —— 前端不必自己判断哪条算"真的没有" */}
+              {l.means_absent === false && (
                 <div className="mt-2 text-[10px]">
                   ⚠️ 这一栏空着是因为
                   <b className="text-ink">{l.reason_label}</b>，

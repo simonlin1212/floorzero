@@ -211,12 +211,21 @@ semantics — the invariants that adversarial review kept catching in the first 
 - aggregate rows and per-firm rows are never summed together, which would double
 - one lane failing does not take down the stock page
 
-The suite was itself checked by mutation: five invariants were deliberately broken —
-median reverted to the upper median, null delta back to zero, reconciliation tolerance
-back to a relative epsilon, vol/OI given a sentinel, future dates unclamped — and all
-five were caught.
+The suite was reviewed the same way the code was, and four cases came back as false
+positives — they passed against deliberately broken implementations. Archiving under the
+wall-clock date went undetected because both calls in the test happened on the same day;
+a dropped row was checked by the function's own counter rather than by querying the
+table; a full-segment replace was verified through a summary the same module produced;
+and "only no_data means absent" was enforced by looking for a Chinese word in the label
+text. All four now assert against the stored rows or against a constant the code exports
+(`MEANS_ABSENT`), which the UI and MCP layer read too rather than each guessing.
 
-Tests use a throwaway `VF_DATA_DIR`; they will not write to the history you have accrued.
+Both rounds were then mutation-checked — ten invariants broken on purpose, ten caught.
+
+Tests use a throwaway `VF_DATA_DIR`, and the fixture asserts the resolved database path
+really is inside it before letting anything run. That guard is not ceremony: if `db.py`
+ever stopped honouring the variable, the tests would silently write into history that
+cannot be rebuilt.
 
 ## Architecture
 

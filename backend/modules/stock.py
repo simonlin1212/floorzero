@@ -113,6 +113,17 @@ class Lane:
         return max(0, (today - d).days)
 
 
+#: ⭐ **只有这里面的原因码才表示"这只票确实没有那类活动"。**
+#: 其余全是"我们拿不到"。把它写成一个常量而不是靠读文案判断 ——
+#: 消费方（UI / MCP / 测试）都该引用它，免得各自去猜哪条算"没有"。
+MEANS_ABSENT = frozenset({"no_data"})
+
+#: 拿不到，但数据本身可能存在。
+MEANS_UNAVAILABLE = frozenset({
+    "not_synced", "not_enough", "disabled", "fetch_failed",
+    "no_mapping", "bad_symbol",
+})
+
 REASON_LABEL = {
     "not_synced": "本地还没同步这条线的数据（不是这只票没有）",
     "not_enough": "本机攒的历史还不够（这份历史补不回来，只能逐日攒）",
@@ -143,6 +154,8 @@ def to_dict(l: Lane, lag_days: Optional[int] = ...) -> dict:
         "as_of": l.as_of, "lag_days": lag_days,
         "ok": l.ok, "reason": l.reason,
         "reason_label": REASON_LABEL.get(l.reason or "", None),
+        # 让前端与工具层不必自己判断"这条算不算真的没有"
+        "means_absent": (l.reason in MEANS_ABSENT) if l.reason else None,
         "detail": l.detail, "data": l.data,
     }
 

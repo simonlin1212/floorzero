@@ -58,8 +58,13 @@ history keyed by trading session, IV history bounded by the requested session, e
 contracts distinguished from closings, aggregate rows never summed with per-firm rows,
 and one failing lane not taking down the stock page.
 
-Verified by mutation — five invariants were deliberately broken and all five were caught.
-Tests use a throwaway data directory and never write to accrued history.
+The suite was itself reviewed and four cases came back as false positives — passing
+against deliberately broken implementations. Those now assert against stored rows or
+against `MEANS_ABSENT`, a constant the code exports and the UI and MCP layer both read.
+
+Ten invariants were broken on purpose across two rounds; ten were caught. The tmp_db
+fixture asserts the resolved database path is inside the temporary directory before
+allowing a write, so a regression in `db.py` cannot silently corrupt accrued history.
 
 ### Verified
 

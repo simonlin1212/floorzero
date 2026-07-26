@@ -920,8 +920,10 @@ def _tool_get_stock(ticker: str) -> dict:
     #    `disabled` / `fetch_failed` / `no_mapping` 说的是"我们拿不到"，
     #    只有 `no_data` 才是"这只票确实没有那类记录"。上一版把两者混在一句
     #    "X 条没有 …… 这些都不等于没有活动"里，自相矛盾且两头都不对。
-    truly_none = [l for l in miss if l["reason"] == "no_data"]
-    cant_get = [l for l in miss if l["reason"] != "no_data"]
+    # ⚠️ 用 `stock_parse.MEANS_ABSENT` 而不是硬写 "no_data" ——
+    #    以后再加一个"确实没有"的原因码，这里会自动跟上。
+    truly_none = [l for l in miss if l["reason"] in stock_parse.MEANS_ABSENT]
+    cant_get = [l for l in miss if l["reason"] not in stock_parse.MEANS_ABSENT]
     gone = ""
     if truly_none:
         gone += ("**确实没有记录**的：" + "、".join(l["title"] for l in truly_none)
