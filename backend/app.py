@@ -36,6 +36,8 @@ from modules import market as market_parse
 from modules import market_store
 from modules import flow as flow_parse
 from modules import flow_store
+from modules import scanner as scanner_parse
+from modules import scanner_store, scanner_sync
 
 app = FastAPI(
     title="Vibe-Flow API",
@@ -904,3 +906,112 @@ def get_oi_change(
     """
     return flow_store.oi_change(ticker.strip().upper(), date_to=date_to,
                                 date_from=date_from, top=top)
+
+
+# ═══════════════════════ 扫描器（C 级：CBOE 延时，只在本地跑）═══════════════════════
+# ⚠️ 没有全市场端点，只能逐只问 → 一轮全市场约 26 分钟，天然是**后台作业**。
+#    IV Rank 按定义需要历史，攒不够就返回空值，**绝不拿短样本硬算**。
+
+@app.get("/api/scanner")
+def get_scanner(
+    session: Optional[str] = Query(None, description="看哪个交易时段，不传=最新"),
+    sort: str = Query("iv_rank"),
+    limit: int = Query(100, ge=1, le=1000),
+    min_price: Optional[float] = Query(None),
+    max_price: Optional[float] = Query(None),
+    min_volume: Optional[float] = Query(None),
+    min_iv: Optional[float] = Query(None),
+    max_iv: Optional[float] = Query(None),
+    min_iv_rank: Optional[float] = Query(None, ge=0, le=100),
+    min_volume_x: Optional[float] = Query(None),
+    security_type: Optional[str] = Query(None),
+) -> dict:
+    """扫描结果（读的是本地已扫过的快照，不现拉）。"""
+    sess = session or scanner_store.latest_session()
+    st = scanner_store.stats()
+    if not sess:
+        return {"rows": [], "count": 0, "session": None, "stats": st,
+                "batches": scanner_store.batches(5),
+                "notes": scanner_parse.NOTES,
+                "note": ("本地还没有任何扫描结果 —— 这是**还没扫过**，"
+                         "不是市场上没有符合条件的标的。先跑一轮扫描。")}
+    quotes = scanner_store.quotes_at(sess)
+    # ⚠️ `as_of=sess` 不能省 —— 看历史某天的结果时，把之后的行情算进
+    #    IV Rank 样本就是**前视偏差**（用还没发生的数据判断当天 IV 高低）。
+    hist = scanner_store.history([q["symbol"] for q in quotes], as_of=sess)
+    rows = [scanner_parse.build_row(
+                q, hist.get(q["symbol"], {}).get("iv", []),
+                hist.get(q["symbol"], {}).get("volume", []))
+            for q in quotes]
+    kept, excluded = scanner_parse.apply_filters(
+        rows, min_price=min_price, max_price=max_price, min_volume=min_volume,
+        min_iv=min_iv, max_iv=max_iv, min_iv_rank=min_iv_rank,
+        min_volume_x=min_volume_x, security_type=security_type)
+    kept = scanner_parse.sort_rows(kept, sort)
+    return {
+        "rows": [scanner_parse.to_dict(r) for r in kept[:limit]],
+        "count": len(kept), "scanned": len(rows), "session": sess,
+        "truncated": len(kept) > limit,
+        # ⚠️ 「因为算不出而被排除」必须和「不满足条件」分开报
+        "excluded": excluded,
+        "stats": st, "batches": scanner_store.batches(5),
+        "sorts": sorted(scanner_parse.SORTS),
+        "notes": scanner_parse.NOTES,
+        "thresholds": {"iv_lookback": scanner_parse.IV_LOOKBACK,
+                       "iv_min_sample": scanner_parse.IV_MIN_SAMPLE},
+    }
+
+
+@app.get("/api/scanner/scan")
+def get_scan_state() -> dict:
+    """当前扫描进度。"""
+    return {**scanner_sync.STATE.snapshot(), "stats": scanner_store.stats()}
+
+
+@app.post("/api/scanner/scan")
+def start_scan(
+    symbols: Optional[str] = Query(
+        None, description="逗号分隔的代码；不传=全市场（约 26 分钟）"),
+) -> dict:
+    """启动一轮扫描。
+
+    ⚠️ 全市场约 **26 分钟**（6,049 只 × 自律限流 4 次/秒）。
+    只想看自己盯的几十只就传 `symbols`，那是几十秒的事。
+    """
+    syms = None
+    # ⚠️ `symbols` 传了空串要当成**参数错误**，不能落到"不传=全市场"那条路 ——
+    #    用户清空输入框点"扫这几只"，会意外启动 26 分钟的全市场作业。
+    if symbols is not None and not symbols.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="symbols 为空。想扫全市场请**不要传**这个参数（约 26 分钟）。")
+    if symbols:
+        # 去重但保持顺序：重复代码只是白白多打几次上游、还把进度分母灌大
+        seen: set = set()
+        syms = []
+        for raw in symbols.split(","):
+            t = raw.strip().upper()
+            if t and t not in seen:
+                seen.add(t)
+                syms.append(t)
+        if not syms:
+            raise HTTPException(status_code=400, detail="symbols 解析后为空")
+    return scanner_sync.start(syms)
+
+
+@app.post("/api/scanner/scan/cancel")
+def cancel_scan() -> dict:
+    return scanner_sync.cancel()
+
+
+@app.get("/api/scanner/universe")
+def get_universe() -> dict:
+    """CBOE 官方的有期权标的全集。"""
+    try:
+        roots = cboe.option_roots()
+    except cboe.DataNotAvailable as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    return {"count": len(roots), "symbols": roots[:200],
+            "note": scanner_parse.NOTES["universe"]}

@@ -22,6 +22,8 @@ from modules import market as market_parse
 from modules import market_store
 from modules import flow as flow_parse
 from modules import flow_store
+from modules import scanner as scanner_parse
+from modules import scanner_store
 from sources import macro as macro_src
 from modules import shorts as shorts_parse
 
@@ -250,6 +252,29 @@ TOOLS: list[dict] = [
                 "date_to": {"type": "string", "description": "YYYY-MM-DD，不传=最新快照"},
             },
             "required": ["ticker"],
+        },
+    },
+    {
+        "name": "scan_market",
+        "description": (
+            "在**本地已扫过**的行情快照里筛标的：IV Rank / IV 百分位 / 成交量放大倍数 / "
+            "价格 / 涨跌幅。"
+            "⚠️ **IV Rank 按定义需要历史**，本机攒不够时该字段为空 —— "
+            "那是「还没攒够」，不是「排名低」，两者绝不能混同。"
+            "⚠️ 读的是本地快照，不现拉；没扫过会明确说明。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "min_iv_rank": {"type": "number", "description": "IV Rank 下限 0-100"},
+                "min_volume": {"type": "number", "description": "成交量下限（股）"},
+                "min_volume_x": {"type": "number",
+                                 "description": "成交量至少是本地历史中位数的几倍"},
+                "min_price": {"type": "number"},
+                "sort": {"type": "string",
+                         "description": "iv_rank/iv_percentile/iv30/volume/volume_x/change_pct"},
+                "top": {"type": "integer", "description": "返回几只，默认 20"},
+            },
         },
     },
     {
@@ -716,6 +741,68 @@ def _tool_get_oi_change(ticker: str, date_from: str | None = None,
           f"净新增的多头与空头数量相同。以上不构成投资建议。")}
 
 
+def _tool_scan_market(min_iv_rank: float | None = None,
+                      min_volume: float | None = None,
+                      min_volume_x: float | None = None,
+                      min_price: float | None = None,
+                      sort: str = "iv30", top: int = 20) -> dict:
+    sess = scanner_store.latest_session()
+    st = scanner_store.stats()
+    if not sess:
+        return {"rows": [], "count": 0, "stats": st,
+                "summary": ("本地还没有任何扫描结果 —— 这是**还没扫过**，"
+                            "不是市场上没有符合条件的标的。"
+                            "先跑一轮扫描（POST /api/scanner/scan）。")}
+    quotes = scanner_store.quotes_at(sess)
+    hist = scanner_store.history([q["symbol"] for q in quotes], as_of=sess)
+    rows = [scanner_parse.build_row(
+                q, hist.get(q["symbol"], {}).get("iv", []),
+                hist.get(q["symbol"], {}).get("volume", []))
+            for q in quotes]
+    kept, excluded = scanner_parse.apply_filters(
+        rows, min_iv_rank=min_iv_rank, min_volume=min_volume,
+        min_volume_x=min_volume_x, min_price=min_price)
+    kept = scanner_parse.sort_rows(kept, sort)
+    total = len(kept)                      # ⚠️ 截断**之前**的总数
+    kept = kept[:max(1, min(top, 100))]
+    hot = "；".join(
+        f"{r.symbol}（IV30 " + ("—" if r.iv30 is None else f"{r.iv30:.1f}")
+        + (f"、IV Rank {r.iv_rank:.0f}" if r.iv_rank is not None
+           else "、IV Rank 空（"
+                + scanner_parse.REASON_LABEL.get(r.iv_reason or "unknown", "原因未知")
+                + (f"，还差 {r.iv_days_needed} 个交易日"
+                   if r.iv_reason == "insufficient_history" else "") + "）")
+        + "）" for r in kept[:5]) or "无"
+    # ⚠️ 「因为算不出而被排除」必须和「不满足条件」分开说，
+    #    否则 AI 会把"本机历史不足"读成"全市场只有这么几只符合"。
+    exc = ""
+    def _why(d: dict) -> str:
+        return "、".join(
+            f"{scanner_parse.REASON_LABEL.get(k, k)} {v} 只" for k, v in d.items())
+    if excluded["excluded_no_iv_rank"]:
+        exc += (f"⚠️ 另有 {excluded['excluded_no_iv_rank']} 只因 **IV Rank 算不出**"
+                f"而被该条件滤掉（{_why(excluded['iv_reasons'])}）—— "
+                f"它们是**算不出**，不是不满足条件。")
+    if excluded["excluded_no_volume_x"]:
+        exc += (f"⚠️ 另有 {excluded['excluded_no_volume_x']} 只因**量比算不出**"
+                f"而被该条件滤掉（{_why(excluded['volume_reasons'])}）。")
+    return {
+        "rows": [scanner_parse.to_dict(r) for r in kept],
+        # ⚠️ `count` 与 REST 同口径 = **截断前**的符合总数。
+        #    返回截断后的条数会让同一份数据在两个视图里报出不同的总量。
+        "count": total, "returned": len(kept),
+        "session": sess, "excluded": excluded, "stats": st,
+        "summary": (
+            f"交易时段 {sess}：本地共扫到 {len(rows):,} 只，筛出 {total} 只"
+            f"（本次返回前 {len(kept)} 只）。"
+            f"前几名：{hot}。{exc}"
+            f"本地已攒 {st['sessions']} 个交易时段、"
+            f"其中 {st['iv_ready_symbols']:,} 只标的攒够了 IV Rank 所需历史"
+            f"（需 {scanner_parse.IV_MIN_SAMPLE} 个交易日；这份历史**补不回来**，"
+            f"只能逐日攒）。以上为公开延时数据的统计，不构成投资建议。"),
+    }
+
+
 def _n(v: float | None, spec: str = ",.0f") -> str:
     """空值安全的数字格式化。
 
@@ -868,6 +955,7 @@ _IMPL: dict[str, Callable[..., dict]] = {
     "get_option_chain_summary": _tool_get_option_chain_summary,
     "get_option_flow": _tool_get_option_flow,
     "get_oi_change": _tool_get_oi_change,
+    "scan_market": _tool_scan_market,
     "get_yield_curve": _tool_get_yield_curve,
     "get_cot": _tool_get_cot,
 }

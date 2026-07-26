@@ -5,6 +5,7 @@ const NAV = [
   // CBOE = C 级：需授权，只能本地跑，绝不对外展示
   { to: "/flow", label: "期权流", tag: "CBOE·仅本地" },
   { to: "/gex", label: "GEX 伽马", tag: "CBOE·仅本地" },
+  { to: "/scanner", label: "扫描器", tag: "CBOE·仅本地" },
   // ⚠️ 国会披露虽是政府公开记录，但 5 U.S.C. §13107(c) 明文禁止商用 ——
   //    与 EDGAR 的"可商用"不是一个级别，标签必须区分开
   { to: "/congress", label: "国会交易", tag: "公开·禁商用" },

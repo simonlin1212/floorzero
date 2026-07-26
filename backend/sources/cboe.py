@@ -253,3 +253,71 @@ def cached_option_chain(ticker: str) -> Chain:
 def quote(ticker: str) -> dict:
     """个股延时快照（含现价，可与期权链配合定 ATM）。"""
     return _get(f"{CBOE_BASE}/quotes/{assert_us_ticker(ticker)}.json")["data"]
+
+# ── 扫描器用的两个轻量端点 ──
+
+def option_roots() -> list[str]:
+    """全部**有期权**的标的代码（CBOE 官方清单，实测 6,300 个 / 217KB）。
+
+    这是扫描器的全集。⚠️ 它是"挂了期权的标的"，不是"今天有成交的标的" ——
+    里头有大量常年零成交的冷门票。
+    """
+    raw = _get(f"{CBOE_BASE}/symbol_book/option-roots.json")
+    data = raw.get("data") or []
+    out, seen = [], set()
+    for row in data:
+        sym = (row.get("symbol") or "").strip().upper()
+        # 同一标的可能有多个 root（拆股后的调整合约等），按 symbol 去重
+        if sym and sym not in seen:
+            seen.add(sym)
+            out.append(sym)
+    if not out:
+        raise RuntimeError("CBOE 期权标的清单为空（接口结构可能已变更）")
+    return out
+
+
+@dataclass(frozen=True)
+class Quote:
+    """轻量行情快照 —— **只有标的层，没有期权链**。
+
+    扫描器靠它做第一遍粗筛：0.4KB / 只，而全链是 1.5MB / 只（**3,750 倍**）。
+    全市场拉全链需要约 3.7 小时 / 9.5GB，拉轻量行情约 26 分钟（限流 4/s）。
+    """
+
+    symbol: str
+    price: Optional[float]
+    change_pct: Optional[float]
+    open: Optional[float]
+    high: Optional[float]
+    low: Optional[float]
+    prev_close: Optional[float]
+    volume: Optional[float]
+    #: 30 天隐含波动率（%）。⚠️ **IV Rank 需要历史**，单点 iv30 排不出高低。
+    iv30: Optional[float]
+    iv30_change: Optional[float]
+    #: 数据所属交易时段（YYYY-MM-DD）
+    session: Optional[str]
+    security_type: Optional[str]
+
+
+def quote(ticker: str) -> Quote:
+    """单只标的的轻量行情（不含期权链）。"""
+    tk = assert_us_ticker(ticker)
+    raw = _get(f"{CBOE_BASE}/quotes/{tk}.json")
+    d = raw.get("data") or {}
+    if not d.get("symbol"):
+        raise DataNotAvailable(f"{tk} 无行情数据")
+    ltt = d.get("last_trade_time") or ""
+    return Quote(
+        symbol=d["symbol"],
+        price=d.get("current_price"),
+        change_pct=d.get("price_change_percent"),
+        open=d.get("open"), high=d.get("high"), low=d.get("low"),
+        prev_close=d.get("prev_day_close"),
+        volume=d.get("volume"),
+        iv30=d.get("iv30"),
+        iv30_change=d.get("iv30_change"),
+        session=ltt[:10] if len(ltt) >= 10 and ltt[4] == "-" else None,
+        security_type=d.get("security_type"),
+    )
+
