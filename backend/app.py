@@ -10,6 +10,11 @@ Vibe-Flow 分发的是代码，不是数据 —— 用户自部署运行 = perso
 """
 from __future__ import annotations
 
+# ⚠️ 紧跟在 `__future__` 之后 —— 它必须是文件里的第一条语句，
+#    而版本闸要在其余 import 之前跑，好在版本不够时给一句人话，
+#    而不是让用户撞进某个模块深处的 SyntaxError 去猜哪里不对。
+import pyversion  # noqa: F401
+
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query
@@ -29,6 +34,8 @@ from sources import shorts as shorts_src
 from sources import macro as macro_src
 from modules import market as market_parse
 from modules import market_store
+from modules import flow as flow_parse
+from modules import flow_store
 
 app = FastAPI(
     title="Vibe-Flow API",
@@ -807,3 +814,93 @@ def market_cot(
             "markets": sorted({r["market"] for r in rows}),
             "scope": {"market": market, "exact": exact, "limit": limit,
                       "truncated": len(raw) >= limit}}
+
+
+# ═══════════════════════ 期权流（C 级：CBOE 延时，只在本地跑）═══════════════════════
+# ⚠️ 数据是**链快照**不是逐笔成交带 —— sweep / 大单分级 / 主动买卖方向都做不了。
+#    详见 modules/flow.py 的能力边界说明。本分栏不产出任何方向性标签。
+
+def _session_of(chain) -> str:
+    """归档键 = 数据自己的交易时段，**不是墙上日期**。
+
+    ⚠️ 按墙上日期归档，周末打开两次就会把同一份周五收盘数据
+    存成"两天的观测"，OI 差值全是 0 —— 看着像"持仓没变"，
+    其实是根本没有新数据。CBOE 没给 session 时才回退到美东今日。
+    """
+    return chain.session or cboe.et_today()
+
+
+@app.get("/api/flow/{ticker}")
+def get_flow(
+    ticker: str,
+    expiry: Optional[str] = Query(None, description="指定到期日 YYYY-MM-DD 或 '0DTE'"),
+    dte_max: Optional[int] = Query(None, ge=0, le=365),
+    top: int = Query(40, ge=1, le=200),
+    record: bool = Query(False, description="把这份快照写进本地 OI 历史"),
+) -> dict:
+    """单只标的的当日期权流画像（基于链快照）。"""
+    try:
+        chain = cboe.cached_option_chain(ticker)
+    except cboe.DataNotAvailable as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+
+    # ⚠️ 两份：展示用"有成交的"，持仓量口径用"范围内全部合约"。
+    #    合成一份的话，"沉淀下来的仓位结构"实际会变成
+    #    "今天碰过的那些合约的仓位"，冷门标的上能差一个数量级。
+    scope_rows = flow_parse.parse(chain, dte_max=dte_max, expiry=expiry,
+                                  traded_only=False)
+    rows = [r for r in scope_rows if r.volume > 0]
+    out = flow_parse.summarize(chain, rows, all_rows=scope_rows, top=top)
+    out["expiries"] = chain.expiries()[:20]
+    out["session"] = chain.session
+    out["scope"] = {"expiry": expiry, "dte_max": dte_max, "top": top}
+    if record:
+        # ⚠️ 沉淀的是**全链且含今日无成交的合约**（`traded_only=False`）。
+        #    ① 换 dte_max 会让存量对不上，差值把"筛选口径变了"记成"持仓变了"；
+        #    ② 更要命的是漏掉今日无成交的合约 —— 它明天不出现在库里，
+        #       差值就把它记成"净平仓全部头寸"，而它一张都没动。
+        allrows = flow_parse.parse(chain, traded_only=False)
+        out["recorded"] = flow_store.record(
+            chain.ticker, _session_of(chain), chain.spot,
+            [flow_parse.to_dict(r) for r in allrows])
+    out["history"] = flow_store.dates(chain.ticker)[:30]
+    return out
+
+
+@app.post("/api/flow/{ticker}/record")
+def record_flow(ticker: str) -> dict:
+    """把当前链快照写进本地 OI 历史（这份历史补不回来，只能逐日攒）。"""
+    try:
+        chain = cboe.cached_option_chain(ticker)
+    except cboe.DataNotAvailable as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    rows = flow_parse.parse(chain, traded_only=False)
+    sess = _session_of(chain)
+    n = flow_store.record(chain.ticker, sess, chain.spot,
+                          [flow_parse.to_dict(r) for r in rows])
+    return {"ticker": chain.ticker, "snapshot_date": sess,
+            "recorded": n, "history": flow_store.dates(chain.ticker)[:30],
+            "stats": flow_store.stats()}
+
+
+@app.get("/api/flow/{ticker}/oi-change")
+def get_oi_change(
+    ticker: str,
+    date_to: Optional[str] = Query(None),
+    date_from: Optional[str] = Query(None),
+    top: int = Query(40, ge=1, le=200),
+) -> dict:
+    """两个快照日之间的持仓量变化。
+
+    ⚠️ 只攒到一天时返回 `enough=false` —— 那是**还没攒够**，不是"持仓没变"。
+    """
+    return flow_store.oi_change(ticker.strip().upper(), date_to=date_to,
+                                date_from=date_from, top=top)

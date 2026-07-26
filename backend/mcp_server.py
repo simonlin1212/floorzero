@@ -13,6 +13,11 @@
 """
 from __future__ import annotations
 
+# ⚠️ 紧跟在 `__future__` 之后 —— 它必须是文件里的第一条语句，
+#    而版本闸要在其余 import 之前跑，好在版本不够时给一句人话，
+#    而不是让用户撞进某个模块深处的 SyntaxError 去猜哪里不对。
+import pyversion  # noqa: F401
+
 import json
 import os
 import sys

@@ -10,6 +10,7 @@ import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
  */
 import Shell from "./components/Shell";
 import Gex from "./pages/Gex";
+import Flow from "./pages/Flow";
 import Congress from "./pages/Congress";
 import Insiders from "./pages/Insiders";
 import Institutions from "./pages/Institutions";
@@ -21,6 +22,7 @@ export default function App() {
     <HashRouter>
       <Shell>
         <Routes>
+          <Route path="/flow" element={<Flow />} />
           <Route path="/gex" element={<Gex />} />
           <Route path="/congress" element={<Congress />} />
           <Route path="/insiders" element={<Insiders />} />

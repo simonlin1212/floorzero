@@ -20,6 +20,8 @@ from modules import institution_store
 from modules import shorts_store
 from modules import market as market_parse
 from modules import market_store
+from modules import flow as flow_parse
+from modules import flow_store
 from sources import macro as macro_src
 from modules import shorts as shorts_parse
 
@@ -212,6 +214,41 @@ TOOLS: list[dict] = [
         "inputSchema": {
             "type": "object",
             "properties": {"ticker": {"type": "string"}},
+            "required": ["ticker"],
+        },
+    },
+    {
+        "name": "get_option_flow",
+        "description": (
+            "获取某只美股当日的期权异动与持仓结构：vol/OI 异动榜、"
+            "认沽/认购比（成交量/持仓量/权利金 三口径）、绝对 delta 敞口、到期分布。"
+            "⚠️ 数据是**链快照**不是逐笔成交带 —— **无法**判断主动买卖方向、"
+            "无法做 sweep 检测与大单分级，本工具因此**不给任何看涨/看跌标签**。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string"},
+                "dte_max": {"type": "integer", "description": "只看 N 天内到期；不传=全链"},
+                "top": {"type": "integer", "description": "异动榜条数，默认 15"},
+            },
+            "required": ["ticker"],
+        },
+    },
+    {
+        "name": "get_oi_change",
+        "description": (
+            "获取本地已沉淀的期权持仓量（OI）变化 —— 两个快照日之间谁在建仓/平仓。"
+            "⚠️ 这份历史**补不回来**，只有本机攒过才有；没攒够会明确返回 enough=false"
+            "（那是「还没攒够」，不是「持仓没变化」）。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string"},
+                "date_from": {"type": "string", "description": "YYYY-MM-DD，不传=次新快照"},
+                "date_to": {"type": "string", "description": "YYYY-MM-DD，不传=最新快照"},
+            },
             "required": ["ticker"],
         },
     },
@@ -535,8 +572,10 @@ def _tool_get_institution_changes(period: str | None = None,
     return out
 
 
-def _money(n: float) -> str:
-    a = abs(n or 0)
+def _money(n: float | None) -> str:
+    if n is None:
+        return "—"
+    a = abs(n)
     sign = "-" if (n or 0) < 0 else ""
     for div, unit in ((1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")):
         if a >= div:
@@ -572,6 +611,109 @@ def _tool_get_short_fails(symbol: str | None = None,
             f"⚠️ 榜单用的是各结算日余额的**均值**不是加总。"
             f"以上只是已公开数据的统计，不构成投资建议。"),
     }
+
+
+def _tool_get_option_flow(ticker: str, dte_max: int | None = None,
+                          top: int = 15) -> dict:
+    chain = cboe.cached_option_chain(ticker)
+    scope = flow_parse.parse(chain, dte_max=dte_max, traded_only=False)
+    traded = [r for r in scope if r.volume > 0]
+    out = flow_parse.summarize(chain, traded, all_rows=scope,
+                               top=max(1, min(top, 60)))
+    c, rt = out["counts"], out["ratios"]
+    hot = "；".join(
+        f"{x['expiry']} {'认沽' if x['type'] == 'put' else '认购'} {x['strike']:g}"
+        f"（成交 {x['volume']:,.0f} 张"
+        + ("、前收持仓为 0（**这不代表今天全是新开仓** —— 也可能是"
+           "冷门行权价，或开了又平的日内往返）" if x["zero_prior_oi"]
+           else f"、vol/OI {x['vol_oi']:.1f}")
+        # ⚠️ 别写 `x['notional'] or 0` —— 结构化字段是 null（算不出），
+        #    摘要却说"$0"，同一个响应里两个说法互相打架。
+        + (f"、权利金估算 {_money(x['notional'])}）" if x["notional"] is not None
+           else "、权利金**算不出**（缺双边报价））")
+        for x in out["unusual_rows"][:3]) or "无"
+
+    def _pc(k: str) -> str:
+        """⚠️ `pc=None` 有**两种**原因，不能一律说成"分母为 0"。"""
+        d = rt[k]
+        if d["pc"] is not None:
+            return f"{d['pc']:.2f}"
+        if k == "by_notional":
+            # ⚠️ counted=0 有**两种**原因：那一侧根本没成交，或成交了但全缺报价。
+            #    一律说成"缺双边报价"会把"没有认购成交"误诊成数据问题。
+            bad = []
+            for side, cnt, vol in (("认购", d.get("counted_call"), rt["by_volume"]["call"]),
+                                   ("认沽", d.get("counted_put"), rt["by_volume"]["put"])):
+                if cnt:
+                    continue
+                bad.append(f"{side}侧" + ("今日无成交" if not vol else "成交了但全部缺报价"))
+            if bad:
+                return "算不出（" + "、".join(bad) + "）"
+        return "算不出（分母为 0，即该侧完全没有成交/持仓）"
+
+    return {
+        **out,
+        "summary": (
+            f"{chain.ticker} ${chain.spot:.2f}（交易时段 {chain.session or '未知'}）："
+            f"口径 {'全链' if dte_max is None else f'{dte_max} 天内到期'}"
+            f"（⚠️ 网页端默认只看 7 天，口径不同则合约数与各比值都会不同）："
+            f"范围内 {c['scope_contracts']:,} 个合约、其中 {c['traded_contracts']:,} 个今日有成交，"
+            f"合计成交 {c['total_volume']:,.0f} 张、持仓 {c['total_oi']:,.0f} 张。"
+            f"异动 {c['unusual']} 个（含 {c['zero_prior_oi']} 个前收持仓为 0 的）。"
+            f"认沽/认购比：按成交量 {_pc('by_volume')}、"
+            f"按持仓量 {_pc('by_oi')}、按权利金估算 {_pc('by_notional')} "
+            f"—— **三个口径量的是不同的东西，结论不同是正常的**。"
+            f"最大异动：{hot}。"
+            f"⛔ **本数据是链快照，不是逐笔成交带**：无法判断这些成交是买方还是卖方发起，"
+            f"因此**不能**据此说「看涨」或「看跌」，也做不了 sweep 检测与大单分级。"
+            f"权利金为「累计成交量 × 抓取时中间价」的**估算**，与实际成交额可能差数倍。"
+            f"以上为公开延时数据的呈现，不构成投资建议。"),
+    }
+
+
+def _tool_get_oi_change(ticker: str, date_from: str | None = None,
+                        date_to: str | None = None) -> dict:
+    tk = (ticker or "").strip().upper()
+    out = flow_store.oi_change(tk, date_from=date_from, date_to=date_to, top=15)
+    if not out.get("enough"):
+        # ⚠️ `enough=false` 有**三种**原因，不能一律归成"本机历史不足"：
+        #    ① 真的只攒了 0~1 天 ② 指定的日期库里没有 ③ 起止日期传反了。
+        #    ②③ 是**参数问题**，说成"历史不足"会把 AI 引向错误的下一步。
+        have = out.get("have", 0)
+        if date_from or date_to:
+            why = ("这是**指定的日期有问题**（库里没有那一天，或起止顺序反了）—— "
+                   f"本地已有的快照日：{'、'.join(out.get('dates', [])[:8]) or '无'}。")
+        elif have < 2:
+            why = ("这是**本机历史不足**（这份数据补不回来，只能逐日攒），"
+                   "不是市场上持仓没有变动。")
+        else:
+            why = "这不是「持仓没有变化」，具体原因见 note。"
+        return {**out, "summary": f"{tk} 无法计算持仓量变化：{out['note']} {why}"}
+    t = out["totals"]
+    top3 = "；".join(
+        f"{x['expiry']} {'认沽' if x['type'] == 'put' else '认购'} {x['strike']:g} "
+        f"{x['change']:+,.0f} 张" for x in out["gained"][:3]) or "无"
+    span = ("相邻两个快照" if out["is_consecutive"]
+            else f"相隔 {out['span_days']} 天、中间还夹着 "
+                 f"{out['snapshots_between']} 次观测，属**累计**变化")
+    return {**out, "summary": (
+        f"{tk} {out['date_from']} → {out['date_to']}（{span}）："
+        f"认购持仓净变 {t['call_change']:+,.0f} 张、认沽 {t['put_change']:+,.0f} 张，"
+        f"涉及 {t['contracts']:,} 个合约。增持最多：{top3}。"
+        + (f"已排除 {out['expired_excluded']} 个期间到期的合约"
+           f"（{out['expired_oi']:,.0f} 张）—— 到期消失不是平仓。"
+           if out.get("expired_excluded") else "")
+        # ⚠️ 网页端会为这两条打警告横幅，工具层不说就成了「两个视图对
+        #    同一份数据的可信度表述不一致」—— 本项目反复踩的那类坑。
+        + (f"⚠️ **本次比较可信度存疑**：有 {out['incomplete_excluded']} 个尚未到期的合约"
+           f"不在结束快照里（{out['incomplete_oi']:,.0f} 张持仓），说明那次抓取不完整，已排除。"
+           if out.get("incomplete_excluded") else "")
+        + (f"⚠️ 有 {out['new_listings']} 个合约只出现在结束快照里、按「从 0 新增」计入 —— "
+           f"**期间新挂牌**与**起始那次漏抓**在数据上无法区分"
+           f"（两次合约数 {out.get('contracts_from')} → {out.get('contracts_to')}）。"
+           if out.get("new_listings") else "")
+        + f"⚠️ 持仓量增减**不指示方向**：每张合约都有买卖两方，"
+          f"净新增的多头与空头数量相同。以上不构成投资建议。")}
 
 
 def _n(v: float | None, spec: str = ",.0f") -> str:
@@ -724,6 +866,8 @@ _IMPL: dict[str, Callable[..., dict]] = {
     "get_gex": _tool_get_gex,
     "get_gex_curve": _tool_get_gex_curve,
     "get_option_chain_summary": _tool_get_option_chain_summary,
+    "get_option_flow": _tool_get_option_flow,
+    "get_oi_change": _tool_get_oi_change,
     "get_yield_curve": _tool_get_yield_curve,
     "get_cot": _tool_get_cot,
 }

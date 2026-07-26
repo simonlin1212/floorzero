@@ -94,6 +94,13 @@ class Chain:
     spot: float
     timestamp: Optional[str]
     contracts: tuple[Contract, ...]
+    #: 数据所属的**交易时段**（YYYY-MM-DD，来自 CBOE 的 `last_trade_time`）。
+    #: ⚠️ 与 `timestamp` 不是一回事：`timestamp` 是 CBOE **发布**这份文件的时刻
+    #: （实测周五 16:00 ET 收盘的数据，发布时间戳写的是 `2026-07-25 03:44:48`）。
+    #: 做本地历史沉淀**必须按 session 归档**——按墙上时间归档的话，
+    #: 周六和周日各打开一次，会把同一份周五收盘数据存成"两天的观测"，
+    #: 差值算出来全是 0，看着像"持仓没变"，其实是根本没有新数据。
+    session: Optional[str] = None
 
     def expiries(self) -> list[str]:
         return sorted({c.expiry for c in self.contracts})
@@ -206,8 +213,12 @@ def option_chain(ticker: str) -> Chain:
     spot = data.get("current_price")
     if not spot:
         raise DataNotAvailable(f"{tk} 未返回现价")
+    # 交易时段：`last_trade_time` 形如 "2026-07-24T16:00:00"（美东收盘时刻）
+    ltt = data.get("last_trade_time") or ""
+    session = ltt[:10] if len(ltt) >= 10 and ltt[4] == "-" else None
     return Chain(ticker=tk, spot=float(spot),
-                 timestamp=raw.get("timestamp"), contracts=tuple(out))
+                 timestamp=raw.get("timestamp"), session=session,
+                 contracts=tuple(out))
 
 
 # ── 短时快照缓存（REST 与 MCP **共用**）──
