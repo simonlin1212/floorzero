@@ -67,7 +67,7 @@ def test_同一时段重录是整段替换而不是逐行合并(tmp_db):
 def test_持仓量为空时当场报错而不是记个零(tmp_db):
     """上游真给了 None，那是"取不到" —— 落库成 0 会在明天变成一笔凭空的变化。"""
     from modules import flow_store as fs
-    with pytest.raises(ValueError, match="取不到"):
+    with pytest.raises(ValueError, match="failed fetch"):
         fs.record("X", "2260-01-05", 100.0,
                   [{"expiry": "2260-02-20", "type": "call", "strike": 100.0,
                     "open_interest": None, "volume": 1.0}])
@@ -177,7 +177,7 @@ def test_只攒到一天时说的是还没攒够而不是没有变化(tmp_db):
     fs.record("T", "2260-01-05", 100.0, [_oi("2260-03-19", "call", 100.0, 1.0)])
     r = fs.oi_change("T")
     assert r["enough"] is False
-    assert "至少两个" in r["note"]
+    assert "at least two" in r["note"]
 
 
 def test_伪造或反向的日期被拒绝(tmp_db):

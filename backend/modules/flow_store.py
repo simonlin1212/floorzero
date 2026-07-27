@@ -1,23 +1,23 @@
-"""持仓量（OI）的逐日沉淀。
+"""Open interest, accrued day by day.
 
-━━━ 为什么值得单独攒这一份 ━━━
-逐笔成交带（tape）告诉你**成交了什么**，持仓量告诉你**沉淀下来多少**。
-今天 OI 减昨天 OI = **净新增头寸** —— 这是"有人在建仓"最硬的证据，
-而且**不需要猜方向**（不像 UW 的 bullish/bearish 标签要靠 aggressor side）。
+━━━ Why this one is worth accruing separately ━━━
+The tape tells you **what traded**; open interest tells you **what settled into position**.
+Today's OI minus yesterday's = **net new positioning** — the hardest evidence there is that
+"someone is building", and it **needs no guess about direction** (unlike UW's bullish/bearish labels, which rest on the aggressor side).
 
-⚠️ **这份数据补不回来。** CBOE 只给当下的链，昨天的拿不到。
-所以它和 EDGAR/FINRA 那几条线的性质完全不同：那些能回填，这条**只能靠自己攒**，
-从装上 FloorZero 的那天开始。这也正是 UW 拿来单独卖钱的东西。
+⚠️ **This history cannot be backfilled.** Cboe gives the chain as it is now; yesterday's is gone.
+That makes it unlike the EDGAR and FINRA lanes entirely: those can be fetched retrospectively, this one **can only be accrued**,
+starting the day FloorZero is installed. It is also exactly what UW sells separately.
 
-━━━ ⚠️ 两个必须记住的口径 ━━━
+━━━ ⚠️ Two definitions to keep in mind ━━━
 
-1. **OI 是隔夜结算数**，反映**昨日收盘**的持仓，不含今天新开的仓。
-   所以"今天的快照"里那个 OI，实际是**前一交易日**的状态。
-   本表按 `snapshot_date`（拉取当天）存，读的时候要知道这层滞后。
+1. **Open interest settles overnight**, so it reflects positions at **yesterday's close** and excludes anything opened today.
+   The OI inside "today's snapshot" is therefore the state of the **previous trading session**.
+   This table is keyed by `snapshot_date` (the day it was pulled); read it knowing about that lag.
 
-2. **两条相邻记录之间未必是一个交易日。** 用户可能周一装上、周五才又打开。
-   所以差值必须带上"跨了几天"，**不能默认它是日变化** ——
-   把跨周的变动说成"今日新增"，是凭空造出一个不存在的数字。
+2. **Two adjacent records are not necessarily one trading day apart.** A user may install on Monday and next open the page on Friday.
+   So a difference must carry **how many days it spans** and **must never be assumed to be a daily change** —
+   calling a week's movement "added today" invents a number that does not exist.
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from modules import db
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS oi_snapshot (
     ticker        TEXT NOT NULL,
-    snapshot_date TEXT NOT NULL,          -- YYYY-MM-DD（拉取当天，美东）
+    snapshot_date TEXT NOT NULL,          -- YYYY-MM-DD (the day it was pulled, US/Eastern)
     expiry        TEXT NOT NULL,
     type          TEXT NOT NULL,          -- call | put
     strike        REAL NOT NULL,
@@ -48,32 +48,32 @@ def _ensure() -> None:
 
 def record(ticker: str, snapshot_date: str, spot: float,
            rows: Iterable[dict]) -> int:
-    """记一份当日快照（同一天重复拉取会覆盖，不会灌重）。
+    """Record one day's snapshot (pulling twice in a day overwrites; it never doubles up).
 
-    `rows` 用 `flow.to_dict()` 的形状。
+    `rows` takes the shape of `flow.to_dict()`.
     """
     _ensure()
     now = _now()
-    # ⚠️ 不写 `r["open_interest"] or 0` —— 上游若真给了 None，
-    #    那是"取不到"，把它永久落库成 0 会在明天变成一笔凭空的持仓变化。
-    #    这两个字段在 `Contract` 里是非可空的 float，真出现 None 说明
-    #    上游解析出了问题，**应该当场炸掉**，而不是悄悄记个 0。
+    # ⚠️ Not `r["open_interest"] or 0` — if upstream really does hand back None,
+    #    that means "could not fetch", and storing it permanently as 0 turns into a
+    #    phantom position change tomorrow. Both fields are non-nullable floats on
+    #    `Contract`, so a None means upstream parsing broke and it **should blow up here**, not quietly record a 0.
     payload = []
     for r in rows:
         oi, vol = r["open_interest"], r["volume"]
         if oi is None or vol is None:
             raise ValueError(
-                f"{ticker} {r['expiry']} {r['type']} {r['strike']} 的持仓量/成交量为空 —— "
-                f"这是**取不到**，不能当成 0 记进历史。请检查数据源解析。")
+                f"{ticker} {r['expiry']} {r['type']} {r['strike']} has null open interest/volume — "
+                f"that is a **failed fetch** and must not go into history as 0. Check the source parsing.")
         payload.append((ticker, snapshot_date, r["expiry"], r["type"],
                         float(r["strike"]), float(oi), float(vol), spot, now))
     if not payload:
         return 0
-    # ⚠️ **整段替换，不是逐行 merge。**
-    # 只用 `INSERT OR REPLACE` 的话，本次没带上的旧行会原样留着 ——
-    # 于是同一个交易时段下混着两次抓取的结果（比如先按 dte_max=7 存过、
-    # 再存全链），差值算的是"两个不同口径的拼接"。
-    # 放在一个事务里做，中途失败不会留下空表。
+    # ⚠️ **Replace the whole day, do not merge row by row.**
+    # With `INSERT OR REPLACE` alone, old rows not included this time simply stay —
+    # so one trading session ends up holding the results of two different pulls (say a
+    # dte_max=7 pull stored first, then the full chain), and the difference is computed
+    # across two different scopes stitched together. Done in one transaction, a failure part-way leaves no empty table.
     with db.connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
         conn.execute("DELETE FROM oi_snapshot WHERE ticker=? AND snapshot_date=?",
@@ -87,7 +87,7 @@ def record(ticker: str, snapshot_date: str, spot: float,
 
 
 def dates(ticker: str) -> list[dict]:
-    """该标的已攒下的快照日（新到旧）。"""
+    """Snapshot dates accrued for this ticker (newest first)."""
     _ensure()
     with db.connect() as conn:
         return [dict(r) for r in conn.execute(
@@ -98,53 +98,53 @@ def dates(ticker: str) -> list[dict]:
 
 def oi_change(ticker: str, date_to: Optional[str] = None,
               date_from: Optional[str] = None, top: int = 40) -> dict:
-    """两个快照日之间的持仓量变化。
+    """Change in open interest between two snapshot dates.
 
-    不传日期则取**最近两个**快照日。
-    ⚠️ 只攒到一天时返回 `enough=False` —— 那是「还没攒够」，
-    **不是「持仓没变化」**，这两件事在界面上必须长得不一样。
+    With no dates given, takes the **two most recent** snapshot days.
+    ⚠️ With only one day accrued it returns `enough=False` — meaning "not enough accrued yet",
+    **not "open interest did not change"**. Those two must never look alike in the interface.
     """
     _ensure()
     ds = [d["snapshot_date"] for d in dates(ticker)]
     if len(ds) < 2:
         return {"enough": False, "have": len(ds), "dates": ds,
-                "note": ("持仓量变化需要**至少两个**快照日。"
-                         "这份历史补不回来（CBOE 只给当下），"
-                         "从装上那天起每天打开一次就会攒起来。")}
+                "note": ("An open-interest change needs **at least two** snapshot days. "
+                         "This history cannot be backfilled (Cboe only gives the present), "
+                         "but it accrues on its own if the page is opened once a day from installation onwards.")}
     to_d = date_to or ds[0]
-    # ⚠️ **传进来的日期必须真的在库里。** `_load()` 查不到只会返回空字典，
-    #    差值就把"这天没存过"算成"这天持仓全是 0"，
-    #    输出一份"全量清仓"或"全量建仓"的假报告。
+    # ⚠️ **A date passed in has to actually be in the database.** `_load()` returns an empty
+    #    dict when it finds nothing, and the difference then reads "this day was never stored"
+    #    as "open interest was zero that day", producing a fake report of a wholesale exit or entry.
     if to_d not in ds:
         return {"enough": False, "have": len(ds), "dates": ds,
-                "note": (f"本地没有 {to_d} 的快照（已有：{'、'.join(ds[:8])}）。"
-                         f"这是**没存过这一天**，不是那天持仓为零。")}
+                "note": (f"No local snapshot for {to_d} (held: {', '.join(ds[:8])}). "
+                         f"That means **this day was never stored**, not that open interest was zero on it.")}
     if date_from:
         from_d = date_from
         if from_d not in ds:
             return {"enough": False, "have": len(ds), "dates": ds,
-                    "note": (f"本地没有 {from_d} 的快照（已有：{'、'.join(ds[:8])}）。"
-                             f"这是**没存过这一天**，不是那天持仓为零。")}
+                    "note": (f"No local snapshot for {from_d} (held: {', '.join(ds[:8])}). "
+                             f"That means **this day was never stored**, not that open interest was zero on it.")}
         if from_d >= to_d:
             return {"enough": False, "have": len(ds), "dates": ds,
-                    "note": f"起始日 {from_d} 必须早于结束日 {to_d}。"}
+                    "note": f"The start date {from_d} must be earlier than the end date {to_d}."}
     else:
         earlier = [d for d in ds if d < to_d]
         if not earlier:
             return {"enough": False, "have": len(ds), "dates": ds,
-                    "note": f"{to_d} 之前没有更早的快照。"}
+                    "note": f"There is no earlier snapshot before {to_d}."}
         from_d = earlier[0]
 
-    # ⚠️ **刻意在 Python 里做全外连接，而不是写 `FULL OUTER JOIN`。**
-    # SQLite 直到 3.39（2022）才支持它。本机是 3.53，但用户自部署时用的是
-    # 他们自己 Python 里那个 sqlite3 —— macOS 系统 Python 至今还带着 3.3x。
-    # 一句"在我机器上能跑"就能让整个自部署承诺落空，而这里的量级
-    # （单标的单日几千行）在内存里合并毫无压力。
+    # ⚠️ **The full outer join is done in Python on purpose, rather than as `FULL OUTER JOIN`.**
+    # SQLite only supports it from 3.39 (2022). This machine has 3.53, but a self-hosting user
+    # gets whatever sqlite3 their own Python carries — and macOS system Python still ships 3.3x.
+    # One "works on my machine" is enough to void the whole self-hosting promise, while the volume
+    # here (a few thousand rows per ticker per day) merges in memory without strain.
     #
-    # ⚠️ 两天的数据用**一条 SQL 一次读完**，不是先后两次查。
-    #    分两次（哪怕共用连接）中间仍可能夹进一次归档提交，
-    #    比较的就成了两个不同版本的库 —— 得到的差值不对应任何一个真实时刻。
-    #    单条语句在 SQLite 里天然是原子读，不需要显式事务。
+    # ⚠️ Both days are read in **a single SQL statement**, not two queries one after the other.
+    #    Split in two (even sharing a connection), an archiving commit can still land in between,
+    #    and the comparison is then between two different versions of the database — a difference
+    #    that corresponds to no real moment. A single statement is an atomic read in SQLite; no explicit transaction needed.
     cur: dict = {}
     prev: dict = {}
     with db.connect() as conn:
@@ -164,29 +164,29 @@ def oi_change(ticker: str, date_to: Optional[str] = None,
         expiry, typ, strike = key
         a, b = cur.get(key), prev.get(key)
         if a is None:
-            # ⚠️ **到期消失 ≠ 净平仓。** 周五到期的合约下周就不在链里了，
-            #    把它算成"持仓归零"，会凭空造出一大笔"净减持"，
-            #    而实际上没有任何人平仓 —— 它只是到期了。
+            # ⚠️ **Expiring out of the chain ≠ closing out.** A contract expiring Friday is gone
+            #    from the chain next week, and counting that as "open interest went to zero"
+            #    conjures up a huge net reduction when nobody closed anything — it merely expired.
             if expiry < to_d:
                 expired += 1
                 expired_oi += float(b["open_interest"]) if b else 0.0
                 continue
-            # ⚠️ **还没到期却不在结束快照里 = 那次快照不完整。**
-            #    CBOE 会把合约一直挂到到期为止，持仓归零也照样列出来（OI=0）。
-            #    所以"未到期 + 缺席"只能说明抓取那次漏了它 ——
-            #    当成 OI=0 就会伪造出一笔并不存在的全额平仓。
-            #    这是「取不到」，不是「没有」，必须单列并排除。
+            # ⚠️ **Not yet expired but absent from the end snapshot = that snapshot is incomplete.**
+            #    Cboe lists contracts right through to expiry, and keeps listing them at OI=0.
+            #    So "not expired and absent" can only mean that pull missed it —
+            #    treating it as OI=0 would fabricate a full close-out that never happened.
+            #    This is "could not fetch", not "is not there", and it must be counted apart and excluded.
             incomplete += 1
             incomplete_oi += float(b["open_interest"]) if b else 0.0
             continue
         if b is None:
-            # ⚠️ 结束快照里有、起始快照里没有 —— 这里**有真实的二义性**：
-            #    ① 期间新挂出来的行权价（确实从 0 开始，算进增持是对的）
-            #    ② 起始那次抓取漏了它（那它根本不是新增，算进去就是虚增）
-            #    两种情况在数据里长得**完全一样**，分不出来。
-            #    结束侧那边能分（未到期还缺席只可能是漏抓，因为 CBOE 挂到到期为止），
-            #    起始侧分不了 —— 所以照常计入，但把数量单独报出来，
-            #    并在文案里说清这层不确定，不假装它一定是新挂牌。
+            # ⚠️ Present in the end snapshot and absent from the start one — here there is **real ambiguity**:
+            #    ① a strike listed during the period (genuinely from 0, so counting it as an increase is right)
+            #    ② the start pull missed it (then it is no increase at all, and counting it inflates the number)
+            #    The two look **exactly alike** in the data and cannot be told apart.
+            #    The end side can be resolved (not expired and still absent can only be a missed pull, since Cboe lists to expiry),
+            #    the start side cannot — so it is counted as normal, but the count is reported separately
+            #    and the wording states the uncertainty rather than pretending these are certainly new listings.
             new_listings += 1
         oi_to = float(a["open_interest"]) if a else 0.0
         oi_from = float(b["open_interest"]) if b else 0.0
@@ -196,7 +196,7 @@ def oi_change(ticker: str, date_to: Optional[str] = None,
             "oi_from": oi_from, "oi_to": oi_to,
             "volume_to": float(a["volume"]) if a else 0.0,
             "change": change,
-            # 从 0 涨起来算不出百分比 —— 返回 None，别塞个假的 100%
+            # A rise from 0 has no percentage — return None rather than a fake 100%
             "change_pct": None if oi_from <= 0 else change / oi_from * 100.0,
         })
     gained = sorted((r for r in rows if r["change"] > 0),
@@ -204,28 +204,28 @@ def oi_change(ticker: str, date_to: Optional[str] = None,
     lost = sorted((r for r in rows if r["change"] < 0),
                   key=lambda r: r["change"])[:top]
     span = _daydiff(from_d, to_d)
-    # ⚠️ 「相邻」判定要看**中间有没有漏掉快照**，不能只看自然日差。
-    #    周二 → 周五也是 3 天，但中间漏了两次观测；而周五 → 周一虽然也是 3 天，
-    #    却确实是相邻的两个交易时段。库里的顺序才是真相。
+    # ⚠️ "Adjacent" has to mean **no snapshot was missed in between**, not just a small calendar gap.
+    #    Tuesday → Friday is 3 days with two missed observations; Friday → Monday is also 3 days
+    #    and genuinely two consecutive sessions. The order in the database is the truth here.
     idx_from, idx_to = ds.index(from_d), ds.index(to_d)
-    adjacent = (idx_from - idx_to) == 1        # ds 是新到旧
+    adjacent = (idx_from - idx_to) == 1        # ds runs newest to oldest
     return {
         "enough": True, "dates": ds, "date_from": from_d, "date_to": to_d,
         "span_days": span,
-        # 跨了几天必须说 —— 用户可能周一装上周五才打开，
-        # 那几天的累计变动写成"今日新增"就是凭空造数字。
+        # The span must be stated — a user may install on Monday and open the page on Friday,
+        # and writing those days' accumulated change as "added today" invents a number.
         "is_consecutive": adjacent,
         "snapshots_between": max(0, idx_from - idx_to - 1),
         "expired_excluded": expired,
         "expired_oi": expired_oi,
-        # 未到期却缺席 = 那次快照不完整。数量大就说明这次比较不可信。
+        # Not expired yet absent = that snapshot is incomplete. A large count means this comparison cannot be trusted.
         "incomplete_excluded": incomplete,
         "incomplete_oi": incomplete_oi,
         "new_listings": new_listings,
-        # 起始快照里没有、结束快照里有的合约数。**新挂牌与漏抓在数据上无法区分**，
-        # 这个数字大到不像正常新挂牌时，说明起始那次抓取可能不完整。
+        # Contracts absent from the start snapshot and present in the end one. **A new listing and a missed
+        # pull are indistinguishable in the data**; a count too large for normal new listings suggests the start pull was incomplete.
         "new_listings_ambiguous": True,
-        # 两次快照各自的合约数：差得离谱就是有一次抓漏了
+        # Contract counts of the two snapshots: a wild difference means one of the pulls missed rows
         "contracts_from": len(prev),
         "contracts_to": len(cur),
         "totals": {
@@ -234,22 +234,22 @@ def oi_change(ticker: str, date_to: Optional[str] = None,
             "contracts": len(rows),
         },
         "gained": gained, "lost": lost,
-        "note": ("持仓量是**隔夜结算数**：这里比较的是两个快照各自看到的"
-                 "「前一交易日收盘持仓」。增加=净新开仓，减少=净平仓，"
-                 "**但都不指示方向**（每张合约都有买卖两方，"
-                 "净新增的多头和空头一样多）。"
-                 + (f"已排除 {expired} 个**在此期间到期**的合约"
-                    f"（合计 {expired_oi:,.0f} 张持仓）—— 它们从链里消失是因为到期，"
-                    f"不是有人平仓，算进去会凭空造出一大笔净减持。"
+        "note": ("Open interest is an **overnight settlement figure**: what is compared here is the "
+                 "prior session's closing open interest as each snapshot saw it. A rise = net opening, "
+                 "a fall = net closing, **but neither indicates direction** (every contract has a buyer "
+                 "and a seller, so net new longs and shorts are equal). "
+                 + (f"Excluded as **expired during the period**: {expired} "
+                    f"({expired_oi:,.0f} of open interest between them) — they left the chain because "
+                    f"they expired, not because anyone closed, and counting them conjures up a large net reduction. "
                     if expired else "")
-                 + (f"⚠️ 另有 {incomplete} 个**尚未到期却不在结束快照里**的合约"
-                    f"（{incomplete_oi:,.0f} 张持仓）已排除 —— CBOE 会把合约挂到到期为止，"
-                    f"未到期还缺席只能说明那次抓取不完整，这是**取不到**不是**归零**。"
+                 + (f"⚠️ Also excluded, **not yet expired but absent from the end snapshot**: {incomplete} "
+                    f"({incomplete_oi:,.0f} of open interest) — Cboe lists contracts through to expiry, "
+                    f"so unexpired and absent can only mean that pull was incomplete: **could not fetch**, not **went to zero**. "
                     if incomplete else "")
-                 + (f"⚠️ 有 {new_listings} 个合约只出现在结束快照里，按「从 0 新增」计入。"
-                    f"**期间新挂牌**与**起始那次漏抓**在数据上无法区分，"
-                    f"这个数字异常大时应当怀疑起始快照不完整"
-                    f"（两次合约数 {len(prev):,} → {len(cur):,}）。"
+                 + (f"⚠️ Appearing only in the end snapshot and counted as rising from 0: {new_listings}. "
+                    f"**Listed during the period** and **missed by the start pull** cannot be told apart in the data, "
+                    f"so an unusually large number here is reason to suspect the start snapshot was incomplete "
+                    f"(contract counts {len(prev):,} → {len(cur):,}). "
                     if new_listings else "")),
     }
 

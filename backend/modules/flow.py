@@ -1,34 +1,34 @@
-"""期权流 —— 从**链快照**能算出什么，以及**算不出什么**。
+"""Options flow — what a **chain snapshot** can compute, and what it **cannot**.
 
-━━━━━━━━━━━━━━ ⚠️ 先把能力边界说清楚 ━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━ ⚠️ The limits of the data, stated first ━━━━━━━━━━━━━━
 
-Unusual Whales 的 flow 建立在**逐笔成交带（options tape）**上：每一笔成交
-带着 size、成交价、交易所、时间戳。有了它才能判断"这笔打在 ask 上还是 bid 上"，
-也才有 UW 招牌的 **bullish / bearish flow** 标签。
+Unusual Whales builds its flow on the **options tape**: every print carries a size,
+a trade price, an exchange and a timestamp. That is what makes "this one hit the ask,
+not the bid" answerable, and it is what UW's **bullish / bearish flow** labels rest on.
 
-**我们没有 tape。** CBOE 的免费延时接口给的是**链的快照**：
-每个合约的**当日累计成交量**、**持仓量**、bid/ask、希腊字母。
-拿到 tape 需要 OPRA feed —— 那正是本项目为了不做 redistributor 而刻意不碰的东西。
+**We have no tape.** Cboe's free delayed feed gives a **snapshot of the chain**:
+each contract's **cumulative volume for the day**, its **open interest**, bid/ask and greeks.
+Getting the tape means the OPRA feed — precisely what this project avoids so as not to be a redistributor.
 
-于是能与不能是很清楚的两堆：
+So the two piles are cleanly separated:
 
-| 能算（快照就够） | 算不出（必须有逐笔） |
+| Computable (a snapshot suffices) | Not computable (needs prints) |
 |---|---|
-| vol/OI 比（今日成交 vs 存量持仓） | **Sweep**：同一订单毫秒内跨多个交易所拆单 |
-| P/C 比（成交量 / 持仓量 / 名义金额 三口径） | **大单分级**：5,000 手是一笔还是 5,000 笔，快照里一模一样 |
-| 名义金额排序、到期与行权分布 | **主动买 / 主动卖**：成交打在 ask 还是 bid |
-| 绝对 delta / gamma 敞口 | **开仓 / 平仓**：同一笔成交是新建还是了结 |
-| **OI 日变化**（靠本地逐日沉淀，见 `history`） | —— |
+| vol/OI ratio (today's volume vs standing open interest) | **Sweeps**: one order split across exchanges within milliseconds |
+| P/C ratio (on volume / open interest / notional) | **Block-size tiering**: 5,000 contracts as one trade or as 5,000 looks identical in a snapshot |
+| Notional ranking, expiry and strike distribution | **Buyer- or seller-initiated**: whether a print hit the ask or the bid |
+| Absolute delta / gamma exposure | **Opening or closing**: whether a print started a position or ended one |
+| **Day-over-day OI change** (from history accrued locally, see `history`) | —— |
 
-⛔ **因此本模块不产出任何方向性标签。** 没有 aggressor side 却写「看涨流入」，
-是在把猜测当事实卖 —— 既违反项目「只输出数据不输出结论」的铁律，
-也正是 UW 那类产品最容易误导人的地方。
+⛔ **This module therefore produces no directional label at all.** Writing "bullish inflow"
+without an aggressor side is selling a guess as a fact — against this project's rule of
+outputting data rather than conclusions, and exactly where products like UW mislead people most.
 
-━━━━━━━━━━━━━━ ⭐ 快照反而有 tape 没有的一样东西 ━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━ ⭐ The snapshot does hold one thing the tape does not ━━━━━━━━━━━━━━
 
-**持仓量（OI）**。tape 只告诉你成交了什么，OI 告诉你**沉淀下来多少**。
-逐日记录 OI，其差值就是净新增头寸 —— 这是"谁在建仓"最硬的证据，
-且**不需要**猜方向。代价是它每天只更新一次，且**要靠自己攒**（见 `flow_store`）。
+**Open interest.** The tape tells you what traded; OI tells you **what settled into position**.
+Record OI daily and the difference is the net new positioning — the hardest evidence there is
+for "someone is building", and it needs **no** guess about direction. The cost: it updates once a day, and **you have to accrue it yourself** (see `flow_store`).
 """
 from __future__ import annotations
 
@@ -37,51 +37,51 @@ from typing import Iterable, Optional
 
 from sources.cboe import Chain, Contract
 
-#: vol/OI 超过这个倍数才算"异动"。1.0 = 今日成交量已超过全部存量持仓。
+#: vol/OI above this multiple counts as "unusual". 1.0 = today's volume already exceeds all standing open interest.
 UNUSUAL_RATIO = 1.0
 
-#: 低于这个成交量的合约不参与异动榜。
-#: ⚠️ 没有这道闸，OI=1、成交 3 手的僵尸合约会以 vol/OI=3.0 霸榜 ——
-#:    比值大是因为分母小，不是因为有人在动它。
+#: Contracts below this volume are kept out of the unusual table.
+#: ⚠️ Without that gate, a zombie contract with OI=1 and 3 lots traded tops the table at vol/OI=3.0 —
+#:    the ratio is large because the denominator is small, not because anyone is moving it.
 MIN_VOLUME = 50.0
 
-#: 合约乘数（美股期权固定 100 股/张）
+#: Contract multiplier (US equity options are fixed at 100 shares)
 MULTIPLIER = 100.0
 
 LIMITS = {
     "no_tape": (
-        "本页数据来自**期权链快照**（每个合约的当日累计成交量与持仓量），"
-        "不是逐笔成交带。因此 **sweep 检测、大单分级、主动买/卖方向、开仓/平仓判定"
-        "都做不了** —— 那些需要 OPRA 逐笔数据，而本项目刻意不碰 OPRA"
-        "（碰了就要按 redistributor 交费，整个自部署模式也就不成立了）。"),
+        "This page comes from an **options chain snapshot** (each contract's cumulative volume "
+        "and open interest for the day), not the print-by-print tape. So **sweep detection, "
+        "block-size tiering, buyer/seller direction and opening/closing calls are all out of "
+        "reach** — those need OPRA print data, which this project deliberately does not touch (touching it means paying as a redistributor, and the whole self-hosted model stops working)."),
     "no_direction": (
-        "⛔ **本页不给任何「看涨/看跌流入」标签。** 判断一笔期权成交是买方发起还是"
-        "卖方发起，必须知道它成交在 ask 还是 bid —— 快照里没有这个信息。"
-        "没有它却标方向，就是把猜测当事实。"),
+        "⛔ **This page attaches no bullish or bearish inflow label.** Telling whether an options "
+        "trade was buyer- or seller-initiated requires knowing whether it printed at the ask or the "
+        "bid — and a snapshot does not carry that. Labelling direction without it is selling a guess as a fact."),
     "vol_oi": (
-        "**vol/OI > 1** 的字面含义只有一条：今日成交量超过了该合约的存量持仓。"
-        "它**既可能**是新头寸在建、**也可能**全部是存量头寸在换手 —— "
-        "两者在快照里长得一模一样，这份数据分不出来。"
-        "要看头寸有没有真的增加，得比较**两天的持仓量**（本页下方那张卡）。"),
+        "**vol/OI > 1** means one thing literally: today's volume exceeded that contract's standing "
+        "open interest. It **may** be new positions going on and it **may** be existing positions "
+        "changing hands — the two look identical in a snapshot, and this data cannot separate them. "
+        "To see whether positions actually grew, compare **open interest across two days** (the card below)."),
     "oi_lag": (
-        "⚠️ **持仓量（OI）是隔夜结算数**，反映的是**昨日收盘**的持仓，"
-        "不含今天新开的仓。所以 vol/OI 的分母天然滞后一天 —— "
-        "这是 OCC 的结算节奏，不是本项目的取数问题。"),
+        "⚠️ **Open interest settles overnight**, so it reflects positions at **yesterday's close** "
+        "and excludes anything opened today. The denominator of vol/OI therefore lags by a day — "
+        "that is OCC's settlement rhythm, not a fetching problem on our side."),
     "delayed": (
-        "CBOE 免费接口是**延时**数据（通常 15 分钟）。做研究够用，抢单不够。"),
+        "Cboe's free feed is **delayed** data, usually by 15 minutes. Enough for research, not for chasing fills."),
 }
 
 
 def _mid(c: Contract) -> Optional[float]:
-    """中间价。买一卖一缺一边就返回 None —— **不拿 last 顶替**。
+    """Mid price. Missing either side of the quote returns None — **`last` is never substituted**.
 
-    ⚠️ `last` 是"最后一笔成交价"，可能是几天前的。用它当今天的价去乘成交量，
-    算出来的名义金额会离谱地错，而且错得看不出来。
+    ⚠️ `last` is "the price of the most recent print", which may be days old. Used as today's
+    price against today's volume, the notional comes out wildly wrong, and wrong invisibly.
 
-    ⚠️ **零买价（bid=0、ask>0）照常算中间价，这是刻意的**：深度虚值合约
-    常年 bid=0 / ask=0.01，把它们全剔掉会让"按权利金"这个口径严重偏向实值侧，
-    偏差比留着更大。但零买价意味着**根本没人接盘**，中间价高估了它的价值 ——
-    所以这类合约的数量会被单独统计并在界面上报出来（`one_sided_quotes`）。
+    ⚠️ **A zero bid (bid=0, ask>0) still gets a mid, deliberately**: deep out-of-the-money
+    contracts sit at bid=0 / ask=0.01 for months, and dropping them all would tilt the premium-weighted
+    view heavily towards the in-the-money side — a larger distortion than keeping them. But a zero bid
+    means **nobody is bidding at all**, so the mid overstates the contract's worth — which is why these are counted separately and reported in the UI (`one_sided_quotes`).
     """
     if c.bid is None or c.ask is None:
         return None
@@ -91,13 +91,13 @@ def _mid(c: Contract) -> Optional[float]:
 
 
 def _one_sided(r: "FlowRow") -> bool:
-    """只有卖价没有买价 —— 中间价偏乐观。"""
+    """An ask with no bid — the mid reads optimistically."""
     return r.mid is not None and (r.bid_zero is True)
 
 
 @dataclass(frozen=True)
 class FlowRow:
-    """单个合约的当日快照指标。"""
+    """One contract's snapshot metrics for the day."""
 
     symbol: str
     expiry: str
@@ -107,7 +107,7 @@ class FlowRow:
     volume: float
     open_interest: float
     mid: Optional[float]
-    #: 买价为 0（或缺失）而卖价有效 —— 中间价偏乐观，见 `_mid` 说明
+    #: Bid is 0 (or absent) while the ask is valid — the mid reads optimistically, see `_mid`
     bid_zero: bool
     last: Optional[float]
     iv: Optional[float]
@@ -116,11 +116,11 @@ class FlowRow:
 
     @property
     def vol_oi(self) -> Optional[float]:
-        """成交量 / 持仓量。OI 为 0 时**返回 None 而不是无穷大**。
+        """Volume / open interest. When OI is 0 this **returns None, not infinity**.
 
-        ⚠️ OI=0 是**前收结算持仓为 0**这个事实，比值算不出来。
-        塞个 999 进去排序会把它伪装成"比值极高"，塞 0 又会把它埋掉。
-        两种都是撒谎，所以返回 None，另用 `zero_prior_oi` 标出来。
+        ⚠️ OI=0 is the fact that **settled open interest at the prior close was zero**; the ratio
+        simply does not exist. Stuffing in 999 disguises it as "an extreme ratio" and sorts it to
+        the top; stuffing in 0 buries it. Both lie, so it returns None and `zero_prior_oi` marks it instead.
         """
         if self.open_interest <= 0:
             return None
@@ -128,33 +128,33 @@ class FlowRow:
 
     @property
     def zero_prior_oi(self) -> bool:
-        """**前收结算持仓为 0**，且今天有成交。
+        """**Settled open interest at the prior close was zero**, and there was volume today.
 
-        ⚠️ 这是一条**事实陈述**，不是"今天全是新开仓"的推断。
-        原来叫 `is_new_strike`（"全新行权价"）是过度断言了 ——
-        快照分不出这三种情况：
-        ① 这个行权价刚挂出来（确实是全新的）
-        ② 行权价早就在，只是此前没人持有（不新，只是冷）
-        ③ 今天开了又平的日内往返（明天 OI 还是 0，一张也没沉淀下来）
-        能说的只有"昨收时没有未平仓头寸，今天有人交易它"。
-        要知道有没有真沉淀下来，得看**明天**的持仓量（下方那张卡）。
+        ⚠️ This is a **statement of fact**, not the inference that "all of today is new positions".
+        The old name `is_new_strike` ("a brand-new strike") claimed too much —
+        a snapshot cannot separate these three cases:
+        ① the strike was only just listed (genuinely new)
+        ② the strike has been there all along, nobody just happened to hold it (not new, only cold)
+        ③ opened and closed intraday (tomorrow's OI is 0 again, nothing settled at all)
+        All that can be said is "there was no open position at yesterday's close, and someone traded it today".
+        To know whether anything settled, look at **tomorrow's** open interest (the card below).
         """
         return self.open_interest <= 0 and self.volume > 0
 
     @property
     def notional(self) -> Optional[float]:
-        """权利金规模的**估算值** = 当日累计成交量 × **抓取时**中间价 × 100。
+        """An **estimate** of premium size = day's cumulative volume × the mid **at capture time** × 100.
 
-        ⚠️⚠️ **这不是实际成交金额，而且差距可以很大。**
-        链快照没有逐笔成交价、也没有 VWAP，只有"抓取那一刻"的买卖盘口。
-        若 1,000 张在上午以 $1 成交、抓取时中间价已涨到 $5，
-        这里会算出 $50 万，而真实付出的权利金约 $10 万 —— **五倍**。
+        ⚠️⚠️ **This is not the money actually traded, and the gap can be large.**
+        A chain snapshot carries no per-print price and no VWAP, only the quote at the instant of capture.
+        If 1,000 contracts traded at $1 in the morning and the mid is $5 by capture time,
+        this computes $500k against roughly $100k of premium actually paid — **five times over**.
 
-        没有 tape 就没法算准，所以本项目的做法是：照算，但**在所有出口都
-        叫它「估算」**，绝不叫「实际成交额」。字段名 `notional` 保留，
-        对外文案一律是"按当前中间价估算"。
+        Without a tape it cannot be made exact, so the approach here is: compute it, but **call it
+        an estimate at every exit**, never "the amount traded". The field name `notional` stays;
+        the user-facing wording is always "estimated at the current mid".
 
-        中间价缺失时返回 None，**不回退到 `last`**（见 `_mid` 的说明）。
+        Returns None when the mid is missing, and **never falls back to `last`** (see `_mid`).
         """
         return None if self.mid is None else self.volume * self.mid * MULTIPLIER
 
@@ -168,14 +168,14 @@ class FlowRow:
 def parse(chain: Chain, dte_max: Optional[int] = None,
           expiry: Optional[str] = None,
           traded_only: bool = True) -> list[FlowRow]:
-    """链 → 逐合约快照行。
+    """Chain → one snapshot row per contract.
 
-    ⚠️ `traded_only` 必须由调用方明确选：
-    - **展示**用 True（今天没成交的合约在"今日异动"里没有意义）
-    - **归档 / 持仓量口径**用 **False** —— 一个合约今天没成交，
-      不代表它的持仓量是 0。只存有成交的合约，第二天它没成交就从库里消失，
-      OI 差值会把它记成"净平仓全部头寸"，而它其实一张都没动。
-      （这个坑在第一版里真实存在，被 codex 抓出来。）
+    ⚠️ `traded_only` has to be chosen explicitly by the caller:
+    - **Display** wants True (a contract that did not trade today has no place in "today's unusual")
+    - **Archiving and the open-interest view** want **False** — a contract not trading today
+      does not mean its open interest is zero. Store only the contracts that traded and, on a day
+      it does not trade, it vanishes from the store; the OI difference then records it as "the whole
+      position closed out" when not one contract moved. (This bug was real in the first version, caught by codex.)
     """
     rows = []
     for c in chain.filter(expiry=expiry, dte_max=dte_max,
@@ -201,26 +201,26 @@ def to_dict(r: FlowRow) -> dict:
     }
 
 
-# ─────────────────────────── 汇总 ───────────────────────────
+# ─────────────────────────── Aggregation ───────────────────────────
 
 def ratios(traded: Iterable[FlowRow], all_rows: Iterable[FlowRow]) -> dict:
-    """认沽/认购比 —— **三个口径都给，不挑一个当「那个」P/C**。
+    """Put/call ratio — **all three bases are given; none is crowned as "the" P/C**.
 
-    三者量的是不同的东西，结论不同是正常的：
-    - **按成交量**：今天有多少张合约换手（最常被引用，也最容易被低价虚值合约灌水）
-    - **按持仓量**：沉淀下来的仓位结构（慢，但反映真实仓位）
-    - **按权利金估算**：钱的分布（一张 $50 的深度实值 ≠ 一张 $0.03 的彩票）
+    They measure different things, and disagreeing is normal:
+    - **By volume**: how many contracts changed hands today (most quoted, and easiest for cheap out-of-the-money contracts to flood)
+    - **By open interest**: the structure of positions that settled (slow, but real positioning)
+    - **By estimated premium**: where the money is (one $50 deep in-the-money contract ≠ one $0.03 lottery ticket)
 
-    ⚠️ **两个参数不是冗余的。** 成交量与权利金只能来自**今日有成交**的合约，
-    而持仓量必须来自**筛选范围内的全部合约** —— 一个合约今天没成交，
-    它的持仓量照样在那里。第一版把三个口径都算在"有成交子集"上，
-    结果"沉淀下来的仓位结构"实际是"今天碰过的那些合约的仓位"，
-    在冷门标的上会差出一个数量级。
+    ⚠️ **The two arguments are not redundant.** Volume and premium can only come from contracts that
+    **traded today**, while open interest has to come from **every contract in the filtered scope** —
+    a contract that did not trade today still holds its open interest. The first version computed all
+    three on the traded subset, so "the structure of settled positions" was really "positions in the
+    contracts touched today", which on a thinly traded ticker is off by an order of magnitude.
     """
     cv = pv = cn = pn = 0.0
     n_no_mid = 0
-    nc = np_ = 0                    # 各边**算得出**权利金的合约数
-    one_sided = 0                   # 零买价（没人接盘）却计入了估算的合约数
+    nc = np_ = 0                    # contracts per side whose premium **can be computed**
+    one_sided = 0                   # zero-bid contracts (nobody buying) still counted in the estimate
     for r in traded:
         is_put = r.type == "put"
         cv, pv = (cv, pv + r.volume) if is_put else (cv + r.volume, pv)
@@ -248,38 +248,38 @@ def ratios(traded: Iterable[FlowRow], all_rows: Iterable[FlowRow]) -> dict:
             co += r.open_interest
 
     def _r(p: float, c: float) -> Optional[float]:
-        # ⚠️ 分母为 0 时返回 None，不返回 0 也不返回无穷 ——
-        #    "没有认购成交"和"认沽/认购=0"是完全相反的两件事。
+        # ⚠️ A zero denominator returns None, not 0 and not infinity —
+        #    "no call volume" and "put/call = 0" are opposite statements.
         return None if c <= 0 else p / c
 
     return {
         "by_volume": {"call": cv, "put": pv, "pc": _r(pv, cv),
-                      "basis": "今日有成交的合约"},
+                      "basis": "contracts that traded today"},
         "by_oi": {"call": co, "put": po, "pc": _r(po, co),
-                  "basis": f"筛选范围内全部 {n_all} 个合约（含今日无成交的）"},
-        # ⚠️ 某一边**一个都算不出**时给 None，不给 0。
-        #    认沽全缺报价而认购能算时，输出 put=0 / pc=0.00，
-        #    读起来是"认沽侧没有钱"，实际是"认沽侧算不出来"。
+                  "basis": f"all {n_all} contracts in the filtered scope, including those that did not trade today"},
+        # ⚠️ When a side has **nothing computable at all**, give None rather than 0.
+        #    With puts missing every quote and calls computable, the output reads put=0 / pc=0.00,
+        #    which says "no money on the put side" when it means "the put side cannot be computed".
         "by_notional": {"call": cn if nc else None,
                         "put": pn if np_ else None,
                         "pc": _r(pn, cn) if (nc and np_) else None,
                         "counted_call": nc, "counted_put": np_,
-                        "basis": "今日有成交的合约，按抓取时中间价**估算**"},
-        # 没有任何报价的合约算不出权利金，**要说有多少条被排除**
+                        "basis": "contracts that traded today, **estimated** at the mid when captured"},
+        # Contracts with no quote at all yield no premium — **say how many were left out**
         "notional_excluded": n_no_mid,
-        # 有卖价没买价的合约照算了，但中间价偏乐观，**要说有多少条**
+        # Contracts with an ask but no bid are counted, but their mid reads optimistically — **say how many**
         "one_sided_quotes": one_sided,
     }
 
 
 def exposure(rows: Iterable[FlowRow], spot: float) -> dict:
-    """今日成交所对应的 delta / gamma 敞口 —— **只给绝对量，不给净额**。
+    """Delta and gamma exposure behind today's volume — **absolute only, never net**.
 
-    ⚠️ 为什么不给「净 delta」：净额要求知道每一笔是买入还是卖出。
-    快照没有 aggressor side，把所有成交都当成买方发起去加总，
-    算出来的"净 delta 敞口"是个**看着很专业的假数字**。
-    这里给的是 Σ|delta|×量 —— 「今天成交的合约总共挂着多少方向性敞口」，
-    这个陈述不需要知道谁是买方，因此是真的。
+    ⚠️ Why there is no "net delta": a net figure requires knowing whether each print was a buy
+    or a sell. The snapshot has no aggressor side, and summing every print as buyer-initiated
+    produces a "net delta exposure" that is a **fake number wearing a professional face**.
+    What is given here is Σ|delta|×volume — "how much directional exposure sits on the contracts
+    traded today" — a statement that does not need to know who the buyer was, and so is true.
     """
     call_d = put_d = gam = 0.0
     n_call = n_put = n_gamma = 0
@@ -305,10 +305,10 @@ def exposure(rows: Iterable[FlowRow], spot: float) -> dict:
             n_gamma += 1
             gam += abs(r.gamma) * r.volume * MULTIPLIER * spot * spot / 100.0
 
-    # ⚠️ **算不出时返回 None，不是 0 —— 而且要按边分别判。**
-    #    只看"总共有几个 delta"是不够的：认沽全有、认购全缺时，
-    #    认购那一侧照样会显示 0，把"这边算不出"说成"这边没有敞口"。
-    #    总额也一样：一边缺了，加总出来的只是半张图，所以两边齐全才给。
+    # ⚠️ **Return None rather than 0 when it cannot be computed — and judge each side separately.**
+    #    Counting "how many deltas there are in total" is not enough: with puts complete and calls
+    #    all missing, the call side still shows 0, saying "no exposure here" when it means "not computable here".
+    #    Same for the total: with one side missing the sum is half a picture, so it is given only when both sides are there.
     hc, hp, hg = n_call > 0, n_put > 0, n_gamma > 0
     return {
         "call_delta_shares": call_d if hc else None,
@@ -323,13 +323,13 @@ def exposure(rows: Iterable[FlowRow], spot: float) -> dict:
         "counted_delta_call": n_call,
         "counted_delta_put": n_put,
         "counted_gamma": n_gamma,
-        "note": ("这是**绝对**敞口（Σ|delta|×成交量×100），不是净敞口。"
-                 "净额需要知道每笔是买是卖，快照里没有这个信息。"),
+        "note": ("This is **absolute** exposure (Σ|delta|×volume×100), not net exposure. "
+                 "A net figure needs to know whether each print was a buy or a sell, and the snapshot does not carry that."),
     }
 
 
 def by_expiry(rows: Iterable[FlowRow]) -> list[dict]:
-    """按到期日汇总 —— 看今天的成交集中在多短的期限上。"""
+    """Aggregate by expiry — how short-dated today's volume is concentrated."""
     buckets: dict[str, dict] = {}
     for r in rows:
         b = buckets.setdefault(r.expiry, {
@@ -348,7 +348,7 @@ def by_expiry(rows: Iterable[FlowRow]) -> list[dict]:
             b["notional"] += nt
             b["notional_counted"] += 1
     out = sorted(buckets.values(), key=lambda b: b["expiry"])
-    # 整个到期桶一个报价都没有 → 权利金是**算不出**，不是 0
+    # Not one quote in the whole expiry bucket → premium is **not computable**, not 0
     for b in out:
         if b["notional_counted"] == 0:
             b["notional"] = None
@@ -357,11 +357,11 @@ def by_expiry(rows: Iterable[FlowRow]) -> list[dict]:
 
 def by_strike(rows: Iterable[FlowRow], spot: float,
               width_pct: float = 0.15) -> dict:
-    """按行权价汇总（只取现价附近，远端行权价噪声大且没人看）。
+    """Aggregate by strike (near spot only; far strikes are noisy and nobody reads them).
 
-    ⚠️ **裁剪范围必须跟着结果一起返回。** 这张图与"按到期日"那张
-    同处一张卡片，但后者统计**全部**行权价 —— 两张图的成交量合计对不上。
-    不把窗口说出来，用户只会以为其中一张算错了。
+    ⚠️ **The clipping window must be returned alongside the result.** This chart shares a card
+    with the by-expiry one, which counts **every** strike — so the two volume totals will not
+    reconcile. Leave the window unsaid and the user simply assumes one of them is miscomputed.
     """
     lo, hi = spot * (1 - width_pct), spot * (1 + width_pct)
     dropped = 0
@@ -392,19 +392,19 @@ def by_strike(rows: Iterable[FlowRow], spot: float,
 
 def summarize(chain: Chain, rows: list[FlowRow],
               all_rows: Optional[list[FlowRow]] = None, top: int = 40) -> dict:
-    """一页所需的全部聚合。
+    """Everything one page needs, aggregated.
 
-    `rows` = 今日有成交的合约（成交量 / 权利金 / 敞口 口径）。
-    `all_rows` = 同一筛选范围内的**全部**合约（持仓量口径）。不传则退回 `rows`，
-    但那样持仓量口径就只覆盖有成交的子集 —— 调用方应当显式传入。
+    `rows` = contracts that traded today (the volume / premium / exposure basis).
+    `all_rows` = **every** contract in the same filtered scope (the open-interest basis). Omitted, it
+    falls back to `rows`, but then the open-interest basis covers only the traded subset — callers should pass it explicitly.
     """
     scope_rows = all_rows if all_rows is not None else rows
-    # ⚠️ 一律按名义金额排，**不把"前收持仓为 0"当排序键**。
-    # 实测（SPY 2026-07-25）把它们顶到最前，榜首是三张各值几千美元的
-    # 深度虚值彩票（820C / 815C / 590P，名义 $0.00M），
-    # 而当天真正的大动作 —— 739P 成交 86,279 张、名义 $24M —— 被压到第 5。
-    # "前收持仓为 0"是个**属性**（用徽章标出来），不是重要性的度量：
-    # 有钱的会自己浮上来，没钱的本来就该沉下去。
+    # ⚠️ Always sorted by notional; **"zero prior OI" is never a sort key**.
+    # Measured (SPY 2026-07-25), sorting on it puts three deep out-of-the-money lottery tickets
+    # worth a few thousand dollars each at the top (820C / 815C / 590P, notional $0.00M),
+    # while the real move of the day — 739P, 86,279 contracts, $24M notional — is pushed to fifth.
+    # "Zero prior OI" is an **attribute** (shown as a badge), not a measure of importance:
+    # what has money in it floats up on its own, and what does not belongs at the bottom.
     unusual = sorted((r for r in rows if r.unusual),
                      key=lambda r: -(r.notional or 0.0))
     biggest = sorted(rows, key=lambda r: -(r.notional or 0.0))
@@ -412,7 +412,7 @@ def summarize(chain: Chain, rows: list[FlowRow],
         "ticker": chain.ticker,
         "spot": chain.spot,
         "timestamp": chain.timestamp,
-        # ⚠️ session = 数据所属交易时段；timestamp = CBOE 发布时刻。两者常差一天。
+        # ⚠️ session = the trading session the data belongs to; timestamp = when Cboe published it. They often differ by a day.
         "session": chain.session,
         "counts": {
             "traded_contracts": len(rows),
@@ -420,7 +420,7 @@ def summarize(chain: Chain, rows: list[FlowRow],
             "unusual": sum(1 for r in rows if r.unusual),
             "zero_prior_oi": sum(1 for r in rows if r.zero_prior_oi),
             "total_volume": sum(r.volume for r in rows),
-            # ⚠️ 持仓量合计走全链，与 by_oi 口径一致
+            # ⚠️ Total open interest runs over the whole chain, consistent with by_oi
             "total_oi": sum(r.open_interest for r in scope_rows),
         },
         "ratios": ratios(rows, scope_rows),

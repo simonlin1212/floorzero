@@ -1,36 +1,36 @@
-"""内部人交易（Form 4）解析、分类与聚合。
+"""Insider trades (Form 4): parsing, classification and aggregation.
 
-━━━ ⭐ 这个分栏的全部价值，在于把交易类型分清楚 ━━━
+━━━ ⭐ The entire value of this section lies in telling the transaction types apart ━━━
 
-**Form 4 里绝大多数行不是「内部人看好自家股票所以买入」。**
-2026Q1 全市场 103,733 笔非衍生品交易，实测代码分布：
+**Most rows in a Form 4 are not "an insider likes the stock, so they bought it".**
+Across 103,733 non-derivative transactions market-wide in 2026Q1, the measured code mix:
 
-    F 代扣税 27,019 │ A 授予 24,690 │ S 卖出 22,822 │ M 行权 16,300
-    P 公开市场买入 **5,935（仅 5.6%）** │ 其余 D/J/G/C/L/X/U/I/W 合计 ~7k
+    F tax-withheld 27,019 │ A grant 24,690 │ S sale 22,822 │ M exercise 16,300
+    P open-market buy **5,935 (just 5.6%)** │ all of D/J/G/C/L/X/U/I/W together ~7k
 
-而按 SEC 的「取得/处置」标志（`TRANS_ACQUIRED_DISP_CD`）统计，
-标为「取得」的有 48,849 笔 —— **是真实公开市场买入的 8 倍**。
-把授予、行权、赠与当成「内部人买入」，是这类数据最经典的误读。
+Count instead by the SEC's acquired/disposed flag (`TRANS_ACQUIRED_DISP_CD`) and
+48,849 rows come out as "acquired" — **eight times the real open-market buying**.
+Reading grants, exercises and gifts as "insiders buying" is the classic misreading of this data.
 
-**实测样本（3M CO，2026-07-23，一份申报两行）：**
+**A measured sample (3M CO, 2026-07-23, one filing, two rows):**
 
-    M 行权 7,880 股 @ $154.69  → 标记「取得」
-    S 卖出 7,880 股 @ $170.44  → 标记「处置」
+    M exercise 7,880 shares @ $154.69  → flagged "acquired"
+    S sale     7,880 shares @ $170.44  → flagged "disposed"
 
-同日行权即卖出。笼统统计会说「内部人买入 120 万美元」，
-**实际他在公开市场一股没买、拿到手全卖了** —— 是薪酬变现，不是看多。
+Exercised and sold the same day. A blunt count reports "insiders bought $1.2m";
+**he bought not one share on the open market and sold all he received** — pay being cashed out, not conviction.
 
-→ 所以本模块的第一原则：**按交易代码分类，不按取得/处置标志**。
-   `is_open_market`（P/S）才是有信号含义的那部分。
+→ Hence this module's first principle: **classify by transaction code, not by the acquired/disposed flag**.
+   `is_open_market` (P/S) is the part that carries any signal.
 
-━━━ 另一个维度：10b5-1 预设交易计划 ━━━
-按 Rule 10b5-1 预先制定的计划卖出，是几个月前就排好的，
-与「临时决定卖出」的信号强度完全不同。SEC 从 2023 年起要求在申报里勾选。
-⚠️ 该字段编码混乱，实测同一季度里 `0/1`、`false/true`、空值三套并存，必须归一。
+━━━ The other dimension: Rule 10b5-1 pre-arranged plans ━━━
+A sale made under a plan adopted in advance was scheduled months ago, which carries
+nothing like the weight of "decided to sell today". The SEC has required the box be ticked since 2023.
+⚠️ The field's encoding is a mess: within a single quarter `0/1`, `false/true` and blanks all coexist, so it has to be normalised.
 
-━━━ 免责 ━━━
-本模块只做分类与统计，**不打「看涨/看跌」标签、不给评分**。
-内部人买卖的预测力在学术上有争议，且披露有滞后；呈现事实即可。
+━━━ Disclaimer ━━━
+This module classifies and counts. **It attaches no bullish/bearish label and no score.**
+Whether insider trades predict anything is academically contested, and disclosure lags; presenting the facts is enough.
 """
 from __future__ import annotations
 
@@ -41,40 +41,40 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Optional
 
-#: SEC Form 4 官方交易代码表（2026-07-26 实读 https://www.sec.gov/files/form4.pdf §8）
+#: The SEC's official Form 4 transaction codes (read 2026-07-26 from https://www.sec.gov/files/form4.pdf §8)
 TX_CODES: dict[str, str] = {
     # General
-    "P": "公开市场买入", "S": "公开市场卖出", "V": "自愿提前申报",
-    # Rule 16b-3（薪酬相关，多数不含主动买卖意图）
-    "A": "授予/奖励", "D": "向公司处置", "F": "代扣税/抵行权价",
-    "I": "16b-3(f) 自主交易", "M": "期权行权/转换",
-    # 衍生品
-    "C": "衍生品转换", "E": "空头衍生品到期", "H": "多头衍生品到期(有对价)",
-    "O": "价外期权行权", "X": "价内/平价期权行权",
-    # 豁免与小额
-    "G": "赠与", "L": "16a-6 小额取得", "W": "继承/遗嘱", "Z": "表决权信托存取",
-    # 其他
-    "J": "其他（需说明）", "K": "权益互换", "U": "控制权变更要约",
+    "P": "open-market purchase", "S": "open-market sale", "V": "voluntary early filing",
+    # Rule 16b-3 (compensation-related; most carry no active buy or sell intent)
+    "A": "grant/award", "D": "disposition to the issuer", "F": "tax withheld / exercise price paid",
+    "I": "16b-3(f) discretionary transaction", "M": "option exercise/conversion",
+    # Derivatives
+    "C": "derivative conversion", "E": "short derivative expired", "H": "long derivative expired (value received)",
+    "O": "out-of-the-money option exercise", "X": "in- or at-the-money option exercise",
+    # Exempt and small
+    "G": "gift", "L": "16a-6 small acquisition", "W": "inheritance/bequest", "Z": "voting trust deposit or withdrawal",
+    # Other
+    "J": "other (explanation required)", "K": "equity swap", "U": "change-of-control tender",
 }
 
-#: ⭐ **只有这两个代码是公开市场主动买卖** —— 唯一有信号含义的部分
+#: ⭐ **Only these two codes are active open-market trading** — the only part that carries signal
 OPEN_MARKET = frozenset({"P", "S"})
 
-#: 薪酬/机械性交易：授予、行权、代扣税、向公司处置。
-#: 单列出来是因为它们**数量最多**，混进统计会淹没真正的信号。
+#: Compensation and mechanical transactions: grants, exercises, tax withholding, disposition to the issuer.
+#: Kept separate because they are **by far the most numerous**; mixed into the totals they drown the real signal.
 COMPENSATION = frozenset({"A", "M", "F", "D", "I"})
 
 
 def code_label(code: str) -> str:
-    """交易代码 → 中文说明。未知代码原样返回，不硬塞进已知分类。"""
+    """Transaction code → label. Unknown codes come back as they are, never forced into a known bucket."""
     if not code:
-        return "未知"
-    # 复合代码如 "S/K"（互换）取主码
+        return "unknown"
+    # A compound code such as "S/K" (swap) takes the primary code
     return TX_CODES.get(code.split("/")[0].strip().upper(), code)
 
 
 def code_group(code: str) -> str:
-    """交易代码 → 大类：open_market / compensation / other。"""
+    """Transaction code → group: open_market / compensation / other."""
     c = (code or "").split("/")[0].strip().upper()
     if c in OPEN_MARKET:
         return "open_market"
@@ -84,10 +84,10 @@ def code_group(code: str) -> str:
 
 
 def _norm_bool(v: Optional[str]) -> Optional[bool]:
-    """归一 SEC 数据里三套并存的布尔编码。
+    """Normalise the three boolean encodings that coexist in SEC data.
 
-    ⚠️ 实测 2026Q1 的 `AFF10B5ONE` 字段同时存在 `0/1`、`false/true`、空值。
-    只认其中一套会让大部分 10b5-1 计划交易识别不出来。
+    ⚠️ In 2026Q1 the `AFF10B5ONE` field carries `0/1`, `false/true` and blanks at the same time.
+    Recognising only one of them leaves most 10b5-1 plan trades unidentified.
     """
     if v is None:
         return None
@@ -99,28 +99,28 @@ def _norm_bool(v: Optional[str]) -> Optional[bool]:
     return None
 
 
-#: 申报人明确表示"没有代码"的写法
+#: Ways filers write "there is no symbol"
 _NO_TICKER = {"NONE", "N/A", "NA", "N//A", "--", "-", "", "TBD", "NOT APPLICABLE",
               "NO SYMBOL", "NONE.", "0"}
-#: 交易所前缀（`NYSE: KRC` / `ASX:LNW` / `NASDAQ: XYZ`）
+#: Exchange prefixes (`NYSE: KRC` / `ASX:LNW` / `NASDAQ: XYZ`)
 _EXCHANGE_PREFIX = re.compile(
     r"^(?:NYSE|NASDAQ|NYSEAMERICAN|NYSE AMERICAN|AMEX|OTC|OTCQB|OTCQX|ASX|TSX|LSE)\s*[:：]\s*",
     re.I)
 
 
 def clean_ticker(raw: Optional[str]) -> Optional[str]:
-    """归一 `ISSUERTRADINGSYMBOL` —— 这是**申报人自由填写**的字段，很脏。
+    """Normalise `ISSUERTRADINGSYMBOL` — a field **the filer types freely**, and it is dirty.
 
-    实测 16 万行里的真实值：`NONE`(875) / `N/A`(209) / `MOGA/MOGB`(107) /
+    Real values across 160k rows: `NONE`(875) / `N/A`(209) / `MOGA/MOGB`(107) /
     `GEF, GEF-B`(99) / `Z AND ZG`(87) / `NYSE: KRC`(58) / `(SIRI)`(38) / `N O G`(44)。
-    不清洗的话 `NONE` 会以 875 笔的量冲进"最活跃标的"榜首 —— 一个不存在的公司。
+    Left alone, `NONE` walks to the top of "most active tickers" with 875 trades — a company that does not exist.
 
-    处理约定（**都是有损的判断，所以写在这里而不是藏进正则**）：
-    - 明确表示无代码的写法 → None
-    - 去掉交易所前缀与括号、压掉内部空格（`N O G` → `NOG`）
-    - **多代码（双重股权）取第一个**（`MOGA/MOGB` → `MOGA`）：
-      同一家公司的不同股份类别，聚合到主代码比拆成两个虚假标的更贴近事实
-    - 清洗后仍不像代码（>6 位或含非法字符）→ None，不硬塞
+    The conventions (**all of them lossy judgements, which is why they are written here rather than hidden inside a regex**):
+    - Spellings that explicitly mean "no symbol" → None
+    - Strip exchange prefixes and brackets, squeeze out internal spaces (`N O G` → `NOG`)
+    - **Multiple symbols (dual-class) take the first** (`MOGA/MOGB` → `MOGA`):
+      for share classes of one company, folding into the primary symbol is closer to the truth than inventing two tickers
+    - Still not symbol-shaped after cleaning (>6 characters, or illegal ones) → None, never forced
     """
     if raw is None:
         return None
@@ -129,13 +129,13 @@ def clean_ticker(raw: Optional[str]) -> Optional[str]:
         return None
     t = _EXCHANGE_PREFIX.sub("", t).strip()
     t = t.strip("()[]{} ")
-    # 多代码：/ 、逗号、AND 分隔 → 取第一个
+    # Multiple symbols: separated by /, comma or AND → take the first
     t = re.split(r"\s*(?:/|,|\bAND\b|\|)\s*", t)[0].strip()
     t = t.replace(" ", "")                      # `N O G` → `NOG`
     if t in _NO_TICKER or not t:
         return None
     if not re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,5}", t):
-        return None                             # 不像代码就不认，别造脏数据
+        return None                             # not symbol-shaped, so not accepted — no invented data
     return t
 
 
@@ -149,7 +149,7 @@ def _num(v: Optional[str]) -> Optional[float]:
 
 
 def _parse_date(v: Optional[str]) -> Optional[date]:
-    """解析 `YYYY-MM-DD`（XML）或 `01-APR-2026`（数据集 TSV）。"""
+    """Parse `YYYY-MM-DD` (XML) or `01-APR-2026` (dataset TSV)."""
     if not v:
         return None
     s = str(v).strip()
@@ -163,7 +163,7 @@ def _parse_date(v: Optional[str]) -> Optional[date]:
 
 @dataclass(frozen=True)
 class InsiderTrade:
-    """一笔内部人交易。"""
+    """One insider transaction."""
 
     accession: str
     seq: int
@@ -182,11 +182,11 @@ class InsiderTrade:
     filing_date: Optional[date]
     shares: Optional[float]
     price: Optional[float]
-    acquired_disposed: str            # A / D（SEC 原始标志，仅作参考）
+    acquired_disposed: str            # A / D (the SEC's own flag, for reference only)
     shares_after: Optional[float]
-    is_direct: bool                   # D=直接持有 / I=间接
+    is_direct: bool                   # D=held directly / I=indirectly
     is_10b5_1: Optional[bool]
-    form_type: str                    # 4 / 4/A（本模块只收这两种，见 parse_dataset）
+    form_type: str                    # 4 / 4/A (only these two are taken here, see parse_dataset)
     source_url: str
 
     @property
@@ -195,16 +195,16 @@ class InsiderTrade:
 
     @property
     def is_open_market(self) -> bool:
-        """⭐ 是否公开市场主动买卖 —— 只有这部分有信号含义。"""
+        """⭐ Active open-market trading — the only part that carries signal."""
         return self.group == "open_market"
 
     @property
     def direction(self) -> Optional[str]:
-        """买/卖方向，**只对公开市场交易有意义**。
+        """Buy or sell direction, **meaningful only for open-market transactions**.
 
-        ⚠️ 刻意不给薪酬类交易返回方向：授予被标为「取得」、
-        代扣税被标为「处置」，把它们当买卖会让统计彻底失真
-        （实测「取得」笔数是真实买入的 8 倍）。
+        ⚠️ Deliberately returns nothing for compensation transactions: a grant is flagged
+        "acquired" and tax withholding "disposed", so treating them as trades wrecks the
+        totals entirely (measured: "acquired" rows run 8× the real purchases).
         """
         if not self.is_open_market:
             return None
@@ -212,51 +212,51 @@ class InsiderTrade:
 
     @property
     def date_anomaly(self) -> Optional[str]:
-        """交易日晚于申报日 —— **物理上不可能**（不能先申报后交易）。
+        """Trade date after the filing date — **physically impossible** (you cannot file before you trade).
 
-        实测 16.5 万行里 14 笔，全是年份笔误：
-        PRCH 报「交易 2028-03-19、申报 2026-03-20」、
-        NFRX 报「交易 2002-02-24、申报 2026-02-25」—— 月日都对得上，只有年份错。
+        14 rows out of 165k, every one a year typo:
+        PRCH reports "trade 2028-03-19, filed 2026-03-20";
+        NFRX reports "trade 2002-02-24, filed 2026-02-25" — month and day line up, only the year is wrong.
 
-        ⚠️ **同类笔误远不止这 14 笔**：延迟 366 天那批（1,270 笔）里，
-        ASTS「交易 2025-03-17 / 申报 2026-03-18」月日仅差一天、年份差一年，
-        显然也是笔误 —— 但「晚报一年」在法律上并非不可能，
-        **无法逐笔确证，所以不标记**。故延迟统计里仍混有少量笔误，不宜过度解读。
+        ⚠️ **There are far more typos of this kind than those 14**: within the 366-day-delay batch (1,270 rows),
+        ASTS reports "trade 2025-03-17 / filed 2026-03-18", one day apart and one year apart,
+        plainly a typo as well — but "filed a year late" is not legally impossible,
+        and **it cannot be confirmed row by row, so it is not flagged**. The delay figures therefore still carry a few typos; do not over-read them.
 
-        与价格问题一样：**不替申报人改数据**，只标出确凿不可能的那部分。
+        Same stance as with prices: **do not edit the filer's data**, only mark the part that is certainly impossible.
         """
         if self.tx_date and self.filing_date and self.tx_date > self.filing_date:
-            return "交易日晚于申报日（原件如此，疑为年份笔误）"
+            return "trade date after filing date (as filed; probably a year typo)"
         return None
 
     @property
     def price_implausible(self) -> bool:
-        """每股价格明显不可能 —— **申报人把「总金额」填进了「每股价格」字段**。
+        """A per-share price that is plainly impossible — **the filer put the total value into the price-per-share field**.
 
-        实测（2026-07-26，16.5 万行）：
-        - REEMF 报 100,149,060 股 × "$24,035,774.40/股" → 单笔 **$2.4 千万亿**
-          原始 XML 确实写在 `transactionPricePerShare` 里；
-          而 $24,035,774.40 ÷ 100,149,060 = **恰好 $0.2400/股** —— 填的是总额无疑。
-        - 另有 PSX 报 $2,110,482/股、LLY 报 $1,032,319/股（真实股价 $130 / $800）。
+        Measured (2026-07-26, 165k rows):
+        - REEMF reports 100,149,060 shares × "$24,035,774.40/share" → **$2.4 quadrillion** in one row.
+          The raw XML really does carry it in `transactionPricePerShare`;
+          and $24,035,774.40 ÷ 100,149,060 = **exactly $0.2400/share** — the total, beyond doubt.
+        - Also PSX at $2,110,482/share and LLY at $1,032,319/share (real prices $130 / $800).
 
-        阈值取 **$100 万/股**：BRK.A ~$70 万/股是美股史上最高价，
-        超过这个数在物理上不可能，判定不会误伤真实交易。
+        The threshold is **$1m/share**: BRK.A at ~$700k/share is the highest price in US market history,
+        so anything above that is physically impossible and the test cannot catch a real trade.
 
-        ⚠️ **这个过滤器不完整**：同样是错填，IHT 报 $14,561/股（真实股价约 $2）
-        就落在阈值之下 —— 没有外部行情做参照就识别不出来。
-        所以不能宣称"金额已清洗干净"，只能说"已剔除可确证的错填"。
+        ⚠️ **This filter is incomplete**: IHT's $14,561/share (real price about $2) is the same
+        mistake but falls under the threshold — with no external quote to compare against, it cannot be spotted.
+        So the claim is never "the values are clean", only "the provably wrong entries are out".
 
-        **不自动改正**（不拿总额除以股数）：那是在替申报人猜测意图。
-        做法是剔出统计、在明细里保留并标注。
+        **No auto-correction** (dividing the total by the share count): that would be guessing at the filer's intent.
+        Instead such rows are dropped from the totals, kept in the detail and marked.
         """
         if self.price is not None and self.price > 1_000_000:
             return True
-        # 第二条锚点：单笔金额超过任何美国个人持股规模。
-        # 马斯克的 TSLA 持股约 $1,500 亿是已知最大个人持仓，
-        # 所以单笔 > $2,000 亿必是错填（实测 MYNZ 报 $402,000/股 × 643,850 股
-        # = $2,588 亿，而 Mainz Biomed 实际股价不到 $1）。
-        # ⚠️ 这条不能设得更低：TSLA 有一笔 $1,416 亿、价格 $334.09 完全正常
-        # （马斯克整个持仓的信托转移），把它误杀就是删真数据。
+        # Second anchor: a single trade larger than any US individual's holding.
+        # Musk's TSLA stake, about $150bn, is the largest individual position known,
+        # so a single trade > $200bn has to be a mis-entry (measured: MYNZ reports $402,000/share
+        # × 643,850 shares = $258.8bn, while Mainz Biomed actually trades under $1).
+        # ⚠️ This cannot be set any lower: TSLA has a perfectly normal $141.6bn row at $334.09
+        # (a trust transfer of Musk's whole position), and killing that one deletes real data.
         if self.shares is not None and self.price is not None:
             if self.shares * self.price > 200_000_000_000:
                 return True
@@ -264,10 +264,10 @@ class InsiderTrade:
 
     @property
     def value(self) -> Optional[float]:
-        """成交金额 = 股数 × 单价。
+        """Trade value = shares × price.
 
-        无价格、或价格明显错填时返回 None —— **宁可没有，不要一个假数字**：
-        一行错填的记录就能把全市场买入总额顶到 4.8 千万亿美元。
+        Returns None when there is no price, or the price is plainly mis-entered — **better nothing than a fake number**:
+        one mis-entered row is enough to push market-wide buying to $4.8 quadrillion.
         """
         if self.shares is None or self.price is None or self.price_implausible:
             return None
@@ -275,10 +275,10 @@ class InsiderTrade:
 
     @property
     def delay_days(self) -> Optional[int]:
-        """交易日 → 申报日 的天数。
+        """Days from trade date to filing date.
 
-        Section 16(a) 要求 **交易后两个工作日内** 申报（2003 年起）。
-        这里只报事实天数，不做违规认定（含节假日、修订件等情形）。
+        Section 16(a) requires filing **within two business days of the trade** (since 2003).
+        This reports the plain day count and makes no finding of violation (holidays, amendments and so on).
         """
         if not self.tx_date or not self.filing_date:
             return None
@@ -286,7 +286,7 @@ class InsiderTrade:
 
 
 def to_dicts(trades: list[InsiderTrade]) -> list[dict]:
-    """批量转换并分配稳定主键 —— **入库一律走这个**，不要逐条 to_dict。"""
+    """Convert in bulk and assign stable primary keys — **every write goes through this**, never to_dict row by row."""
     keys = assign_trade_keys(trades)
     out = []
     for t, k in zip(trades, keys):
@@ -299,8 +299,8 @@ def to_dicts(trades: list[InsiderTrade]) -> list[dict]:
 def to_dict(t: InsiderTrade) -> dict:
     return {
         "accession": t.accession, "seq": t.seq,
-        # trade_key 由 assign_trade_keys() 批量分配（需要同申报内的计数上下文），
-        # 这里先占位，to_dicts() 会填上
+        # trade_key is assigned in bulk by assign_trade_keys() (which needs the counting
+        # context within a filing); a placeholder here, filled in by to_dicts()
         "trade_key": None,
         "ticker": t.ticker, "company": t.company, "issuer_cik": t.issuer_cik,
         "owner": t.owner, "owner_cik": t.owner_cik,
@@ -324,26 +324,26 @@ def to_dict(t: InsiderTrade) -> dict:
     }
 
 
-# ─────────────────────── XML 解析（近期申报）───────────────────────
+# ─────────────────────── XML parsing (recent filings) ───────────────────────
 
 def trade_key(accession: str, security: str, tx_date, tx_code: str,
               shares, price, acquired_disposed: str, owner: str) -> str:
-    """一笔交易的**内容指纹**，用作跨来源稳定主键。
+    """A **content fingerprint** for one transaction, used as a stable cross-source primary key.
 
-    ⚠️ 不能用「在申报里的第几行」当主键：季度数据集按 TSV 行序、
-    XML 按元素序，两边顺序不保证一致。一旦不一致，
-    `(accession, seq)` 就会把**不同的交易**配成同一个键 ——
-    `INSERT OR IGNORE` 于是静默丢掉正确的那条，且毫无迹象。
+    ⚠️ "Which row it was in the filing" cannot serve as the key: the quarterly dataset orders
+    by TSV row and the XML by element, and the two are not guaranteed to agree. The moment
+    they disagree, `(accession, seq)` maps **two different transactions** onto one key —
+    and `INSERT OR IGNORE` then silently drops the right one, without a trace.
 
-    改用内容指纹后，同一笔交易无论从哪条路进来都是同一个键，
-    顺序不同也不会串位。
+    With a content fingerprint the same transaction gets the same key whichever path it came
+    in by, and a difference in order cannot shift rows onto one another.
 
-    ⚠️ 但**光有指纹会丢数据**：同一份申报里合法存在内容完全相同的多笔
-    （实测 2026Q1 有 976 组重复、最多一组 8 笔 —— 例如同证券同日同价，
-     只是分别落在 IRA 与 Roth IRA 两个账户）。只按指纹去重会少掉 1,120 笔。
-    所以真正的主键是 `指纹 + 同指纹内的出现序号`（见 `assign_trade_keys`）：
-    重复内容全部保留，而跨来源的顺序差异仍不会串位
-    （只要两边解析出的是同一个多重集合）。
+    ⚠️ But **a fingerprint on its own loses data**: one filing legitimately contains several rows
+    of identical content (2026Q1 has 976 such groups, the largest of 8 — same security, same day,
+     same price, merely split across an IRA and a Roth IRA). Deduplicating on the fingerprint alone drops 1,120 rows.
+    So the real key is `fingerprint + occurrence index within that fingerprint` (see `assign_trade_keys`):
+    every duplicate is kept, while a cross-source difference in order still cannot shift rows
+    (as long as both sides parse out the same multiset).
     """
     import hashlib
 
@@ -359,10 +359,10 @@ def trade_key(accession: str, security: str, tx_date, tx_code: str,
 
 
 def assign_trade_keys(trades: list["InsiderTrade"]) -> list[str]:
-    """给一批交易分配稳定主键：`指纹#同指纹内序号`。
+    """Assign stable primary keys to a batch: `fingerprint#index-within-fingerprint`.
 
-    按申报分组计数，所以同一份申报里的重复内容会得到 `#0`/`#1`/…，
-    既不会互相覆盖，也不依赖遍历顺序（同一份申报的多重集合两边一致即可）。
+    Counted per filing, so identical content inside one filing gets `#0`/`#1`/…,
+    which neither overwrites itself nor depends on iteration order (the two sides need only agree as multisets).
     """
     seen: dict[tuple[str, str], int] = {}
     out: list[str] = []
@@ -376,7 +376,7 @@ def assign_trade_keys(trades: list["InsiderTrade"]) -> list[str]:
 
 
 def accession_url(cik: str, accession: str) -> str:
-    """申报原件链接（EDGAR 可读索引页）。两条导入路径共用，避免风格漂移。"""
+    """Link to the filing itself (EDGAR's readable index page). Shared by both import paths, so the style cannot drift."""
     cik = (cik or "").lstrip("0")
     if not cik or not accession:
         return ""
@@ -392,11 +392,11 @@ def _txt(node: Optional[ET.Element], path: str) -> Optional[str]:
 
 
 def parse_form4_xml(xml: str, ref) -> list[InsiderTrade]:
-    """解析一份 Form 4 的 ownershipDocument XML。
+    """Parse the ownershipDocument XML of one Form 4.
 
-    ⚠️ 一份申报可能有**多个申报人**（实测 2026Q1 最多 10 个、927 份 >1）。
-    这里把多个申报人的姓名合并展示，关系取并集 ——
-    只取第一个会丢掉共同申报的信息。
+    ⚠️ A filing may have **several reporting owners** (2026Q1: up to 10, with 927 filings above 1).
+    Their names are joined for display and their relationships unioned —
+    taking only the first would lose the fact that it was a joint filing.
     """
     root = ET.fromstring(xml)
 
@@ -420,13 +420,13 @@ def parse_form4_xml(xml: str, ref) -> list[InsiderTrade]:
             if t:
                 titles.append(t)
 
-    # 10b5-1 计划标志（SEC 2023 起要求勾选）
+    # 10b5-1 plan flag (the SEC has required the box since 2023)
     plan = _norm_bool(_txt(root, "aff10b5One"))
 
     filing_date = _parse_date(ref.filed)
-    # 与季度数据集那条路径**统一用 `-index.htm`**：同一笔交易从不同来源导入
-    # 不该给出两种风格的链接。（扁平的 `.txt` 实测同样可访问，只是给用户看的是
-    # 原始 SGML 全文；`-index.htm` 是可读的申报索引页，体验更好。）
+    # **This and the quarterly-dataset path both use `-index.htm`**: one transaction imported
+    # from two sources should not yield two styles of link. (The flat `.txt` is just as
+    # reachable, but shows the raw SGML; `-index.htm` is the readable filing index, and reads better.)
     url = accession_url(ref.cik, ref.accession)
 
     out: list[InsiderTrade] = []
@@ -434,7 +434,7 @@ def parse_form4_xml(xml: str, ref) -> list[InsiderTrade]:
         out.append(InsiderTrade(
             accession=ref.accession, seq=i,
             ticker=ticker, company=company, issuer_cik=issuer_cik,
-            owner=" / ".join(x for x in owners if x) or "(未知)",
+            owner=" / ".join(x for x in owners if x) or "(unknown)",
             owner_cik=",".join(x for x in ciks if x),
             is_officer=is_officer, is_director=is_director, is_ten_pct=is_ten_pct,
             officer_title=" / ".join(dict.fromkeys(titles)),
@@ -455,22 +455,22 @@ def parse_form4_xml(xml: str, ref) -> list[InsiderTrade]:
     return out
 
 
-# ─────────────────────── TSV 解析（季度数据集）───────────────────────
+# ─────────────────────── TSV parsing (quarterly dataset) ───────────────────────
 
 def parse_dataset(tables: dict[str, list[dict]]) -> list[InsiderTrade]:
-    """把季度数据集的三张表拼成交易列表。
+    """Stitch the quarterly dataset's three tables into a list of transactions.
 
-    ⚠️ REPORTINGOWNER 与 SUBMISSION 是**一对多**（一份申报最多 10 个申报人），
-    所以先按 accession 聚合申报人，再关联交易 —— 直接 join 会让交易翻倍。
+    ⚠️ REPORTINGOWNER to SUBMISSION is **one-to-many** (up to 10 owners per filing),
+    so owners are aggregated by accession first and only then joined to transactions — a direct join doubles the transactions.
     """
-    # ⚠️ **这个 ZIP 是 Form 3/4/5 合集，必须先按表单类型筛**。
-    # 实测 2026Q1：Form 4 = 100,341 笔（延迟中位 **2 天**，正是法定要求）；
-    # 而 **Form 5 = 2,168 笔，延迟中位 274 天、32.6% 超过一年** ——
-    # 它是**年度补报**，按设计就该滞后，不是谁填错了。
-    # 混进来会把"内部人申报延迟"整体拉高，还会把 Form 3（初始持股声明，
-    # 根本不是交易）当成交易统计。
-    # （这也纠正了本项目早前的一个误判：那批 366+ 天的延迟主要是 Form 5，
-    #   不是"年份笔误"。）
+    # ⚠️ **This ZIP bundles Forms 3, 4 and 5, so it must be filtered by form type first**.
+    # 2026Q1: Form 4 = 100,341 rows (median delay **2 days**, exactly what the law requires);
+    # while **Form 5 = 2,168 rows, median delay 274 days, 32.6% over a year** —
+    # it is the **annual catch-up filing**, late by design, not filled in wrong by anyone.
+    # Letting it through inflates "insider filing delay" across the board, and counts Form 3
+    # (an initial statement of holdings, not a transaction at all) as trading.
+    # (This also corrects an earlier misreading in this project: that batch of 366+ day delays
+    #  is mostly Form 5, not "year typos".)
     keep = {"4", "4/A"}
     subs = {r["ACCESSION_NUMBER"]: r for r in tables.get("SUBMISSION", [])
             if (r.get("DOCUMENT_TYPE") or "").strip() in keep}
@@ -497,7 +497,7 @@ def parse_dataset(tables: dict[str, list[dict]]) -> list[InsiderTrade]:
         acc = r["ACCESSION_NUMBER"]
         s = subs.get(acc)
         if s is None:
-            continue                       # 交易对不上申报头，跳过而不是编一个
+            continue                       # transaction matches no filing header — skip it rather than invent one
         o = owners.get(acc, {})
         seq = seq_by_acc.get(acc, 0)
         seq_by_acc[acc] = seq + 1
@@ -507,7 +507,7 @@ def parse_dataset(tables: dict[str, list[dict]]) -> list[InsiderTrade]:
             ticker=clean_ticker(s.get("ISSUERTRADINGSYMBOL")),
             company=s.get("ISSUERNAME") or "",
             issuer_cik=cik,
-            owner=" / ".join(o.get("names", [])) or "(未知)",
+            owner=" / ".join(o.get("names", [])) or "(unknown)",
             owner_cik=",".join(o.get("ciks", [])),
             is_officer=bool(o.get("officer")), is_director=bool(o.get("director")),
             is_ten_pct=bool(o.get("ten")),
@@ -528,48 +528,48 @@ def parse_dataset(tables: dict[str, list[dict]]) -> list[InsiderTrade]:
     return out
 
 
-# ─────────────────────── 聚合 ───────────────────────
+# ─────────────────────── Aggregation ───────────────────────
 
 def summary_notes(library: Optional[dict]) -> dict:
-    """口径说明（REST 与 MCP 共用，避免两处措辞/口径漂移）。"""
+    """Wording of the definitions (shared by REST and MCP, so the two cannot drift apart)."""
     return {
-        "forms": "本页只含 Form 4（修订件 4/A 默认排除，避免与原件重复计数）。"
-                 "同一个 SEC 数据集里还有 Form 3（初始持股声明，不是交易）与 "
-                 "Form 5（年度补报，实测延迟中位 274 天、32.6% 超一年）—— "
-                 "都已排除，否则会把「内部人申报延迟」整体拉高。"
-                 "分离后 Form 4 的延迟中位是 2 天，与法定要求一致。",
+        "forms": "This page holds Form 4 only (amendments 4/A excluded by default, to avoid "
+                 "double-counting the original). The same SEC dataset also carries Form 3, an "
+                 "initial statement of holdings rather than a transaction, and Form 5, the annual "
+                 "catch-up filing at a median 274 days late with 32.6% over a year — both excluded, "
+                 "or they would inflate insider filing delay across the board. Separated out, Form 4's median delay is 2 days, matching the statute.",
         "classification": _classification_note(library, 0, 0, 0),
-        "plan": "10b5-1 是预先制定的交易计划，卖出往往是几个月前排好的，"
-                "与临时决定卖出的含义不同；「未标注」（2023 年前无此字段）"
-                "与「明确非计划内」是两回事。",
-        "price": "部分申报把「总金额」误填进「每股价格」字段（实测有报到 "
-                 "$2,400 万/股 的）。每股价 > $100 万、或单笔 > $2,000 亿的记录"
-                 "已剔出金额统计，但**更隐蔽的错填识别不出来** —— 金额仍应视为近似值。",
-        "disclaimer": "本页只呈现已公开申报的事实，不构成任何投资建议。",
+        "plan": "A 10b5-1 plan is arranged in advance, so a sale under one was often scheduled "
+                "months earlier and means something different from a sale decided on the day. "
+                "Note that not marked, which is every filing before 2023, is not the same as marked as not under a plan.",
+        "price": "Some filings put the total value into the price-per-share field; one reads "
+                 "$24m per share. Rows above $1m per share, or above $200bn for a single trade, "
+                 "are dropped from the value totals, but **subtler mis-entries cannot be caught** — read the values as approximate.",
+        "disclaimer": "This page presents facts already publicly filed. It is not investment advice.",
     }
 
 
 def _classification_note(library: Optional[dict], om: int,
                          comp: int, other: int) -> str:
-    """分类说明。有全库统计就用全库口径，没有才退回当前样本并注明。"""
+    """The classification note. Uses library-wide figures when there are any, and falls back to the current sample saying so."""
     if library and library.get("trades"):
         g = library.get("by_group") or {}
-        return (f"全库 {library['trades']:,} 行中，**公开市场主动买卖仅 "
-                f"{g.get('open_market', 0):,} 行（{library.get('open_market_pct')}%）**，"
-                f"其余为授予/行权/代扣税等薪酬类 {g.get('compensation', 0):,} 行、"
-                f"其他 {g.get('other', 0):,} 行。买卖统计只含公开市场部分 —— "
-                f"按 SEC 的「取得/处置」标志笼统统计会把买入夸大数倍。")
-    return (f"当前样本 {om + comp + other:,} 行，其中公开市场 {om:,} 行、"
-            f"薪酬类 {comp:,} 行、其他 {other:,} 行（未取到全库统计）。")
+        return (f"Of {library['trades']:,} rows library-wide, **active open-market trading is only "
+                f"{g.get('open_market', 0):,} rows — {library.get('open_market_pct')}% of them**; "
+                f"the rest is compensation — grants, exercises, tax withholding — at {g.get('compensation', 0):,} rows, "
+                f"plus {g.get('other', 0):,} other. Buy and sell totals count the open-market part only — "
+                f"counting bluntly by the SEC's acquired/disposed flag overstates buying several times over.")
+    return (f"In the current sample of {om + comp + other:,} rows: {om:,} open-market, "
+            f"{comp:,} compensation, {other:,} other (library-wide figures were not available).")
 
 
 def summarize(trades: list[InsiderTrade], top: int = 20,
               library: Optional[dict] = None) -> dict:
-    """按标的 / 内部人聚合。
+    """Aggregate by ticker and by insider.
 
-    ⭐ **所有买卖统计都只算公开市场交易（P/S）**。
-    薪酬类（授予/行权/代扣税）单独计数，不混进买卖 ——
-    否则「内部人买入」会被夸大约 8 倍。
+    ⭐ **Every buy and sell total counts open-market transactions (P/S) only.**
+    Compensation — grants, exercises, tax withholding — is counted separately and never mixed in,
+    or "insider buying" comes out roughly 8× too large.
     """
     om = [t for t in trades if t.is_open_market]
     comp = [t for t in trades if t.group == "compensation"]
@@ -586,9 +586,9 @@ def summarize(trades: list[InsiderTrade], top: int = 20,
                 "buy_value": 0.0, "sell_value": 0.0, "insiders": set()})
             e["buys" if buy else "sells"] += 1
             e["buy_value" if buy else "sell_value"] += val
-            # ⚠️ 只把**买入者**计入：这个集合驱动 `insider_count`，
-            # 而榜单标题写的是"有多少位不同内部人**买入**"。
-            # 混进只卖不买的人会凭空放大集群买入信号 —— 而这正是本页最被关注的指标。
+            # ⚠️ Only **buyers** go in: this set drives `insider_count`, and the table
+            # is headed "how many distinct insiders **bought**".
+            # Letting sellers in inflates the cluster-buy signal out of nothing — and that is the number this page is most read for.
             if buy:
                 e["insiders"].add(t.owner)
         k = f"{t.owner}|{t.ticker or t.company}"
@@ -602,14 +602,14 @@ def summarize(trades: list[InsiderTrade], top: int = 20,
 
     ticks = []
     for e in by_ticker.values():
-        e["insider_count"] = len(e["insiders"])          # = 不同**买入者**人数
+        e["insider_count"] = len(e["insiders"])          # = number of distinct **buyers**
         e["insiders"] = sorted(e["insiders"])[:10]
         e["net_value"] = round(e["buy_value"] - e["sell_value"])
         e["buy_value"] = round(e["buy_value"])
         e["sell_value"] = round(e["sell_value"])
         ticks.append(e)
-    # ⭐ 按「有多少个不同内部人买入」排序 —— 集群买入是这类数据里最被关注的形态，
-    #    单人一笔大额可能只是个人理财，多人同期买入更难用巧合解释。
+    # ⭐ Sorted by how many distinct insiders bought — cluster buying is the shape this data is most
+    #    watched for: one large trade by one person may be personal finance, while several people buying in the same window is harder to put down to coincidence.
     cluster = sorted([e for e in ticks if e["buys"] > 0],
                      key=lambda x: (x["insider_count"], x["buy_value"]), reverse=True)
 
@@ -644,22 +644,22 @@ def summarize(trades: list[InsiderTrade], top: int = 20,
         "delay": {
             "median_days": round(statistics.median(delays), 1) if delays else None,
             "over_2d": sum(1 for d in delays if d > 2),
-            "note": "Section 16(a) 要求交易后两个工作日内申报。"
-                    "此处按自然日计算，未扣除周末与节假日，"
-                    "「超 2 天」是事实统计不是违规认定。",
+            "note": "Section 16(a) requires filing within two business days of the trade. "
+                    "Counted here in calendar days, without deducting weekends and holidays, "
+                    "so over 2 days is a plain count of the facts and not a finding of violation.",
         },
         "notes": {
-            # ⚠️ 分类比例要报**全库**的，不能报当前样本的：
-            # 页面默认就筛了 open_market，样本里自然 100% 是公开市场，
-            # 那句话就变成同义反复、什么也没说明。真正要让用户看见的是
-            # 「整个 Form 4 里公开市场只占多少」——那是全库口径。
+            # ⚠️ The classification share has to be the **library-wide** one, not the current sample's:
+            # the page filters to open_market by default, so the sample is naturally 100% open-market
+            # and the sentence turns into a tautology that explains nothing. What the user needs to see
+            # is how small the open-market share is **across all of Form 4** — and that is the library-wide figure.
             "classification": _classification_note(library, len(om), len(comp), len(other)),
-            "plan": "10b5-1 是预先制定的交易计划，卖出往往是几个月前排好的，"
-                    "与临时决定卖出的含义不同。",
-            "price": "部分申报把「总金额」误填进「每股价格」字段（实测有报到 "
-                     "$2,400 万/股 的）。每股价 > $100 万的记录已剔出金额统计"
-                     "（BRK.A ~$70 万/股是美股最高价，超过即不可能），"
-                     "但**更隐蔽的错填识别不出来** —— 金额汇总仍应视为近似值。",
-            "disclaimer": "本页只呈现已公开申报的事实，不构成任何投资建议。",
+            "plan": "A 10b5-1 plan is arranged in advance, so a sale under one was often scheduled "
+                    "months earlier and means something different from a sale decided on the day.",
+            "price": "Some filings put the total value into the price-per-share field; one reads "
+                     "$24m per share. Rows above $1m per share are dropped from the value totals "
+                     "(BRK.A at ~$700k/share is the highest price US markets have seen, so anything above it is impossible), "
+                     "but **subtler mis-entries cannot be caught** — read the value totals as approximate.",
+            "disclaimer": "This page presents facts already publicly filed. It is not investment advice.",
         },
     }
