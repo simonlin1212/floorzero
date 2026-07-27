@@ -1,21 +1,21 @@
-"""收益率曲线的本地缓存。
+"""Local cache for the yield curve.
 
-━━━ 为什么这条线要落库，而别的"读一下就走"的源不用 ━━━
-Treasury 的年度 XML **每年一份、单次 8 秒**（实测），取 3 年就是 29 秒。
-而这份数据有个别的源没有的性质：**往年的值永远不会再变** ——
-2024 年的收益率曲线今天读和十年后读是同一份东西。
-每开一次页面重付 29 秒，买回来的是完全一样的数字。
+━━━ Why this lane is stored, when other "just read it" sources are not ━━━
+Treasury's annual XML is **one file per year and 8 seconds a fetch** (measured), so three years is 29 seconds.
+And this data has a property the others lack: **past years never change again** —
+the 2024 yield curve read today and read in ten years is the same thing.
+Paying 29 seconds afresh on every page load buys back numbers that are identical.
 
-所以这里的缓存策略是**按年判定新鲜度**，不是统一 TTL：
+So freshness here is judged **per year** rather than by a single TTL:
 
-- **往年**：只要那年的记录数看着完整（≥200 个交易日），就**永不再拉**。
-- **今年**：还在长，按 `MAX(date)` 判断 —— 落后于"今天往前数 4 天"就重拉。
-  4 天是为了容下周末 + 假日：周日打开页面时最新一条是周五的，
-  这很正常，不该因此每次都重拉。
+- **Past years**: once that year's record count looks complete (≥200 trading days), it is **never fetched again**.
+- **This year**: still growing, judged on `MAX(date)` — behind "four days before today" and it is refetched.
+  Four days covers weekends plus holidays: opening the page on a Sunday, the newest row is Friday's,
+  which is entirely normal and no reason to refetch every time.
 
-⚠️ **不缓存"这一年我拉过了"这个事实，而是缓存数据本身。**
-差别在于：Treasury 中途改了历史值（修订过往数据是会发生的），
-重拉一次就会覆盖进来；而如果只记"拉过了"，就永远发现不了。
+⚠️ **What is cached is the data itself, not the fact that "I fetched this year".**
+The difference: if Treasury revises a historical value (revisions do happen),
+a refetch overwrites it; whereas recording only "already fetched" means never finding out.
 """
 from __future__ import annotations
 
@@ -35,12 +35,12 @@ CREATE TABLE IF NOT EXISTS treasury_yield (
 CREATE INDEX IF NOT EXISTS ix_ty_year ON treasury_yield(year);
 """
 
-#: 一年里"看着完整"的最少交易日数。美股一年约 250 个交易日，
-#: 取 200 是留足假期与偶发缺报的余量 —— 宁可多拉一次，也不要把
-#: 一份拉了一半就断掉的年份当成完整的钉死在库里。
+#: The minimum trading days for a year to "look complete". A US year runs about 250 trading days,
+#: and 200 leaves ample room for holidays and the occasional missing report — better to fetch
+#: once more than to pin a half-fetched, truncated year into the database as though it were whole.
 _YEAR_COMPLETE = 200
 
-#: 今年允许落后几天。周末 + 假日最长能连着 4 天没有新数据。
+#: How many days the current year may lag. Weekends plus holidays can run 4 days with no new data.
 _STALE_DAYS = 4
 
 
@@ -49,7 +49,7 @@ def _ensure() -> None:
 
 
 def year_status(years: Iterable[int], today: Optional[date] = None) -> dict[int, dict]:
-    """每年在库里的状态：有多少天、最新一天是哪天、是否还需要去拉。"""
+    """Each year's state in the database: how many days, the newest one, and whether it still needs fetching."""
     _ensure()
     today = today or date.today()
     ys = sorted(set(years))
@@ -65,16 +65,16 @@ def year_status(years: Iterable[int], today: Optional[date] = None) -> dict[int,
             out[r["year"]] = {"rows": r["n"], "latest": r["mx"], "stale": True}
     for y, st in out.items():
         if y < today.year:
-            # 往年：够完整就永不再拉
+            # A past year: complete enough, so never fetched again
             st["stale"] = st["rows"] < _YEAR_COMPLETE
         else:
-            # 今年：看最新一条落后多少
+            # This year: check how far behind the newest row is
             st["stale"] = (st["latest"] or "") < str(today - timedelta(days=_STALE_DAYS))
     return out
 
 
 def save_year(year: int, rows: Iterable[dict]) -> int:
-    """写入某年的全部日度曲线（按日期幂等覆盖）。"""
+    """Write a whole year of daily curves (idempotent, overwriting by date)."""
     import json
 
     _ensure()
@@ -98,7 +98,7 @@ def save_year(year: int, rows: Iterable[dict]) -> int:
 
 
 def load_years(years: Iterable[int]) -> list[dict]:
-    """读出这些年的全部曲线，按日期升序。返回 `sources.macro.yield_curve` 的行格式。"""
+    """Read every curve for these years, ascending by date. Returns the row shape of `sources.macro.yield_curve`."""
     import json
 
     _ensure()
@@ -120,7 +120,7 @@ def load_years(years: Iterable[int]) -> list[dict]:
 
 
 def stats() -> dict:
-    """库里攒了多少。"""
+    """How much has accrued."""
     _ensure()
     with db.connect() as conn:
         r = conn.execute(

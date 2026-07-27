@@ -166,7 +166,7 @@ def _run(symbols: Optional[list[str]]) -> None:
         # ⚠️ `scanned` records **how many were actually attempted**, not `len(results)` —
         #    the latter leaves out "attempted but unfetchable", which then looks as though they were never scanned at all.
         store.finish_batch(batch_id, attempted, rec["stored"], failed, sess,
-                           note="；".join(note))
+                           note="; ".join(note))
     except Exception as e:                          # noqa: BLE001 — background-thread backstop
         _err(f"Scan interrupted: {type(e).__name__}: {e}")
         with STATE.lock:

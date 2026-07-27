@@ -1,17 +1,17 @@
-"""内部人交易的同步编排（季度批量 + 每日增量）。
+"""Sync orchestration for insider trades (quarterly bulk + daily incremental).
 
-━━━ 两条路径的成本差了两个数量级，必须让用户看清 ━━━
+━━━ The two routes differ in cost by two orders of magnitude, and the user has to see that ━━━
 
-| | 季度数据集 | 每日 XML |
+| | Quarterly dataset | Daily XML |
 |---|---|---|
-| 一次拿到 | ~10 万笔（整季度） | ~700 笔（单日） |
-| 请求数 | **1 次** | **每份申报 1 次**（单日 645 次） |
-| 耗时 | ~3 秒 | ~90 秒/天（限速 8/秒） |
-| 时效 | 滞后 7~49 天 | 实时 |
+| Yield per run | ~100k transactions (a whole quarter) | ~700 (one day) |
+| Requests | **1** | **1 per filing** (645 in a day) |
+| Time | ~3 seconds | ~90 seconds a day (rate-limited to 8/s) |
+| Freshness | 7 to 49 days behind | live |
 
-→ 默认动作：**先补最近几个季度（几秒钟拿到几十万笔），再逐日补缺口**。
-   缺口当前 117 天 —— 全补要 3 小时以上，所以默认只补最近 5 个工作日，
-   要更多让用户自己选，**不替他默默跑几小时**。
+→ The default: **fill the last few quarters first (hundreds of thousands of rows in seconds), then close the gap day by day**.
+   The gap currently runs to 117 days — closing all of it takes over 3 hours, so the default covers only the last 5 business days.
+   Anything more is the user's choice; **we do not quietly spend hours on their behalf**.
 """
 from __future__ import annotations
 
@@ -24,13 +24,13 @@ from sources import edgar as src
 from modules import insider as parse
 from modules import insider_store as store
 
-#: 距今几天以内的「无索引」不算定论 —— SEC 当日索引通常美东晚间才发布。
-#: 超过这个天数还没有，才认定是非交易日。
+#: "No index" within this many days of today is not conclusive — the SEC usually publishes a day's index in the US evening.
+#: Only when it is still absent beyond this is the day taken to be a non-trading day.
 INDEX_SETTLE_DAYS = 3
 
 
 class SyncState:
-    """同步进度（单用户自部署，单实例够用）。"""
+    """Sync progress (one self-hosting user, so one instance is enough)."""
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
@@ -45,10 +45,10 @@ class SyncState:
         self.coverage: Optional[str] = None
 
     def _snapshot_locked(self) -> dict:
-        """⚠️ 调用方必须**已持有** self.lock。
+        """⚠️ The caller must **already hold** self.lock.
 
-        `threading.Lock` 不可重入，在持锁状态下再调 `snapshot()` 会死锁 ——
-        Congress 分栏就是在这里踩过（第二次 POST 永久卡死）。
+        `threading.Lock` is not reentrant, so calling `snapshot()` while holding it deadlocks —
+        which is exactly what the Congress section hit (the second POST hung permanently).
         """
         return {
             "running": self.running, "done": self.done, "total": self.total,
@@ -83,30 +83,30 @@ def _sync_quarters(quarters: list[str]) -> None:
     with STATE.lock:
         STATE.total += len(todo)
     for q in todo:
-        STATE.stage = f"季度数据集 {q}"
+        STATE.stage = f"quarterly dataset {q}"
         try:
             tables = src.quarter_dataset(q)
             trades = parse.parse_dataset(tables)
             n = store.save_trades(parse.to_dicts(trades), source="dataset")
-            # ⚠️ 批次记录写**该批次解析出的行数**，不写"新增行数"：
-            # 后者是去重后的增量，重叠导入或重试时会严重偏低，
-            # 让「已导入 2026q1 = 3 行」这种明显失真的数字进库存表。
+            # ⚠️ The batch record stores **the rows parsed in that batch**, not "rows added":
+            # the latter is the increment after deduplication, and falls badly short on an overlapping
+            # import or a retry, putting figures like "2026q1 imported = 3 rows" into the inventory table.
             store.mark_batch("quarter", q, rows=len(trades))
             _bump(rows=n)
         except src.DataNotAvailable:
-            # 季度尚未发布 —— **不是错误**，也不标记为已同步（下次还要再试）
-            _err(f"{q} 数据集尚未发布（SEC 滞后 7~49 天不等），跳过")
+            # The quarter is not published yet — **not an error**, and not marked synced either (it gets tried again)
+            _err(f"The {q} dataset is not published yet (the SEC runs 7 to 49 days behind); skipped")
         except Exception as e:
-            _err(f"季度 {q}: {type(e).__name__}: {e}")
+            _err(f"quarter {q}: {type(e).__name__}: {e}")
         finally:
             _bump(done=1)
 
 
 def _sync_one_day(day: date) -> tuple[int, int, int]:
-    """抓一天的 Form 4。返回 (交易数, 申报数, 错误数)。"""
+    """Fetch one day of Form 4s. Returns (transactions, filings, errors)."""
     refs = src.form4_filings(day)
-    # 已知读不了的（老格式无 XML）直接跳过：它们是**终态**，重下多少次都一样。
-    # 不跳的话，一份坏申报会让这一天永远无法标记完成，每次同步重下 600-700 份。
+    # Skip the ones already known to be unreadable (the old format with no XML): they are **terminal**, and redownloading changes nothing.
+    # Without the skip, one bad filing keeps the day from ever being marked complete, and every sync redownloads 600-700 filings.
     dead = store.dead_accessions()
     total_refs = len(refs)
     refs = [r for r in refs if r.accession not in dead]
@@ -114,10 +114,10 @@ def _sync_one_day(day: date) -> tuple[int, int, int]:
     errors = 0
 
     def one(r):
-        # 每份申报单独分配主键（计数上下文就是这一份申报）
+        # Keys are assigned per filing (the counting context is that one filing)
         return parse.to_dicts(parse.parse_form4_xml(src.filing_xml(r.txt_url), r))
 
-    # SEC 允许 10 请求/秒；源层限速器已经把节奏卡住，这里并发只是为了填满带宽
+    # The SEC allows 10 requests/second; the source layer's limiter already sets the pace, so this concurrency only fills the pipe
     with ThreadPoolExecutor(max_workers=8) as pool:
         futs = {pool.submit(one, r): r for r in refs}
         for fu in as_completed(futs):
@@ -125,61 +125,61 @@ def _sync_one_day(day: date) -> tuple[int, int, int]:
             try:
                 rows.extend(fu.result())
             except src.NoXmlInFiling as e:
-                # 文档确实没有 XML = 终态，登记下来不再重试
+                # The document genuinely has no XML = terminal; record it and never retry
                 store.mark_dead(r.accession, day.isoformat(), str(e)[:120])
             except src.DataNotAvailable as e:
-                # ⚠️ 「对象取不到」不是终态：新索引的申报正文可能还没同步过来。
-                # 登记成死件的话，一次传播延迟就让那份申报永远缺失。
-                # 计入 errors → 该日不标记完成 → 下次重试。
+                # ⚠️ "Could not fetch the object" is not terminal: a newly indexed filing's body may not have propagated yet.
+                # Record it as dead and one propagation delay loses that filing permanently.
+                # Counted as an error → the day is not marked complete → it is retried next time.
                 errors += 1
-                _err(f"{day} {r.company[:20]} {r.accession}: 正文暂不可得（{e}），将重试")
+                _err(f"{day} {r.company[:20]} {r.accession}: body not available yet ({e}); will retry")
             except Exception as e:
                 errors += 1
                 _err(f"{day} {r.company[:20]} {r.accession}: {type(e).__name__}: {e}")
     n = store.save_trades(rows, source="daily")
-    # ⚠️ **只有全部申报都成功才标记该日已完成**。
-    # 有失败仍标完成的话，`known_batches("day")` 会让后续同步永久跳过这一天 ——
-    # 一次网络抖动就让那天的数据永远缺一块，而且跑完不报错、看不出来。
-    # 只剩**暂时性**失败（网络等）才不标记完成；终态失败已登记，不该拖住整天
+    # ⚠️ **The day is marked complete only when every filing succeeded.**
+    # Mark it complete with failures outstanding and `known_batches("day")` makes every later sync skip it forever —
+    # one network hiccup then leaves a permanent hole in that day, with no error at the end of the run and nothing to see.
+    # Only **transient** failures (network and the like) hold the day open; terminal ones are recorded and should not block it
     if errors == 0:
-        # 记 len(rows)（该日实际解析出的交易数），不记去重后的新增数 ——
-        # 部分失败后重试成功时，新增数只剩"这次补回来的那点"，会把批次记录写错。
+        # Records len(rows) (the transactions actually parsed that day), not the post-deduplication increment —
+        # after a partial failure and a successful retry, the increment is only "what came back this time", which writes the batch record wrong.
         store.mark_batch("day", day.isoformat(), rows=len(rows),
                          filings=total_refs, errors=0)
     return n, total_refs, errors
 
 
 def _sync_days(days: int) -> None:
-    # 往回走跳过已完成的，而不是死盯最近 N 天 —— 否则缺口永远补不上。
-    # 同时以「已导入季度的截止日」为下界：那之前的数据季度 ZIP 里已经有了，
-    # 再逐份下载纯属重复（600-700 份/天、约 90 秒/天）。
+    # Walk backwards skipping the days already done, rather than fixating on the last N days — otherwise the gap never closes.
+    # With the floor set at the cutoff of the quarters already imported: everything before it is in the quarterly ZIPs already,
+    # and downloading it filing by filing is pure duplication (600-700 filings a day, about 90 seconds a day).
     floor = None
     quarters = sorted(store.known_batches("quarter"))
     if quarters:
         floor = src.quarter_end(quarters[-1])
     todo = src.pending_form4_days(days, store.known_batches("day"), floor=floor)
     if not todo and floor:
-        STATE.stage = f"逐日部分已补齐（{floor} 之前由季度数据集覆盖）"
+        STATE.stage = f"the daily portion is filled in (anything before {floor} is covered by the quarterly dataset)"
     with STATE.lock:
         STATE.total += len(todo)
     for d in todo:
-        STATE.stage = f"逐日抓取 {d}（单日约 600-700 份申报）"
+        STATE.stage = f"fetching {d} day by day (about 600-700 filings)"
         try:
             n, filings, errors = _sync_one_day(d)
             _bump(rows=n)
             if errors:
-                _err(f"{d}: {filings} 份申报中 {errors} 份未取到/未解析，"
-                     f"该日**未标记完成**，下次同步会重试")
+                _err(f"{d}: {errors} of {filings} filings could not be fetched or parsed, "
+                     f"so the day is **not marked complete** and the next sync will retry it")
         except src.DataNotAvailable:
-            # ⚠️ 「取不到索引」有两种成因，必须分开：
-            #   · 非交易日（周末/假期）→ 永远不会有，标记完成免得每次重试
-            #   · **今天/昨天的索引 SEC 还没发**（通常美东晚间才发布）
-            #     → 标记完成的话，这一天之后新增的申报**永远不会再补**
+            # ⚠️ "The index could not be fetched" has two causes and they must be told apart:
+            #   · a non-trading day (weekend or holiday) → there will never be one, so mark it complete and stop retrying
+            #   · **the SEC has not published today's or yesterday's index yet** (usually it lands in the US evening)
+            #     → mark that complete and any filing added afterwards is **never picked up**
             if (date.today() - d).days >= INDEX_SETTLE_DAYS:
                 store.mark_batch("day", d.isoformat(), rows=0, filings=0)
             else:
-                _err(f"{d} 的索引尚未发布（SEC 通常美东晚间发布），"
-                     f"该日未标记完成，下次同步会重试")
+                _err(f"The index for {d} is not published yet (the SEC usually publishes in the US evening), "
+                     f"so the day is not marked complete and the next sync will retry it")
         except Exception as e:
             _err(f"{d}: {type(e).__name__}: {e}")
         finally:
@@ -187,35 +187,35 @@ def _sync_days(days: int) -> None:
 
 
 def _update_coverage() -> None:
-    """如实记录「数据集覆盖到哪天、之后靠逐日补了多少」。"""
+    """Record honestly how far the dataset reaches and how much the daily fetch has added beyond it."""
     try:
         latest, _ = src.latest_available_quarter()
         if latest:
             end = src.quarter_end(latest)
             gap = (date.today() - end).days
-            STATE.coverage = (f"SEC 季度数据集最新只到 {latest}（覆盖至 {end}），"
-                              f"之后 {gap} 天只能靠逐日抓取补齐")
+            STATE.coverage = (f"The SEC's quarterly dataset only reaches {latest} (covering up to {end}), "
+                              f"and the {gap} days since can only be filled in day by day")
     except Exception as e:
-        STATE.coverage = f"季度覆盖探测失败：{type(e).__name__}: {e}"
+        STATE.coverage = f"Probing quarterly coverage failed: {type(e).__name__}: {e}"
 
 
 def _run(quarters_back: int, days: int) -> None:
     try:
         _update_coverage()
         if quarters_back:
-            # ⚠️ 必须从**最新已发布**季度往回数：直接用自然季度会把额度
-            # 花在还没发布的季度上（实测 quarters_back=2 一笔都导不进来）。
-            STATE.stage = "探测可用季度"
+            # ⚠️ Count back from the **newest published** quarter: using calendar quarters directly spends
+            # the budget on quarters not yet published (measured, quarters_back=2 imported nothing at all).
+            STATE.stage = "probing for available quarters"
             quarters, missing = src.available_quarters(quarters_back)
             if missing:
-                _err(f"以下季度 SEC 尚未发布（滞后 7~49 天不等），已跳过：{'、'.join(missing)}")
+                _err(f"The SEC has not published these quarters yet (it runs 7 to 49 days behind); skipped: {', '.join(missing)}")
             _sync_quarters(quarters)
         if days:
             _sync_days(days)
-        STATE.stage = "完成"
+        STATE.stage = "done"
     except Exception as e:
-        STATE.stage = f"中断：{type(e).__name__}: {e}"
-        _err(f"同步中断：{type(e).__name__}: {e}")
+        STATE.stage = f"interrupted: {type(e).__name__}: {e}"
+        _err(f"Sync interrupted: {type(e).__name__}: {e}")
     finally:
         with STATE.lock:
             STATE.running = False
@@ -223,23 +223,23 @@ def _run(quarters_back: int, days: int) -> None:
 
 
 def start(quarters_back: int = 2, days: int = 5) -> dict:
-    """启动同步。
+    """Start a sync.
 
-    `quarters_back` = 补最近几个季度（便宜，几秒一个季度）
-    `days`          = 逐日补最近几个工作日（贵，约 90 秒/天）
+    `quarters_back` = how many recent quarters to fill (cheap, seconds per quarter)
+    `days`          = how many recent business days to fetch one by one (dear, about 90 seconds a day)
 
-    ⚠️ 默认 (2, 5) 而不是"全补"：当前缺口 117 天，全补要 3 小时以上。
-    代价大的事必须让用户自己选，不能默默替他跑。
+    ⚠️ The default is (2, 5) rather than "fill everything": the gap currently runs to 117 days, over 3 hours of work.
+    Anything that expensive is the user's decision, never something run quietly on their behalf.
     """
     with STATE.lock:
         if STATE.running:
-            # 已持锁，必须用 _snapshot_locked（调 snapshot() 会死锁）
-            return {"started": False, "reason": "已有同步在进行中",
+            # Lock already held; this must use _snapshot_locked (calling snapshot() would deadlock)
+            return {"started": False, "reason": "a sync is already running",
                     **STATE._snapshot_locked()}
         STATE.running = True
         STATE.done = STATE.total = STATE.rows = 0
         STATE.errors = []
-        STATE.stage = "启动中"
+        STATE.stage = "starting"
         STATE.coverage = None
         STATE.started_at = datetime.now().isoformat(timespec="seconds")
         STATE.finished_at = None

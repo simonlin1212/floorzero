@@ -104,7 +104,7 @@ _NO_TICKER = {"NONE", "N/A", "NA", "N//A", "--", "-", "", "TBD", "NOT APPLICABLE
               "NO SYMBOL", "NONE.", "0"}
 #: Exchange prefixes (`NYSE: KRC` / `ASX:LNW` / `NASDAQ: XYZ`)
 _EXCHANGE_PREFIX = re.compile(
-    r"^(?:NYSE|NASDAQ|NYSEAMERICAN|NYSE AMERICAN|AMEX|OTC|OTCQB|OTCQX|ASX|TSX|LSE)\s*[:：]\s*",
+    r"^(?:NYSE|NASDAQ|NYSEAMERICAN|NYSE AMERICAN|AMEX|OTC|OTCQB|OTCQX|ASX|TSX|LSE)\s*[:：]\s*",  # cn-ok: filers do type a full-width colon
     re.I)
 
 
@@ -112,7 +112,7 @@ def clean_ticker(raw: Optional[str]) -> Optional[str]:
     """Normalise `ISSUERTRADINGSYMBOL` — a field **the filer types freely**, and it is dirty.
 
     Real values across 160k rows: `NONE`(875) / `N/A`(209) / `MOGA/MOGB`(107) /
-    `GEF, GEF-B`(99) / `Z AND ZG`(87) / `NYSE: KRC`(58) / `(SIRI)`(38) / `N O G`(44)。
+    `GEF, GEF-B`(99) / `Z AND ZG`(87) / `NYSE: KRC`(58) / `(SIRI)`(38) / `N O G`(44).
     Left alone, `NONE` walks to the top of "most active tickers" with 875 trades — a company that does not exist.
 
     The conventions (**all of them lossy judgements, which is why they are written here rather than hidden inside a regex**):

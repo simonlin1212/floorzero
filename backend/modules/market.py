@@ -1,13 +1,13 @@
-"""宏观：收益率曲线与持仓报告。
+"""Macro: the yield curve and the positioning report.
 
-━━━ ⚠️ 两个口径必须讲清 ━━━
+━━━ ⚠️ Two definitions that have to be spelled out ━━━
 
-**① 「倒挂」要说清是哪一个口径。** 市场常用两条利差：
-`10Y − 2Y` 与 `10Y − 3M`，**它们的倒挂时点可以差好几个月**。
-本模块两条都算、都显示，**不挑一条当「那个」倒挂**。
+**① "Inversion" has to say which spread.** Two are in common use:
+`10Y − 2Y` and `10Y − 3M`, and **they can invert months apart**.
+This module computes and shows both, and **crowns neither "the" inversion**.
 
-**② COT 有三天时滞。** 报告的是**周二**收盘的持仓，**周五**下午才发布 ——
-看到的永远是三天前的状态，不是当下。
+**② COT runs three days behind.** It reports positions as of **Tuesday's** close and is published **Friday** afternoon —
+what you see is always the state of three days ago, never the present.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from typing import Optional
 
 from sources.macro import TENOR_LABEL, TENORS
 
-#: 两条利差口径 —— 都算，不挑一条当「那个倒挂」
+#: The two spreads — both computed, with neither crowned "the" inversion
 SPREADS = {
     "10Y-2Y": ("BC_10YEAR", "BC_2YEAR"),
     "10Y-3M": ("BC_10YEAR", "BC_3MONTH"),
@@ -27,15 +27,15 @@ SPREADS = {
 
 NOTES = {
     "inversion": (
-        "「收益率曲线倒挂」必须说清口径：`10Y−2Y` 与 `10Y−3M` 是两条不同的利差，"
-        "**倒挂时点可以差好几个月**。本页两条都显示，不替你挑一条当「那个倒挂」。"
-        "倒挂是历史上常被提及的衰退相关指标，但**本页只呈现利差数值，不做任何预测**。"),
+        "\"Yield curve inversion\" has to say which spread: `10Y−2Y` and `10Y−3M` are two different spreads "
+        "and **they can invert months apart**. This page shows both and does not pick one for you. "
+        "Inversion is an indicator often cited in connection with recessions, but **this page presents the spread values only and predicts nothing**."),
     "cot_lag": (
-        "CFTC 持仓报告有**三天时滞**：报告的是**周二收盘**的持仓，**周五**下午才发布。"
-        "看到的永远是三天前的状态。"),
+        "The CFTC positioning report runs **three days behind**: it reports positions as of **Tuesday's close** and is published **Friday** afternoon. "
+        "What you see is always the state of three days ago."),
     "cot_scope": (
-        "TFF（Traders in Financial Futures）只覆盖**金融期货**"
-        "（利率、股指、外汇等），不含农产品与能源 —— 那些在另外的报告里。"),
+        "TFF (Traders in Financial Futures) covers **financial futures** only "
+        "(rates, equity indices, FX and so on), not agriculture or energy — those are in other reports."),
 }
 
 
@@ -45,10 +45,10 @@ def _f(v) -> Optional[float]:
 
 @dataclass(frozen=True)
 class CurvePoint:
-    """某日的完整收益率曲线。"""
+    """One day's complete yield curve."""
 
     date: str
-    yields: dict[str, Optional[float]]     # BC_* → 百分比
+    yields: dict[str, Optional[float]]     # BC_* → per cent
 
     def spread(self, name: str) -> Optional[float]:
         pair = SPREADS.get(name)
@@ -61,10 +61,10 @@ class CurvePoint:
 
     @property
     def is_inverted(self) -> dict[str, Optional[bool]]:
-        """每条口径各自是否倒挂 —— **刻意返回字典而不是一个布尔值**。
+        """Whether each spread is inverted — **deliberately a dict rather than a single boolean**.
 
-        把两条口径压成一个「倒挂了吗」的答案，就是在替读者做那个
-        「用哪条口径」的判断，而这恰恰是最容易出分歧的地方。
+        Flattening two spreads into one answer to "is it inverted" makes the
+        "which spread" judgement on the reader's behalf, and that is exactly where opinions divide.
         """
         out = {}
         for k in SPREADS:
@@ -94,7 +94,7 @@ def parse_curve(row: dict) -> Optional[CurvePoint]:
 
 
 def curve_series(points: list[CurvePoint]) -> dict:
-    """利差时间序列 + 当前状态。"""
+    """The spread time series plus the current state."""
     pts = sorted(points, key=lambda p: p.date)
     series = {k: [(p.date, p.spread(k)) for p in pts] for k in SPREADS}
     latest = pts[-1] if pts else None
@@ -111,7 +111,7 @@ def curve_series(points: list[CurvePoint]) -> dict:
 
 @dataclass(frozen=True)
 class CotRow:
-    """一条 TFF 持仓记录（杠杆基金 / 资产管理 / 交易商 三类）。"""
+    """One TFF positioning record (leveraged funds / asset managers / dealers)."""
 
     market: str
     report_date: Optional[str]

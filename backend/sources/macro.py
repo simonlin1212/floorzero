@@ -141,7 +141,7 @@ def cot_rows(limit: int = 500, market_contains: Optional[str] = None,
 
     `exact=True` requires the market name to match exactly; fuzzy matching is for search.
     ⚠️ **Time series must use exact**: `like '%S&P 500%'` also matches
-    "S&P 500 Consolidated"、"E-MINI S&P 500"、"S&P 500 QUARTERLY DIVIDEND IND"
+    "S&P 500 Consolidated", "E-MINI S&P 500", "S&P 500 QUARTERLY DIVIDEND IND"
     three **different contracts**, and ordering those by date braids them into one
     sawtooth that looks like violent position flips but is only hopping between contracts.
     """

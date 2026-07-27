@@ -6,7 +6,7 @@ rather than let the user crash into a SyntaxError deep inside some module and gu
 
 The real floor comes from the features actually used (full scan, 2026-07-26):
 - `zoneinfo` (3.9+): US/Eastern date arithmetic, a hard dependency
-- `str.removesuffix`（3.9+）
+- `str.removesuffix` (3.9+)
 - `X | Y` annotations: every file carries `from __future__ import annotations`,
   so they do **not** imply 3.10. Nothing 3.10-only is used anywhere.
 """

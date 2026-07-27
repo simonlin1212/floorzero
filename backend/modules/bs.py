@@ -1,36 +1,36 @@
-"""Black-Scholes 希腊字母（只实现 GEX 需要的部分）。
+"""Black-Scholes greeks (only the parts GEX needs).
 
-为什么需要自己算 gamma —— CBOE 已经给了 gamma，但那是**当前股价下**的值。
-计算 Gamma Flip 要回答的是「**如果**股价变成 X，总 GEX 会是多少」，
-而 gamma 随股价变化很大（ATM 最高、两端趋零），必须在假设股价下重算。
+Why gamma is computed here at all — Cboe already gives a gamma, but it is the value **at the current price**.
+Computing the gamma flip means answering "**if** the price became X, what would total GEX be",
+and gamma varies sharply with price (highest at the money, tending to zero at both ends), so it has to be recomputed at the hypothetical price.
 
-只用标准库，不引入 scipy（保持「零重依赖」的项目原则）。
+Standard library only, no scipy (keeping the project's principle of no heavy dependencies).
 """
 from __future__ import annotations
 
 import math
 
 SQRT_2PI = math.sqrt(2.0 * math.pi)
-# ⚠️ 用**自然日**（365），不是交易日（252）：期权到期按日历日计，周末也在衰减。
-# 名字别写成 TRADING_DAYS —— 那会让人（和代码审查）误以为是 252，
-# 进而把别处的 /365 换算误判成不一致。Codex 审计就在这里读错过一次。
+# ⚠️ **Calendar days** (365), not trading days (252): options expire on the calendar, and decay runs through weekends.
+# Do not name it TRADING_DAYS — that leads people (and code review) to assume 252,
+# and from there to misjudge the /365 conversions elsewhere as inconsistent. A Codex review misread it here once.
 DAYS_PER_YEAR = 365.0
 
 
 def norm_pdf(x: float) -> float:
-    """标准正态概率密度 φ(x)。"""
+    """The standard normal density φ(x)."""
     return math.exp(-0.5 * x * x) / SQRT_2PI
 
 
 def bs_gamma(spot: float, strike: float, t_years: float,
              sigma: float, rate: float = 0.04) -> float:
-    """Black-Scholes gamma。
+    """Black-Scholes gamma.
 
     gamma = φ(d1) / (S · σ · √T)
 
-    call 和 put 的 gamma **相同**（put-call parity 的直接推论），所以不分类型。
-    退化情况（到期、零波动率、无效价格）返回 0 而不是抛异常 ——
-    这些在真实期权链里天天出现（已到期合约、报价缺失的深度虚值合约）。
+    Calls and puts have **the same** gamma (a direct consequence of put-call parity), so type does not enter into it.
+    Degenerate cases (expired, zero volatility, invalid price) return 0 rather than raising —
+    they occur daily in a real options chain (expired contracts, deep out-of-the-money contracts with no quote).
     """
     if t_years <= 0 or sigma <= 0 or spot <= 0 or strike <= 0:
         return 0.0
@@ -43,12 +43,12 @@ def bs_gamma(spot: float, strike: float, t_years: float,
 
 
 def years_to_expiry(dte_days: float) -> float:
-    """天数 → 年（0DTE 按半个交易日算，避免 T=0 让 gamma 爆成 inf）。"""
+    """Days → years (0DTE counts as half a trading day, so T=0 cannot blow gamma up to inf)."""
     return max(dte_days, 0.5) / DAYS_PER_YEAR
 
 def _d1_d2(spot: float, strike: float, t_years: float,
            sigma: float, rate: float) -> tuple[float, float] | None:
-    """BS 的 d1/d2；退化输入返回 None（调用方据此返回 0）。"""
+    """BS d1/d2; degenerate input returns None (on which the caller returns 0)."""
     if t_years <= 0 or sigma <= 0 or spot <= 0 or strike <= 0:
         return None
     try:
@@ -61,14 +61,14 @@ def _d1_d2(spot: float, strike: float, t_years: float,
 
 def bs_vanna(spot: float, strike: float, t_years: float,
              sigma: float, rate: float = 0.04) -> float:
-    """Vanna = ∂delta/∂σ = ∂vega/∂S。
+    """Vanna = ∂delta/∂σ = ∂vega/∂S.
 
         vanna = -φ(d1) · d2 / σ
 
-    含义：隐含波动率变动时，delta 会怎么变 —— 做市商为保持 delta 中性，
-    会因 IV 涨跌而买卖正股。这是「慢速碾压式上涨」的主要推手之一。
+    What it means: how delta moves when implied volatility moves — dealers holding delta neutral
+    buy and sell stock as IV rises and falls. One of the main drivers behind a slow grinding rally.
 
-    ⚠️ call 与 put 的 vanna **相同**（无股息时）。已用有限差分数值验证。
+    ⚠️ Calls and puts have **the same** vanna (absent dividends). Verified numerically by finite differences.
     """
     dd = _d1_d2(spot, strike, t_years, sigma, rate)
     if dd is None:
@@ -79,24 +79,24 @@ def bs_vanna(spot: float, strike: float, t_years: float,
 
 def bs_charm(spot: float, strike: float, t_years: float,
              sigma: float, rate: float = 0.04) -> float:
-    """Charm = ∂delta/∂t，**t = 已流逝时间**（不是剩余时间 τ）。
+    """Charm = ∂delta/∂t, where **t is elapsed time** (not time remaining, τ).
 
         charm = -φ(d1) · (2rT - d2·σ√T) / (2T·σ√T)
 
-    含义：即使股价和波动率都不动，delta 也会随时间流逝而改变，
-    做市商必须相应调仓 —— 这是「尾盘钉住」现象的来源之一。
+    What it means: delta changes as time passes even with price and volatility perfectly still,
+    and dealers must adjust accordingly — one source of the late-day pinning effect.
 
-    ⚠️ **符号约定：公式里那个前导负号已经把 τ→t 的方向换过来了**，
-    返回值直接就是「每流逝一单位时间，delta 变化多少」，调用方**不要再取反**。
-    （曾把本函数文档写成 ∂delta/∂τ，导致代码审查据此判定符号反了 ——
-     数值验证结论：30 天虚值 call 过一天 delta 实际变化 −0.003911，
-     本函数 /365 后给 −0.003832，同号吻合；取反则完全错误。
-     `h=1e-7` 的有限差分与解析值差 <1e-3。）
+    ⚠️ **Sign convention: the leading minus sign in the formula already flips τ→t**,
+    so the return value is directly "how much delta changes per unit of time elapsed", and callers **must not negate it again**.
+    (This docstring once read ∂delta/∂τ, on which a code review concluded the sign was inverted —
+     numerical verification: a 30-day out-of-the-money call's delta actually moves −0.003911 over one day,
+     and this function after /365 gives −0.003832: same sign, in agreement. Negated, it is simply wrong.
+     A finite difference at `h=1e-7` differs from the analytic value by <1e-3.)
 
-    ⚠️ call 与 put 的 charm **相同**（无股息时：put delta = call delta − 1，
-    常数项对时间求导为 0）。网上流传的「put 取相反符号」是错的 ——
-    已用有限差分数值验证：解析值与 ∂delta/∂τ 数值微分在 call/put 上均吻合，
-    取反后则不符。
+    ⚠️ Calls and puts have **the same** charm (absent dividends: put delta = call delta − 1,
+    and the derivative of a constant with respect to time is 0). The widely repeated claim that
+    puts take the opposite sign is wrong — verified by finite differences: the analytic value agrees
+    with the numerical ∂delta/∂τ for both calls and puts, and disagrees once negated.
     """
     dd = _d1_d2(spot, strike, t_years, sigma, rate)
     if dd is None:

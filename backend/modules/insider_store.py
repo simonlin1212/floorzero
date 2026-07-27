@@ -1,14 +1,14 @@
-"""内部人交易的本地存储。
+"""Local storage for insider trades.
 
-━━━ 为什么必须落库 ━━━
-两条来源都不适合每次请求现拉：
-- 季度数据集单季 10 万笔（下载解析 ~2.4 秒，但每次请求都做太浪费）
-- 每日 XML 逐份抓，单日 645 份 = 645 次请求
+━━━ Why it has to be stored ━━━
+Neither source suits being fetched afresh on every request:
+- the quarterly dataset is 100k transactions a quarter (~2.4s to download and parse, but wasteful on every request)
+- the daily XML is fetched filing by filing: 645 filings in a day = 645 requests
 
-落库后：季度导入一次管一个季度，每日增量只补新增申报。
+Stored, one quarterly import covers a quarter and the daily increment only picks up new filings.
 
-⚠️ **两条来源会重叠**（季度数据集覆盖到季末，逐日抓取可能也抓了同一天）。
-靠 `(accession, seq)` 唯一索引去重 —— 同一笔交易无论从哪条路进来只留一份。
+⚠️ **The two sources overlap** (the quarterly dataset reaches quarter-end, and the daily fetch may have taken the same day).
+The `(accession, seq)` unique index deduplicates — one transaction is kept once, whichever route it arrived by.
 """
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ from modules import db
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS insider_trade (
     accession   TEXT NOT NULL,
-    -- ⭐ 内容指纹，不是行序：两条导入路径的遍历顺序不保证一致，
-    --    用行序当主键会让不同交易撞同一个键、静默丢数据（见 insider.trade_key）
+    -- ⭐ A content fingerprint, not a row index: the two import paths are not guaranteed to iterate in
+    --    the same order, and a row index as key makes different trades collide and drops data silently (see insider.trade_key)
     trade_key   TEXT NOT NULL,
     seq         INTEGER NOT NULL,
     ticker      TEXT,
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS insider_trade (
     security    TEXT,
     tx_code     TEXT,
     tx_group    TEXT,               -- open_market / compensation / other
-    direction   TEXT,               -- buy / sell / NULL（只有公开市场交易才有方向）
+    direction   TEXT,               -- buy / sell / NULL (only open-market transactions have a direction)
     tx_date     TEXT,
     filing_date TEXT,
     shares      REAL,
@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS insider_trade (
     acquired_disposed TEXT,
     shares_after REAL,
     is_direct   INTEGER,
-    is_10b5_1   INTEGER,            -- NULL = 申报未勾选/旧格式
+    is_10b5_1   INTEGER,            -- NULL = the filing left the box unticked, or predates the field
     form_type   TEXT NOT NULL DEFAULT '4',   -- 4 / 4/A
     delay_days  INTEGER,
     source_url  TEXT,
@@ -57,10 +57,10 @@ CREATE INDEX IF NOT EXISTS idx_ins_date   ON insider_trade (tx_date);
 CREATE INDEX IF NOT EXISTS idx_ins_group  ON insider_trade (tx_group, tx_date);
 CREATE INDEX IF NOT EXISTS idx_ins_owner  ON insider_trade (owner);
 
--- 永远解析不了的单份申报（如 2003 年前的纯文本 Form 4，没有 XML）。
--- ⚠️ 不登记的话，一份读不了的申报会让**那一整天**永远无法标记完成，
--- 于是每次同步都要把那天 600-700 份申报全部重下一遍 —— 代价无上限。
--- 这与 Congress 分栏的「终态 vs 暂时」是同一类问题（那边已修，这边同形）。
+-- Individual filings that will never parse (such as pre-2003 plain-text Form 4s, which have no XML).
+-- ⚠️ Without recording them, one unreadable filing keeps **that entire day** from ever being marked complete,
+-- so every sync redownloads all 600-700 of that day's filings — at unbounded cost.
+-- The same problem as the Congress section's terminal vs temporary split (fixed there; identical in shape here).
 CREATE TABLE IF NOT EXISTS insider_dead_filing (
     accession   TEXT PRIMARY KEY,
     day         TEXT,
@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS insider_dead_filing (
     recorded_at TEXT NOT NULL
 );
 
--- 已导入的来源批次（季度 / 某一天），用于增量跳过
+-- Source batches already imported (a quarter, or a day), for skipping on the next increment
 CREATE TABLE IF NOT EXISTS insider_batch (
     kind        TEXT NOT NULL,      -- quarter / day
     key         TEXT NOT NULL,      -- '2026q1' / '2026-07-24'
@@ -92,12 +92,12 @@ def _init() -> None:
 
 
 def save_trades(rows: list[dict], source: str) -> int:
-    """批量写入（幂等）。返回实际新增行数。
+    """Bulk write (idempotent). Returns the number of rows actually added.
 
-    用 `INSERT OR IGNORE`：两条来源重叠时保留先到的那份 ——
-    同一笔交易的内容本来就一样（都来自同一份申报），不存在"哪份更新"的问题。
-    去重键是 `(accession, trade_key)`，**trade_key 是内容指纹不是行序** ——
-    行序在两条路径下不保证一致，用它会让不同交易撞键而静默丢数据。
+    Uses `INSERT OR IGNORE`: where the two sources overlap, whichever arrived first is kept —
+    the content of a given transaction is identical either way (both come from the same filing), so there is no "which is newer".
+    The deduplication key is `(accession, trade_key)`, and **trade_key is a content fingerprint, not a row index** —
+    row order is not guaranteed to agree across the two paths, and using it makes different trades collide and drops data silently.
     """
     _init()
     if not rows:
@@ -134,7 +134,7 @@ def mark_batch(kind: str, key: str, rows: int,
 
 
 def mark_dead(accession: str, day: str, reason: str) -> None:
-    """登记一份**永远解析不了**的申报（无 XML 的老格式）。"""
+    """Record a filing that will **never parse** (the old format with no XML)."""
     _init()
     with db.connect() as conn:
         conn.execute(
@@ -144,7 +144,7 @@ def mark_dead(accession: str, day: str, reason: str) -> None:
 
 
 def dead_accessions() -> set[str]:
-    """已知读不了的申报 —— 重试时跳过它们，别再白下一遍。"""
+    """Filings known to be unreadable — skipped on retry rather than downloaded again for nothing."""
     _init()
     with db.connect() as conn:
         return {r[0] for r in conn.execute(
@@ -163,14 +163,14 @@ def query(ticker: Optional[str] = None, owner: Optional[str] = None,
           since: Optional[str] = None, min_value: Optional[float] = None,
           role: Optional[str] = None, plan: Optional[str] = None,
           include_amendments: bool = False, limit: int = 300) -> list[dict]:
-    """查询交易明细（按交易日倒序）。
+    """Query transaction detail (most recent trade date first).
 
-    `group` 默认不限；UI 上默认只看 `open_market` ——
-    因为薪酬类占了七成，混在一起会把真正的买卖淹没。
+    `group` is unrestricted by default; the UI shows `open_market` only —
+    because compensation makes up seven tenths of the rows and drowns the real buying and selling.
     """
     _init()
-    # ⚠️ NULL = **未标注**（2023 年前的申报没这个字段），不是"确认非计划内" ——
-    # 混在一起会歪曲「计划内 vs 临时决定」的对比。三态见 _where()。
+    # ⚠️ NULL = **not marked** (filings before 2023 had no such field), and not "confirmed as not under a plan" —
+    # mixing them distorts the comparison between planned and spur-of-the-moment. The three states are in _where().
     w, args = _where(ticker=ticker, owner=owner, group=group, direction=direction,
                      since=since, min_value=min_value, role=role, plan=plan,
                      include_amendments=include_amendments)
@@ -184,11 +184,11 @@ def query(ticker: Optional[str] = None, owner: Optional[str] = None,
 def _where(ticker=None, owner=None, group=None, direction=None, since=None,
            min_value=None, role=None, plan=None,
            include_amendments: bool = False) -> tuple[str, list]:
-    """筛选条件 —— 明细与聚合**共用这一处**，避免两边口径漂移。"""
-    # ⚠️ 默认排除修订件（4/A）：修订通常是把原申报的交易**重述一遍**，
-    # 与原件一起统计就是重复计数。我们**没有做原件↔修订的配对替换**
-    # （需要 DATE_OF_ORIG_SUB 逐份匹配），所以取保守做法：
-    # 聚合只用原始 Form 4，修订件仍可用 include_amendments=True 查出来。
+    """The filter conditions — detail and aggregate **share this one place**, so the two cannot drift."""
+    # ⚠️ Amendments (4/A) are excluded by default: an amendment usually **restates** the original's transactions,
+    # so counting it alongside the original is double counting. We **do not pair originals with their amendments**
+    # and substitute (that would need DATE_OF_ORIG_SUB matched filing by filing), so the conservative course is taken:
+    # aggregates use original Form 4s only, and amendments remain queryable with include_amendments=True.
     sql, args = "WHERE 1=1", []
     if not include_amendments:
         sql += " AND form_type = '4'"
@@ -220,14 +220,14 @@ def _where(ticker=None, owner=None, group=None, direction=None, since=None,
 
 
 def aggregate(top: int = 20, **filters) -> dict:
-    """在 **SQL 里对全部命中行**做聚合。
+    """Aggregate **in SQL over every matching row**.
 
-    ⚠️ 不能"取最新 N 行再用 Python 聚合"：筛选命中超过 N 行时，
-    总额、集群买入榜、标的榜描述的就只是**最新那 N 行**，
-    而标签写的是整个时间段 —— 加个"已截断"提示并不能让数字变准。
+    ⚠️ Never "take the newest N rows and aggregate in Python": when the filter matches more than N rows,
+    the totals, the cluster-buy table and the ticker table describe only **those newest N rows**
+    while the label speaks of the whole period — and adding a "truncated" hint does not make the numbers right.
 
-    分类（tx_group / direction）在**入库时**由 Python 算好并存成列，
-    这里只是按列分组 —— 所以分类逻辑仍然只有一份，不存在 SQL/Python 两套。
+    Classification (tx_group / direction) is computed in Python **at write time** and stored as columns,
+    so this only groups by column — the classification logic still exists in exactly one place, not one in SQL and one in Python.
     """
     _init()
     w, a = _where(**filters)
@@ -258,10 +258,10 @@ def aggregate(top: int = 20, **filters) -> dict:
             f" SUM(CASE WHEN direction='sell' THEN value ELSE 0 END) sell_value "
             f"FROM insider_trade {w} "
             f"GROUP BY owner, ticker "
-            # ⚠️ 排序不引用聚合别名，直接重写表达式：
-            # `MAX(alias, alias)` 到底被解析成标量 max 还是聚合 MAX 依 SQLite 版本而异，
-            # 老版本会报 "misuse of aliased aggregate"。本机 3.53.2 能跑，
-            # 但自部署用户的版本不可控 —— 用到处都对的写法，代价为零。
+            # ⚠️ The ordering does not reference the aggregate alias but rewrites the expression:
+            # whether `MAX(alias, alias)` parses as the scalar max or the aggregate MAX depends on the SQLite version,
+            # and older ones raise "misuse of aliased aggregate". This machine runs 3.53.2 and is fine,
+            # but a self-hosting user's version is out of our hands — so use the spelling that works everywhere, at zero cost.
             f"ORDER BY MAX(SUM(CASE WHEN direction='buy' THEN value ELSE 0 END), "
             f"           SUM(CASE WHEN direction LIKE 'sell' THEN value ELSE 0 END)) DESC "
             f"LIMIT ?", a + [top])]
@@ -270,9 +270,9 @@ def aggregate(top: int = 20, **filters) -> dict:
         anomalies = conn.execute(
             f"SELECT COUNT(*) FROM insider_trade {w} AND tx_date > filing_date",
             a).fetchone()[0]
-        # 价格错填的笔数：入库时 value 已置空（不进金额统计），
-        # 但**数量必须报出来** —— 剔出统计不等于假装它不存在。
-        # 条件与 InsiderTrade.price_implausible 保持一致。
+        # The count of mis-entered prices: value was already nulled at write time (keeping it out of the money totals),
+        # but **the count has to be reported** — dropping something from the statistics is not the same as pretending it does not exist.
+        # The condition matches InsiderTrade.price_implausible.
         implausible = conn.execute(
             f"SELECT COUNT(*) FROM insider_trade {w} AND "
             f"(price > 1000000 OR (shares IS NOT NULL AND price IS NOT NULL "
@@ -281,8 +281,8 @@ def aggregate(top: int = 20, **filters) -> dict:
         e["buy_value"] = round(e["buy_value"] or 0)
         e["sell_value"] = round(e["sell_value"] or 0)
         e["net_value"] = e["buy_value"] - e["sell_value"]
-        # 买入者名单：UI 的 tooltip 要显示它。此前写死空列表 ——
-        # 界面上永远只有人数、没有名字，等于把一半信息藏了。
+        # The list of buyers: the UI tooltip shows it. It used to be hardcoded to an empty list —
+        # so the interface only ever had a count and never the names, which hid half the information.
         e["insiders"] = sorted((e.pop("buyers", None) or "").split(","))[:10]
     for m in by_owner:
         m["buy_value"] = round(m["buy_value"] or 0)
@@ -300,13 +300,13 @@ def aggregate(top: int = 20, **filters) -> dict:
 
 
 def stats() -> dict:
-    """库存概览 —— **必须把「公开市场只占多少」摆在明面上**。"""
+    """Storage overview — **how small the open-market share is has to be in plain sight**."""
     _init()
     with db.connect() as conn:
         t = conn.execute(
-            # ⚠️ 覆盖范围用**申报日**不用交易日：
-            # 申报日由 EDGAR 系统赋予（可靠），交易日是申报人手填（有年份笔误）——
-            # 用交易日会把"已导入 2 个季度"显示成"覆盖 2002 ~ 2028"。
+            # ⚠️ Coverage is measured on the **filing date**, not the trade date:
+            # the filing date is assigned by EDGAR (reliable), while the trade date is typed by the filer (with year typos) —
+            # on trade dates, "2 quarters imported" displays as "covering 2002 to 2028".
             "SELECT COUNT(*) n, COUNT(DISTINCT ticker) tk, COUNT(DISTINCT owner) ow, "
             "MIN(filing_date) lo, MAX(filing_date) hi FROM insider_trade").fetchone()
         g = {r["tx_group"]: r["n"] for r in conn.execute(
@@ -319,13 +319,13 @@ def stats() -> dict:
     om = g.get("open_market", 0)
     return {
         "trades": total, "tickers": t["tk"], "owners": t["ow"],
-        "earliest": t["lo"], "latest": t["hi"],   # 按申报日
+        "earliest": t["lo"], "latest": t["hi"],   # by filing date
         "range_basis": "filing_date",
         "by_group": g,
         "open_market_pct": round(om / total * 100, 1) if total else 0.0,
         "quarters": [x["key"] for x in b if x["kind"] == "quarter"],
         "days": [x["key"] for x in b if x["kind"] == "day"],
         "batches": b[:40], "last_sync": last, "db_path": db.DB_PATH,
-        "note": "「公开市场」= 交易代码 P/S，是唯一含主动买卖意图的部分；"
-                "其余为授予/行权/代扣税等薪酬类与其他豁免交易。",
+        "note": "Open market = transaction codes P/S, the only part carrying an intent to buy or sell; "
+                "the rest is compensation (grants, exercises, tax withholding) and other exempt transactions.",
     }

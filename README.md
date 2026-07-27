@@ -1,4 +1,4 @@
-<p align="center"><b>English</b> | <a href="README_zh.md">简体中文</a></p>
+<p align="center"><b>English</b> | <a href="README_zh.md">简体中文</a></p><!-- cn-ok: language switcher -->
 
 <h1 align="center">FloorZero</h1>
 
@@ -235,7 +235,7 @@ backend/modules/    greeks · bs · flow · scanner · darkpool · insider · in
                     congress · shorts · market · stock · history · *_store · *_sync
 backend/            app.py (FastAPI) · tools.py (single tool definition) · mcp_server.py
 frontend/src/pages  ten sections
-docs/               模块设计.md (architecture) · 开发日志.md (build log, Chinese)
+docs/               ARCHITECTURE.md · screenshots/
 ```
 
 Python 3.9+ · FastAPI · React 19 · Vite · Tailwind · ECharts · SQLite.

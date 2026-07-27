@@ -5,7 +5,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 [Semantic Versioning](https://semver.org/).
 
 Build notes for each section — sources probed, traps measured, defects found and
-fixed — are in [`docs/开发日志.md`](docs/开发日志.md).
+fixed — are kept in the module docstrings, beside the code they explain.
 
 ## [0.1.0] — 2026-07-26
 

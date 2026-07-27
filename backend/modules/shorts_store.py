@@ -1,7 +1,7 @@
-"""做空数据的本地存储与同步。
+"""Local storage and sync for short-sale data.
 
-单个半月档约 6 万行 FTD，很轻 —— 但仍走流式 + 暂存切换，
-与 13F 保持同一套习惯（这个项目已经因为「整表驻留」和「先删后写」各踩过一次）。
+One half-month file is about 60k FTD rows, which is light — but it still streams into staging and switches over,
+keeping the same habits as 13F (this project has been bitten once by keeping whole tables resident, and once by deleting before writing).
 """
 from __future__ import annotations
 
@@ -19,10 +19,10 @@ CREATE TABLE IF NOT EXISTS ftd (
     cusip        TEXT NOT NULL,
     symbol       TEXT,
     description  TEXT,
-    quantity     REAL,          -- ⚠️ 累计余额，不是当日新增（见 shorts.OFFICIAL_NOTES）
-    price        REAL,          -- 前一日收盘价，SEC 不保证与他处一致
+    quantity     REAL,          -- ⚠️ a cumulative balance, not that day's additions (see shorts.OFFICIAL_NOTES)
+    price        REAL,          -- the previous day's close; the SEC does not guarantee it matches other sources
     value        REAL,
-    tag          TEXT NOT NULL, -- 半月档标识，如 202606b
+    tag          TEXT NOT NULL, -- the half-month file's identifier, e.g. 202606b
     PRIMARY KEY (settlement_date, cusip)
 );
 CREATE INDEX IF NOT EXISTS idx_ftd_symbol ON ftd (symbol, settlement_date);
@@ -84,10 +84,10 @@ def save_staging(rows: list[dict], tag: str) -> int:
 
 
 def commit_staging(tag: str) -> int:
-    """原子切换：删旧档 → 暂存转正。
+    """Atomic switch: drop the old file's rows → promote the staged ones.
 
-    ⚠️ 与 13F 同一套做法：**不能先删后写** ——
-    导入中途失败会留下空的或半份数据，而批次元数据还写着旧条数。
+    ⚠️ The same approach as 13F: **never delete before writing** —
+    an import failing part-way leaves nothing or half a file behind, while the batch metadata still records the old count.
     """
     _init()
     cols = ",".join(_COLS)
@@ -125,7 +125,7 @@ def _where(symbol: Optional[str] = None, since: Optional[str] = None,
            settlement_date: Optional[str] = None,
            min_quantity: Optional[float] = None,
            alias: str = "") -> tuple[str, list]:
-    """筛选条件 —— 明细与聚合共用，避免两边口径漂移。"""
+    """The filter conditions — shared by detail and aggregate, so the two cannot drift."""
     p = f"{alias}." if alias else ""
     sql, args = "WHERE 1=1", []
     if symbol:
@@ -149,11 +149,11 @@ def query(limit: int = 200, **filters) -> list[dict]:
 
 
 def aggregate(top: int = 20, **filters) -> dict:
-    """SQL 全量聚合。
+    """Aggregate in SQL over everything.
 
-    ⚠️ 按标的汇总用的是**各结算日余额的平均**，不是加总 ——
-    FTD 是某时点的累计余额，把多个交易日的余额相加没有意义
-    （同一笔未交割会在连续多日重复出现）。
+    ⚠️ The per-symbol total is **the mean of the balances across settlement dates**, never their sum —
+    an FTD is a cumulative balance at a point in time, and adding several days' balances together means nothing
+    (one undelivered trade reappears on consecutive days).
     """
     _init()
     w, a = _where(**filters)
@@ -169,9 +169,9 @@ def aggregate(top: int = 20, **filters) -> dict:
             f" AVG(quantity) avg_quantity, MAX(quantity) max_quantity, "
             f" AVG(value) avg_value, MAX(value) max_value "
             f"FROM ftd {w} AND symbol IS NOT NULL AND symbol != '' "
-            # ⚠️ 按**股数**排序，因为图上画的柱长和文案说的「余额最大」都是股数。
-            # 早前按 avg_value（金额）排，结果 GOOG 1,784 万股排在 XOM 2,668 万股前面
-            # —— 排序依据与所见不符。金额作为标注显示，不做主排序键。
+            # ⚠️ Ordered by **share count**, because the bar lengths on the chart and the phrase "largest balance" both mean shares.
+            # It once sorted by avg_value (money), which put GOOG's 17.84m shares above XOM's 26.68m
+            # — an ordering at odds with what is on screen. Value is shown as an annotation and is not the primary sort key.
             f"GROUP BY symbol ORDER BY avg_quantity IS NULL, avg_quantity DESC LIMIT ?",
             a + [top])]
         by_date = [dict(r) for r in conn.execute(
@@ -197,12 +197,12 @@ def stats() -> dict:
         "last_sync": b[0]["synced_at"] if b else None,
         "db_path": db.DB_PATH,
         "finra_enabled": src.finra_enabled(),
-        "note": "FTD 是**某结算日的累计余额**（不是当日新增），"
-                "且 SEC 明说它不是裸卖空的证据 —— 详见页面上的口径说明。",
+        "note": "An FTD is **the cumulative balance on a settlement date** (not that day's additions), "
+                "and the SEC states plainly that it is not evidence of naked shorting — see the definitions on the page.",
     }
 
 
-# ─────────────────────────── 同步 ───────────────────────────
+# ─────────────────────────── Sync ───────────────────────────
 
 class SyncState:
     def __init__(self) -> None:
@@ -215,7 +215,7 @@ class SyncState:
         self.errors: list[str] = []
 
     def _snapshot_locked(self) -> dict:
-        """⚠️ 调用方须已持锁（Lock 不可重入，持锁再调 snapshot() 会死锁）。"""
+        """⚠️ The caller must already hold the lock (Lock is not reentrant, so calling snapshot() while holding it deadlocks)."""
         return {"running": self.running, "stage": self.stage, "rows": self.rows,
                 "started_at": self.started_at, "finished_at": self.finished_at,
                 "errors": self.errors[-10:], "error_count": len(self.errors)}
@@ -258,25 +258,25 @@ def _sync_tag(tag: str) -> int:
     if not total:
         clear_staging(tag)
         return 0
-    commit_staging(tag)                    # 到这里才动旧数据
+    commit_staging(tag)                    # only now is the old data touched
     mark_batch(tag, rows=total, symbols=len(symbols), date_from=lo, date_to=hi)
     return total
 
 
 def _run(candidates: list[str], want: int) -> None:
-    """按候选档从新到旧尝试，**直到真的导入了 `want` 个档**。
+    """Try candidate files newest to oldest, **until `want` of them have actually been imported**.
 
-    ⚠️ 不能"取最近 N 档就完事"：最新一两档 SEC 常常还没发布
-    （上半月的档月底才发、下半月的次月 15 号左右才发）。
-    照旧写法，默认 back=2 在月初会**一条都导不进来**，
-    而且每次重试都是同一批 404 —— 用户点了按钮什么也拿不到，还看不出为什么。
+    ⚠️ "Take the last N files and be done" will not do: the SEC often has not published the latest one or two
+    (the first half of a month appears at month end, the second half around the 15th of the next).
+    Written that way, the default back=2 imports **nothing at all** early in a month,
+    and every retry hits the same 404s — the user presses the button, gets nothing, and cannot see why.
     """
     got = 0
     try:
         for tag in candidates:
             if got >= want:
                 break
-            STATE.stage = f"导入 FTD {tag}"
+            STATE.stage = f"importing FTD {tag}"
             try:
                 n = _sync_tag(tag)
                 with STATE.lock:
@@ -284,17 +284,17 @@ def _run(candidates: list[str], want: int) -> None:
                 if n:
                     got += 1
                 else:
-                    _err(f"{tag}: 文件里没有可解析的记录")
+                    _err(f"{tag}: the file holds no parseable records")
             except src.DataNotAvailable as e:
-                # SEC 还没发这档 —— 不是错误，继续往更早的档试
-                _err(f"{tag}: {e}（继续向更早的档回退）")
+                # The SEC has not published this file yet — not an error; carry on to earlier ones
+                _err(f"{tag}: {e} (falling back to earlier files)")
             except Exception as e:
                 _err(f"{tag}: {type(e).__name__}: {e}")
-        STATE.stage = ("完成" if got else
-                       "完成（未导入任何档 —— 候选范围内 SEC 都还没发布或已导入过）")
+        STATE.stage = ("done" if got else
+                       "done (nothing imported — within the candidate range the SEC has published nothing new, or it is all imported already)")
     except Exception as e:
-        STATE.stage = f"中断：{type(e).__name__}: {e}"
-        _err(f"同步中断：{type(e).__name__}: {e}")
+        STATE.stage = f"interrupted: {type(e).__name__}: {e}"
+        _err(f"Sync interrupted: {type(e).__name__}: {e}")
     finally:
         with STATE.lock:
             STATE.running = False
@@ -302,28 +302,28 @@ def _run(candidates: list[str], want: int) -> None:
 
 
 def start(back: int = 2) -> dict:
-    """导入最近 N 个半月档（跳过已导入的）。"""
+    """Import the last N half-month files (skipping those already imported)."""
     with STATE.lock:
         if STATE.running:
-            return {"started": False, "reason": "已有同步在进行中",
+            return {"started": False, "reason": "a sync is already running",
                     **STATE._snapshot_locked()}
         STATE.running = True
         STATE.rows = 0
         STATE.errors = []
-        STATE.stage = "启动中"
+        STATE.stage = "starting"
         STATE.started_at = datetime.now().isoformat(timespec="seconds")
         STATE.finished_at = None
 
     want = max(1, min(back, 12))
     known = set(known_tags())
-    # 候选放宽到 want + 6 档：最新几档常常还没发布，要留够回退余量
+    # The candidate range widens to want + 6: the newest few are often unpublished, so leave room to fall back
     tags = [t for t in src.ftd_files(want + 6) if t not in known]
     if not tags:
         with STATE.lock:
             STATE.running = False
-            STATE.stage = "已是最新（无新档可导）"
+            STATE.stage = "already up to date (no new files to import)"
             STATE.finished_at = datetime.now().isoformat(timespec="seconds")
-        return {"started": False, "reason": "最近的档都已导入", **STATE.snapshot()}
+        return {"started": False, "reason": "the most recent files are all imported", **STATE.snapshot()}
 
     threading.Thread(target=_run, args=(tags, want), daemon=True).start()
     return {"started": True, **STATE.snapshot()}

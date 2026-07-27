@@ -1,8 +1,8 @@
-"""做空数据：解析与聚合。
+"""Short-sale data: parsing and aggregation.
 
-━━━ ⭐ 这个分栏的数据是全项目最容易被读反的，三条锚点先摆出来 ━━━
+━━━ ⭐ This section's data is the easiest in the project to read backwards, so three anchors come first ━━━
 
-**① FTD 不是日频流量，是累计余额**（SEC 官方说明原文）：
+**① FTD is not a daily flow; it is a cumulative balance** (the SEC's own words):
 
     "Fails to deliver on a given day are a cumulative number of all fails
      outstanding until that day, plus new fails that occur that day, less fails
@@ -12,20 +12,20 @@
      Thus, it is important to note that the age of fails cannot be determined
      by looking at these numbers."
 
-→ 所以**不能把逐日 FTD 当成时间序列画增量**：今天 100 万、昨天 80 万，
-  不代表"新增了 20 万笔交割失败"。本模块只呈现余额本身与它的量级，
-  **不计算日环比、不谈"激增"**。
+→ So **daily FTD must not be drawn as a time series of increments**: 1m today against 800k yesterday
+  does not mean "200,000 new failures". This module presents the balance itself and its magnitude,
+  and **computes no day-on-day change and speaks of no "surge"**.
 
-**② FTD 不是裸卖空的证据**（SEC 官方说明原文）：
+**② FTD is not evidence of naked shorting** (the SEC's own words):
 
     "fails-to-deliver can occur for a number of reasons on both long and short
      sales. Therefore, fails-to-deliver are not necessarily the result of short
      selling, and are not evidence of abusive short selling or 'naked' short
      selling."
 
-→ 这恰恰是该数据在散户圈最流行的用法。**必须把这句话原样显示给用户。**
+→ Which is precisely the most popular use of this data in retail circles. **That sentence has to be shown to the user verbatim.**
 
-**③ 场外空头成交量 ≠ 空头持仓**（FINRA 官方文章原文）：
+**③ Off-exchange short volume ≠ short interest** (FINRA's own article, verbatim):
 
     "Some market participants mistakenly conclude that the bimonthly short
      interest data is understated because the Short Sale Volume Daily File
@@ -33,8 +33,8 @@
      interest. However, short interest position data does not—and is not
      intended to—equate to the daily short sale volume data."
 
-→ 而且该文件只含**场外**成交（"all off-exchange short sale trades...
-  is not consolidated with exchange data"）—— 拿它算"全市场做空占比"是错的。
+→ And the file holds **off-exchange** trades only ("all off-exchange short sale trades...
+  is not consolidated with exchange data") — using it for a "market-wide short share" is wrong.
 """
 from __future__ import annotations
 
@@ -43,32 +43,32 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Optional
 
-#: SEC 与 FINRA 的官方原文 —— **原样展示，不要改写成自己的话**
+#: The SEC's and FINRA's own words — **shown verbatim, never paraphrased into ours**
 OFFICIAL_NOTES = {
     "ftd_cumulative": (
-        "SEC 官方说明：「Fails to deliver on a given day are a cumulative number "
+        "SEC guidance, verbatim: \"Fails to deliver on a given day are a cumulative number "
         "of all fails outstanding until that day... The figure is not a daily "
         "amount of fails... may have little or no relationship to yesterday's "
         "aggregate fails. Thus, it is important to note that the age of fails "
-        "cannot be determined by looking at these numbers.」"
-        "→ 它是**某一时点的累计余额**，不是当日新增。本页因此不做日环比、不谈「激增」。"),
+        "cannot be determined by looking at these numbers.\" "
+        "→ It is a **cumulative balance at a point in time**, not that day's additions. So this page computes no day-on-day change and speaks of no surge."),
     "ftd_not_naked": (
-        "SEC 官方说明：「fails-to-deliver can occur for a number of reasons on "
+        "SEC guidance, verbatim: \"fails-to-deliver can occur for a number of reasons on "
         "both long and short sales. Therefore, fails-to-deliver are not "
         "necessarily the result of short selling, and are not evidence of "
-        "abusive short selling or 'naked' short selling.」"
-        "→ 交割失败**既可能来自多头也可能来自空头**，不是裸卖空的证据。"),
+        "abusive short selling or 'naked' short selling.\" "
+        "→ A failure to deliver **can come from a long just as much as a short**, and is not evidence of naked shorting."),
     "volume_not_interest": (
-        "FINRA 官方说明：「short interest position data does not—and is not "
-        "intended to—equate to the daily short sale volume data.」"
-        "且该文件只含**场外**成交（not consolidated with exchange data）。"
-        "→ 「空头成交量」是当日流量且只有场外那部分，"
-        "与「空头持仓」（每月两次的存量快照）是两回事，"
-        "拿它算全市场做空占比是错的。"),
+        "FINRA guidance, verbatim: \"short interest position data does not—and is not "
+        "intended to—equate to the daily short sale volume data.\" "
+        "And the file holds **off-exchange** trades only (not consolidated with exchange data). "
+        "→ Short sale volume is a daily flow, and only the off-exchange part of it; "
+        "short interest is a twice-monthly snapshot of a standing position. They are different things, "
+        "and using the former for a market-wide short share is wrong."),
     "price_caveat": (
-        "SEC 说明：价格字段是**前一日收盘价**，且「we cannot guarantee that this "
-        "price matches closing prices available from other sources」。"
-        "本页的金额估算据此计算，只作量级参考。"),
+        "SEC guidance: the price field is **the previous day's close**, and \"we cannot guarantee that this "
+        "price matches closing prices available from other sources\". "
+        "The value estimates on this page follow from it and indicate magnitude only."),
 }
 
 
@@ -82,7 +82,7 @@ def _num(v: Optional[str]) -> Optional[float]:
 
 
 def _parse_date(v: Optional[str]) -> Optional[date]:
-    """解析 `20260615`（FTD）或 `2026-06-15`。"""
+    """Parse `20260615` (FTD) or `2026-06-15`."""
     if not v:
         return None
     s = str(v).strip()
@@ -96,25 +96,25 @@ def _parse_date(v: Optional[str]) -> Optional[date]:
 
 @dataclass(frozen=True)
 class Fail:
-    """一条交割失败记录（某标的在某结算日的**累计余额**）。"""
+    """One fail-to-deliver record (a symbol's **cumulative balance** on a settlement date)."""
 
     settlement_date: Optional[date]
     cusip: str
     symbol: str
     description: str
-    quantity: Optional[float]        # 累计余额（股），**不是当日新增**
-    price: Optional[float]           # 前一日收盘价，SEC 不保证与他处一致
+    quantity: Optional[float]        # the cumulative balance in shares, **not that day's additions**
+    price: Optional[float]           # the previous day's close; the SEC does not guarantee it matches other sources
 
     @property
     def value(self) -> Optional[float]:
-        """名义金额 = 余额 × 前收。只作量级参考（价格口径见 price_caveat）。"""
+        """Notional = balance × previous close. Indicative of magnitude only (see price_caveat for the caveat)."""
         if self.quantity is None or self.price is None:
             return None
         return self.quantity * self.price
 
 
 def parse_ftd(row: dict) -> Optional[Fail]:
-    """FTD 一行 → Fail。字段不全就返回 None（文件尾有说明行）。"""
+    """One FTD row → a Fail. Returns None when fields are missing (the file ends with explanatory lines)."""
     sym = (row.get("SYMBOL") or "").strip().upper()
     cusip = (row.get("CUSIP") or "").strip().upper()
     if not sym and not cusip:
@@ -140,7 +140,7 @@ def to_dict(f: Fail) -> dict:
 
 @dataclass(frozen=True)
 class ShortVolume:
-    """FINRA 某日**场外**空头成交量（不是持仓，也不含交易所成交）。"""
+    """FINRA's **off-exchange** short sale volume for one day (not a position, and not including exchange trades)."""
 
     trade_date: Optional[date]
     symbol: str
@@ -151,10 +151,10 @@ class ShortVolume:
 
     @property
     def short_pct(self) -> Optional[float]:
-        """空头成交占**场外**成交的比例。
+        """Short volume as a share of **off-exchange** volume.
 
-        ⚠️ 分母只是场外成交，**不是全市场成交** —— FINRA 明说该文件
-        "is not consolidated with exchange data"。把它当"全市场做空占比"是错的。
+        ⚠️ The denominator is off-exchange volume alone and is **not market-wide volume** — FINRA states
+        that this file "is not consolidated with exchange data". Reading it as a market-wide short share is wrong.
         """
         if not self.total_volume or self.short_volume is None:
             return None

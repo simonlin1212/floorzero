@@ -70,7 +70,7 @@ def _post(body: dict) -> list[dict]:
     ⚠️ It **returns CSV** (`Content-Type: text/plain`), even though the request body is JSON.
     Parsing it as JSON raises `JSONDecodeError`, which reads like "the endpoint is broken" when the format simply did not match.
     ⚠️ And **do not pass `sortFields`** — it returns 400 unless every partition key is specified
-    （"Sorting is allowed only if all partitions keys are specified"）。
+    ("Sorting is allowed only if all partitions keys are specified").
     """
     if not finra_enabled():
         raise FinraDisabled(

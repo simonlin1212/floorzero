@@ -1,19 +1,19 @@
-"""本地历史沉淀。
+"""Locally accrued history.
 
-━━━ 为什么需要这个 ━━━
-Unusual Whales 的真护城河不是数据独家（源头几乎都免费公开），
-而是**他们跑了很多年、攒下了历史**——历史数据还单独卖钱。
+━━━ Why this exists ━━━
+Unusual Whales' real moat is not exclusive data (the sources are nearly all free and public)
+but that **they have been running for years and have accrued the history** — which they sell separately.
 
-用户自部署 FloorZero 的第一天是**零历史**，这一点必须对用户诚实。
-本模块的作用是：**装上就开始积累**，越用越值钱。
+A user self-hosting FloorZero starts on day one with **no history at all**, and that has to be said honestly.
+What this module does: **start accruing the moment it is installed**, and grow more valuable with use.
 
-⚠️ 补不回来的部分：期权链的历史快照。CBOE 只给当下，过去的拿不到。
-    能回补的：EDGAR / FINRA 本身带历史（那两条线以后可以回填）。
+⚠️ What cannot be backfilled: historical snapshots of the option chain. Cboe gives only the present.
+    What can: EDGAR and FINRA carry their own history (those two lanes can be filled in later).
 
-━━━ 存储 ━━━
-SQLite，零配置，默认落在用户目录 `~/.floorzero/history.db`
-（不放仓库内：更新代码/重新 clone 不该弄丢用户攒的历史 ——
- VibeResearch 的 issue #12 就是这个坑）。
+━━━ Storage ━━━
+SQLite, no configuration, defaulting to `~/.floorzero/history.db` in the user's home
+(not inside the repo: updating the code or re-cloning must not lose the history a user has accrued —
+ VibeResearch's issue #12 was exactly this trap).
 """
 from __future__ import annotations
 
@@ -28,9 +28,9 @@ CREATE TABLE IF NOT EXISTS gex_snapshot (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     ticker      TEXT    NOT NULL,
     captured_at TEXT    NOT NULL,          -- ISO8601 UTC
-    scope       TEXT    NOT NULL,          -- 口径：不同 scope 的快照不可混比
+    scope       TEXT    NOT NULL,          -- the basis: snapshots of different scopes are not comparable
     spot        REAL    NOT NULL,
-    total_gex   REAL    NOT NULL,          -- 名义美元 / 1%
+    total_gex   REAL    NOT NULL,          -- notional dollars per 1%
     gamma_flip  REAL,
     call_wall   REAL,
     put_wall    REAL,
@@ -38,10 +38,10 @@ CREATE TABLE IF NOT EXISTS gex_snapshot (
     total_vanna REAL,
     total_charm REAL
 );
--- 同一标的+口径下按时间查，是最主要的读法
+-- Querying by time within one symbol and scope is by far the main read
 CREATE INDEX IF NOT EXISTS idx_gex_ticker_time
     ON gex_snapshot (ticker, scope, captured_at);
--- 幂等：同一标的/口径/时间点只留一条，重复采集不会灌重
+-- Idempotent: one row per symbol/scope/instant, so repeated collection cannot duplicate
 CREATE UNIQUE INDEX IF NOT EXISTS idx_gex_unique
     ON gex_snapshot (ticker, scope, captured_at);
 """
@@ -58,21 +58,21 @@ def _conn():
 
 def record_gex(profile_dict: dict, exposures: Optional[dict] = None,
                captured_at: Optional[str] = None) -> bool:
-    """记录一次 GEX 快照。返回 True=新写入，False=该数据时点已存在。
+    """Record one GEX snapshot. Returns True for a new row, False if that data instant is already stored.
 
-    ⚠️ **`captured_at` 要传数据自身的时间（`chain.timestamp`），不是墙上时钟。**
-    CBOE 的延时行情每隔一段才更新一次；用 `now()` 当主键的话，
-    连点两次按钮会存进两行**数据完全相同、时间戳不同**的记录，
-    画进时间序列就是凭空多出来的「观测点」——看着像行情动了，其实一动没动。
-    按数据时点入库后，(ticker, scope, captured_at) 唯一索引才真正挡得住重复：
-    只有上游确实发布了新数据才会新增一行。
+    ⚠️ **`captured_at` takes the data's own time (`chain.timestamp`), never the wall clock.**
+    Cboe's delayed quotes update only every so often, so with `now()` as part of the key,
+    two presses of the button store two rows of **identical data under different timestamps**,
+    and plotted as a series that is an "observation" conjured out of nothing — it looks like the market moved when nothing did.
+    Keyed by the data's own instant, the (ticker, scope, captured_at) unique index finally does block duplicates:
+    a row is added only when upstream really did publish something new.
 
-    退化情况：上游没给 timestamp 时才回退到 UTC 墙钟（此时幂等性不保证）。
+    The degenerate case: only when upstream gives no timestamp does it fall back to the UTC wall clock (and idempotence is then not guaranteed).
     """
     ts = captured_at or datetime.now(timezone.utc).isoformat(timespec="seconds")
     meta = profile_dict["meta"]
-    # ⭐ 必须用 scope_key（不含合约数）而不是展示用的 scope：
-    # 合约数每天都变，混进主键会让明天的快照落进另一个 scope，序列永远攒不起来。
+    # ⭐ It must use scope_key (which carries no contract count) rather than the display scope:
+    # the contract count changes daily, and folded into the key it files tomorrow's snapshot under a different scope, so the series never accrues.
     scope_key = meta.get("scope_key") or meta["scope"]
     row = (
         profile_dict["ticker"], ts, scope_key,
@@ -93,10 +93,10 @@ def record_gex(profile_dict: dict, exposures: Optional[dict] = None,
 
 def gex_series(ticker: str, scope: Optional[str] = None,
                limit: int = 200) -> list[dict[str, Any]]:
-    """取某标的的历史序列（新→旧）。
+    """Fetch a symbol's historical series (newest first).
 
-    ⚠️ scope 必须参与筛选：`≤7DTE` 与 `全链` 的 GEX 不是一个量级，
-    混在一张图里会画出毫无意义的锯齿。
+    ⚠️ scope has to be part of the filter: the GEX of `≤7DTE` and of the `whole chain` are not the same order of magnitude,
+    and mixed into one chart they draw a meaningless sawtooth.
     """
     sql = "SELECT * FROM gex_snapshot WHERE ticker = ?"
     args: list[Any] = [ticker.upper()]
@@ -110,7 +110,7 @@ def gex_series(ticker: str, scope: Optional[str] = None,
 
 
 def scopes_for(ticker: str) -> list[str]:
-    """该标的已积累了哪些口径的历史（供前端选择，避免混比）。"""
+    """Which scopes this symbol has accrued history for (so the frontend can choose, and avoid comparing across them)."""
     with _conn() as conn:
         return [r[0] for r in conn.execute(
             "SELECT DISTINCT scope FROM gex_snapshot WHERE ticker = ? ORDER BY scope",
@@ -118,7 +118,7 @@ def scopes_for(ticker: str) -> list[str]:
 
 
 def stats() -> dict:
-    """库存概览 —— 让用户看到「自己攒了多少」。"""
+    """Storage overview — so the user can see how much they have accrued."""
     with _conn() as conn:
         r = conn.execute(
             "SELECT COUNT(*) n, COUNT(DISTINCT ticker) t, "
@@ -127,5 +127,5 @@ def stats() -> dict:
         "snapshots": r["n"], "tickers": r["t"],
         "earliest": r["lo"], "latest": r["hi"],
         "db_path": DB_PATH,
-        "note": "期权链历史无法回补（CBOE 只给当下），装上后才开始积累。",
+        "note": "Option chain history cannot be backfilled (Cboe gives only the present); it begins accruing once installed.",
     }
