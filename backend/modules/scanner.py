@@ -1,78 +1,78 @@
-"""全市场扫描器。
+"""The market-wide scanner.
 
-━━━━━━━━━━━━━━ ⚠️ 先说清楚这一栏为什么慢 ━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━ ⚠️ Why this section is slow, stated first ━━━━━━━━━━━━━━
 
-UW 的扫描器能秒出全市场结果，因为他们**吃 OPRA 逐笔 feed**，
-全市场的状态本来就在他们自己的库里。我们没有那条管子，只能一只一只去问 CBOE。
+UW's scanner returns market-wide results instantly because they **consume the OPRA print feed**:
+the state of the whole market already sits in their own database. We have no such pipe, and must ask Cboe one symbol at a time.
 
-实测（2026-07-26）两条路的代价差 **3,750 倍**：
+Measured (2026-07-26), the two routes differ in cost by **3,750×**:
 
-| 路 | 单只 | 全市场 6,049 只 |
+| Route | Per symbol | All 6,049 symbols |
 |---|---|---|
-| 轻量行情 `quotes/{SYM}.json` | 0.4KB / ~120ms | ~26 分钟（自律限流 4/s）|
-| 完整期权链 `options/{SYM}.json` | 1.5MB / ~2.1s | **~3.5 小时 / 9GB** |
+| Light quote `quotes/{SYM}.json` | 0.4KB / ~120ms | ~26 minutes (at our self-imposed 4/s) |
+| Full options chain `options/{SYM}.json` | 1.5MB / ~2.1s | **~3.5 hours / 9GB** |
 
-所以扫描是**两遍**：轻量行情扫全市场 → 短名单再拉全链。
-而且它天然是个**后台作业**，不是点一下就出结果的接口。这一点必须让用户
-一眼看到，而不是让他对着转圈的按钮猜要等多久。
+So a scan runs in **two passes**: light quotes across the market → the full chain for a shortlist.
+And it is a **background job** by nature, not an endpoint that answers on click. That has to be
+visible to the user at a glance, rather than left for them to guess at while a button spins.
 
-━━━━━━━━━━━━━━ ⚠️ IV Rank 第一天算不出来 ━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━ ⚠️ IV Rank cannot be computed on day one ━━━━━━━━━━━━━━
 
-**IV Rank / IV 百分位是扫描器最核心的指标，而它按定义就需要历史**
-（当前 IV 在过去 252 个交易日区间里的位置）。CBOE 只给当下的 `iv30`，
-一个孤零零的 28.9% 说明不了任何问题 —— 对这只票是高是低，只有和它**自己的**
-历史比才知道。
+**IV Rank and IV percentile are the scanner's central metric, and by definition they need history**
+(where current IV sits within the last 252 trading days). Cboe gives only the present `iv30`,
+and a lone 28.9% says nothing at all — whether that is high or low for this symbol is knowable only
+against **its own** history.
 
-这份历史**补不回来**，只能从装上那天起逐日攒（同 `flow_store` 的 OI）。
-所以：
+That history **cannot be backfilled**; it accrues day by day from installation onwards (like the OI in `flow_store`).
+Therefore:
 
-- 攒够之前，`iv_rank` 返回 **None**，并附上"还差多少天"。
-  ⛔ **绝不拿 20 天的样本硬算一个数字冒充 IV Rank** —— 那个数看着一样专业，
-  但它衡量的根本不是同一件事，而用户没法从数字本身看出这一点。
-- 样本天数一律随结果返回，让读者自己判断这个排名有多少分量。
+- Until enough has accrued, `iv_rank` returns **None**, along with how many days are still needed.
+  ⛔ **Never compute a number off 20 days and pass it off as IV Rank** — it looks every bit as
+  professional, but it measures something else entirely, and the number itself gives the user no way to tell.
+- The sample size always travels with the result, so the reader can judge how much the ranking is worth.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
-#: IV Rank 的标准回看窗口（交易日）。252 ≈ 一年。
+#: The standard lookback window for IV Rank (trading days). 252 ≈ one year.
 IV_LOOKBACK = 252
 
-#: 少于这个天数就**不出** IV Rank。
-#: 60 个交易日约三个月 —— 低于此，"过去一年区间"这个说法已经名不副实。
+#: Below this many days, **no** IV Rank is produced.
+#: 60 trading days is about three months — below that, calling it "the past year's range" no longer holds.
 IV_MIN_SAMPLE = 60
 
 NOTES = {
     "why_slow": (
-        "全市场扫描是**后台作业**，不是点一下就出结果。CBOE 没有全市场端点，"
-        "只能逐只去问：轻量行情 6,049 只约 **26 分钟**（自律限流 4 次/秒），"
-        "完整期权链则要 3.5 小时 / 9GB —— 所以扫描分两遍，"
-        "轻量扫全市场、短名单再拉全链。"),
+        "A market-wide scan is a **background job**, not something that answers on click. Cboe has no "
+        "market-wide endpoint, so symbols are asked one at a time: 6,049 light quotes take about "
+        "**26 minutes** (at our self-imposed 4 requests/second), and full chains would take 3.5 hours "
+        "and 9GB — hence two passes, light across the market and full chains for a shortlist."),
     "iv_rank": (
-        "**IV Rank 按定义需要历史**：当前 IV 在过去 252 个交易日区间里的位置。"
-        "CBOE 只给当下的 iv30，单点数值说明不了高低。这份历史**补不回来**，"
-        f"只能逐日攒；不足 {IV_MIN_SAMPLE} 个交易日时本页返回**空值**，"
-        "**不会**拿短样本硬算一个数字冒充 IV Rank。"),
+        "**IV Rank needs history by definition**: where current IV sits within the last 252 trading days. "
+        "Cboe gives only the present iv30, and a single point says nothing about high or low. This history "
+        f"**cannot be backfilled** and only accrues daily; below {IV_MIN_SAMPLE} trading days this page returns **null** "
+        "and **will not** compute a number off a short sample and call it IV Rank."),
     "universe": (
-        "全集是 CBOE 官方的**有期权标的**清单（6,049 只去重后），"
-        "不是「今天有成交的标的」—— 里头有大量常年零成交的冷门票。"),
+        "The universe is Cboe's official list of **symbols with options** (6,049 after deduplication), "
+        "not \"symbols that traded today\" — it holds a great many names with no volume year in, year out."),
     "snapshot": (
-        "一轮扫描要跑几十分钟，期间各标的的抓取时刻不同。因为 CBOE 是**延时**"
-        "数据（收盘后基本静止），同一轮内的可比性没问题，但每行都带自己的"
-        "交易时段，对不上的时候能看出来。"),
+        "A scan runs for tens of minutes, so symbols are captured at different moments. Because Cboe is "
+        "**delayed** data (and essentially static after the close), comparability within one scan holds; "
+        "still, every row carries its own trading session, so a mismatch is visible when there is one."),
 }
 
 
 def _pct_rank(value: float, samples: list[float]) -> Optional[float]:
-    """`value` 在样本里的百分位（0-100）。
+    """Where `value` falls in the sample as a percentile (0-100).
 
-    ⚠️ 用的是"有多少样本 ≤ 它"，**不是** min-max 线性归一化。
-    两者常被混叫 IV Rank：
-    - **IV Rank**（业内主流）= (当前 − 最低) / (最高 − 最低) × 100，只看两个端点
-    - **IV 百分位** = 有多少天低于当前，看的是整个分布
-    一年里有一天暴涨到 200%，IV Rank 会被那一天永久压扁，而百分位不会。
-    本模块**两个都算、都返回**，不挑一个叫"那个 IV Rank"。
+    ⚠️ This counts "how many samples are ≤ it", and is **not** min-max normalisation.
+    The two are routinely both called IV Rank:
+    - **IV Rank** (the industry's usual meaning) = (current − low) / (high − low) × 100, which reads only the two extremes
+    - **IV percentile** = how many days sat below the current value, which reads the whole distribution
+    One day's spike to 200% in a year flattens IV Rank permanently; the percentile is untouched by it.
+    This module **computes and returns both**, and crowns neither "the" IV Rank.
     """
     if not samples:
         return None
@@ -81,19 +81,19 @@ def _pct_rank(value: float, samples: list[float]) -> Optional[float]:
 
 
 def _minmax_rank(value: float, samples: list[float]) -> Optional[float]:
-    """业内主流口径的 IV Rank：当前值在 [最低, 最高] 区间里的位置。"""
+    """IV Rank in the industry's usual sense: where the current value sits within [low, high]."""
     if not samples:
         return None
     lo, hi = min(samples), max(samples)
     if hi <= lo:
-        # 整段样本一模一样 —— 位置**无从谈起**，不是 0 也不是 50
+        # Every sample identical — there is **no position to speak of**, which is neither 0 nor 50
         return None
     return (value - lo) / (hi - lo) * 100.0
 
 
 @dataclass(frozen=True)
 class ScanRow:
-    """扫描器里的一行（轻量行情 + 本地历史算出的排名）。"""
+    """One row of the scanner (a light quote plus rankings computed from local history)."""
 
     symbol: str
     session: Optional[str]
@@ -103,17 +103,17 @@ class ScanRow:
     iv30: Optional[float]
     iv30_change: Optional[float]
     security_type: Optional[str]
-    #: 本地攒到的 iv30 样本数（交易日）
+    #: iv30 samples accrued locally (trading days)
     iv_samples: int
-    iv_rank: Optional[float]          # min-max 口径
-    iv_percentile: Optional[float]    # 分布口径
-    #: ⚠️ 排名为空的**原因**：insufficient_history / no_current_iv / flat_history。
-    #: 三者在界面上必须说得不一样 —— 只有第一种才是"再等几天就有了"。
+    iv_rank: Optional[float]          # the min-max sense
+    iv_percentile: Optional[float]    # the distribution sense
+    #: ⚠️ **Why** a ranking is null: insufficient_history / no_current_iv / flat_history.
+    #: The three must read differently in the interface — only the first means "a few more days and it will be there".
     iv_reason: Optional[str]
-    #: 成交量相对本地历史中位数的倍数（算不出时为 None）
+    #: Volume as a multiple of the local historical median (None when it cannot be computed)
     volume_x_median: Optional[float]
     volume_samples: int
-    #: 为空的原因：insufficient_history / no_current_volume / zero_median
+    #: Why it is null: insufficient_history / no_current_volume / zero_median
     volume_x_reason: Optional[str]
 
     @property
@@ -143,10 +143,10 @@ def to_dict(r: ScanRow) -> dict:
 
 def build_row(quote: dict, iv_history: list[float],
               volume_history: list[float]) -> ScanRow:
-    """把一条轻量行情 + 它的本地历史，合成一行扫描结果。
+    """Combine one light quote with its local history into a scanner row.
 
-    ⚠️ 历史不够时 `iv_rank` / `iv_percentile` 返回 **None**，
-    而不是用手上这几天硬算一个 —— 详见模块头部说明。
+    ⚠️ With too little history, `iv_rank` / `iv_percentile` return **None** rather than a number
+    forced out of the few days to hand — see the module docstring.
     """
     iv = quote.get("iv30")
     n_iv = len(iv_history)
@@ -163,15 +163,15 @@ def build_row(quote: dict, iv_history: list[float],
     else:
         med = _median(volume_history[-IV_LOOKBACK:])
         if med is None or med <= 0:
-            # 中位数为 0（长期零成交）时**算不出倍数**，不能返回 0 或无穷。
-            # ⚠️ 但这和"历史不够"是**两码事**，所以理由要分开标。
+            # A median of 0 (nothing traded for a long time) makes the multiple **incomputable**; it is not 0 or infinity.
+            # ⚠️ But that is **a different thing** from "not enough history", so the reasons stay apart.
             vx_reason = "zero_median"
         else:
             vx = vol / med
 
-    # ⚠️ `iv_rank=None` 有**三种**原因，必须分开标：
-    #    ① 历史不够 ② 当前 iv30 缺失 ③ 整段历史一模一样（区间为 0，位置无从谈起）
-    #    一律说成"还差 N 天"会在 ②③ 上撒谎 —— 尤其 ② 时会显示"还差 0 天"。
+    # ⚠️ `iv_rank=None` has **three** causes and they must be labelled separately:
+    #    ① not enough history ② current iv30 missing ③ the whole history is flat (a zero range, so there is no position to speak of)
+    #    Calling all three "N days to go" lies about ② and ③ — and on ② it reads "0 days to go".
     iv_reason: Optional[str] = None
     rank = pct = None
     if iv is None:
@@ -196,10 +196,10 @@ def build_row(quote: dict, iv_history: list[float],
 
 
 def _median(xs: list[float]) -> Optional[float]:
-    """中位数。
+    """Median.
 
-    ⚠️ 偶数个样本要取**中间两个的平均**，不是 `srt[n//2]`（那取的是上中位数）。
-    `[10,20,30,40]` 的中位数是 25 不是 30 —— 差 20%，量比筛选的结果会跟着变。
+    ⚠️ An even-sized sample takes **the mean of the middle two**, not `srt[n//2]` (which is the upper median).
+    The median of `[10,20,30,40]` is 25, not 30 — 20% out, and the volume-multiple screen shifts with it.
     """
     if not xs:
         return None
@@ -209,7 +209,7 @@ def _median(xs: list[float]) -> Optional[float]:
     return srt[mid] if n % 2 else (srt[mid - 1] + srt[mid]) / 2.0
 
 
-# ─────────────────────────── 筛选 ───────────────────────────
+# ─────────────────────────── Filtering ───────────────────────────
 
 def apply_filters(rows: Iterable[ScanRow], *,
                   min_price: Optional[float] = None,
@@ -220,12 +220,12 @@ def apply_filters(rows: Iterable[ScanRow], *,
                   min_iv_rank: Optional[float] = None,
                   min_volume_x: Optional[float] = None,
                   security_type: Optional[str] = None) -> tuple[list[ScanRow], dict]:
-    """按条件筛。
+    """Filter on the given conditions.
 
-    ⚠️ **同时返回"因为算不出而被排除"的条数。**
-    `min_iv_rank=80` 时，IV Rank 为 None 的行不满足条件、会被滤掉 ——
-    但那是"这只票还没攒够历史"，不是"它的 IV Rank 低于 80"。
-    只给结果不给这个数字，用户会以为全市场就这么点票符合条件。
+    ⚠️ **It also returns how many rows were excluded because the value could not be computed.**
+    With `min_iv_rank=80`, rows whose IV Rank is None fail the condition and are filtered out —
+    but that means "this symbol has not accrued enough history", not "its IV Rank is below 80".
+    Give the results without that number and the user believes only a handful of symbols in the whole market qualify.
     """
     out = []
     skipped_no_iv_rank = 0
@@ -262,10 +262,10 @@ def apply_filters(rows: Iterable[ScanRow], *,
             continue
         out.append(r)
     return out, {
-        # 被滤掉是因为**算不出**，不是因为不满足数值条件 —— 两者必须分开报
+        # Excluded because it **could not be computed**, not because it failed a numeric condition — the two must be reported apart
         "excluded_no_iv_rank": skipped_no_iv_rank,
         "excluded_no_volume_x": skipped_no_volume_x,
-        # 按理由细分 —— "还差几天"和"当前 IV 缺失"要给用户不同的下一步
+        # Broken down by reason — "a few days to go" and "current IV missing" call for different next steps
         "iv_reasons": iv_why,
         "volume_reasons": vol_why,
     }
@@ -283,22 +283,22 @@ SORTS = {
 
 
 def sort_rows(rows: list[ScanRow], key: str = "iv_rank") -> list[ScanRow]:
-    """排序。
+    """Sorting.
 
-    ⚠️ 每个 key 的元组第一位都是"值是否为 None"，
-    所以**算不出的一律沉底**，不会因为 `or 0` 被当成"最低值"混在真值里 ——
-    真的 0 和"没有"排在一起，读者分不出哪个是哪个。
+    ⚠️ The first element of every key tuple is "whether the value is None",
+    so **anything incomputable sinks to the bottom** rather than being treated as "the lowest value"
+    by an `or 0` and mixed in among real ones — a real 0 and a missing value side by side, with no way to tell which is which.
     """
     fn = SORTS.get(key) or SORTS["iv_rank"]
     return sorted(rows, key=fn)
 
 
-#: 空值理由的人话（REST / MCP / UI 三处共用同一份，避免各写各的而说法不一）
+#: Null reasons in plain words (REST / MCP / UI all read this one copy, so they cannot word it differently)
 REASON_LABEL = {
-    "insufficient_history": "本机还没攒够历史",
-    "no_current_iv": "本次快照没有 IV30（上游没给）",
-    "no_current_volume": "本次快照没有成交量（上游没给）",
-    "flat_history": "历史区间为 0（最高=最低），位置无从谈起",
-    "zero_median": "历史成交量中位数为 0（长期零成交），倍数算不出",
-    "unknown": "原因未知",
+    "insufficient_history": "not enough history accrued on this machine yet",
+    "no_current_iv": "this snapshot carries no IV30 (upstream did not provide one)",
+    "no_current_volume": "this snapshot carries no volume (upstream did not provide one)",
+    "flat_history": "the history has a zero range (high = low), so a position within it is undefined",
+    "zero_median": "the median historical volume is 0 (nothing traded for a long time), so no multiple can be computed",
+    "unknown": "reason unknown",
 }

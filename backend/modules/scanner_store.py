@@ -1,16 +1,16 @@
-"""扫描器的本地沉淀：逐日的轻量行情快照。
+"""What the scanner accrues locally: a light quote snapshot per day.
 
-━━━ 为什么必须攒 ━━━
-扫描器最核心的指标是 **IV Rank**，而它按定义就是"当前 IV 在过去一年区间里的位置" ——
-没有历史就没有这个指标。CBOE 只给当下的 `iv30`，**过去的拿不到**。
+━━━ Why it has to be accrued ━━━
+The scanner's central metric is **IV Rank**, which by definition is "where current IV sits within the past year's range" —
+no history, no metric. Cboe gives only the present `iv30`, and **the past cannot be fetched**.
 
-所以这张表和 `flow_store` 的 OI 是同一个性质：**装上才开始有，补不回来**。
-差别是它更划算 —— 一行只有 6 个数字，6,000 只标的攒一年也就百万行量级。
+So this table is the same kind of thing as the OI in `flow_store`: **it starts when you install, and cannot be backfilled**.
+The difference is that it is far cheaper — six numbers a row, so 6,000 symbols over a year is on the order of a million rows.
 
-━━━ ⚠️ 按交易时段归档，不是墙上日期 ━━━
-同 `flow_store`：CBOE 的 `last_trade_time` 才是数据所属的交易时段。
-周末连开两天页面，按墙上日期会存成"两天"，IV 样本被灌进重复值 ——
-样本数虚高，而 IV Rank 直接建立在样本数上。
+━━━ ⚠️ Keyed by trading session, not wall-clock date ━━━
+As in `flow_store`: Cboe's `last_trade_time` is the session the data belongs to.
+Open the page twice over a weekend and a wall-clock key stores it as "two days", flooding the IV samples with duplicates —
+the sample count is inflated, and IV Rank is built directly on the sample count.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from modules import db
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS quote_snapshot (
     symbol        TEXT NOT NULL,
-    session       TEXT NOT NULL,        -- YYYY-MM-DD，数据所属交易时段
+    session       TEXT NOT NULL,        -- YYYY-MM-DD, the trading session the data belongs to
     price         REAL,
     change_pct    REAL,
     volume        REAL,
@@ -33,9 +33,9 @@ CREATE TABLE IF NOT EXISTS quote_snapshot (
 CREATE INDEX IF NOT EXISTS ix_q_session ON quote_snapshot(session);
 CREATE INDEX IF NOT EXISTS ix_q_symbol  ON quote_snapshot(symbol, session);
 
--- 每轮扫描的批次记录：跑了多久、扫了多少、失败多少。
--- ⚠️ 失败数必须留痕：一轮扫描里若有 800 只取不到，
---    结果表看上去只是"少了些票"，不留痕就永远发现不了。
+-- A batch record per scan: how long it ran, how many symbols, how many failed.
+-- ⚠️ The failure count has to leave a trace: if 800 symbols could not be fetched in one round,
+--    the results table merely looks like "a few symbols missing", and without the trace it is never noticed.
 CREATE TABLE IF NOT EXISTS scan_batch (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     started_at  TEXT NOT NULL,
@@ -55,18 +55,18 @@ def _ensure() -> None:
 
 
 def record_quotes(rows: Iterable[dict]) -> dict:
-    """写入一批轻量行情（按 symbol+session 幂等）。
+    """Write a batch of light quotes (idempotent on symbol+session).
 
-    ⚠️ 没有 `session` 的行**丢弃并计数**，不拿今天的日期顶上：
-    归档键错了，IV 样本就串了，而串掉之后从数据里看不出来。
-    **丢了几条必须返回** —— 上一版算了 `dropped` 却没返回，
-    于是"上游没给交易时段"这件事在界面上完全看不见，
-    表现成"那些标的不在扫描结果里"，正是把「取不到」伪装成「没有」。
+    ⚠️ Rows with no `session` are **dropped and counted**, never given today's date instead:
+    get the key wrong and the IV samples are scrambled, in a way the data itself will not show.
+    **How many were dropped must be returned** — the previous version computed `dropped` and never returned it,
+    so "upstream gave no trading session" was entirely invisible in the interface,
+    presenting instead as "those symbols are not in the scan results": exactly a failed fetch dressed up as an absence.
 
-    ⚠️ **不用裸 `INSERT OR REPLACE`。** 同一交易时段重扫时，若上游这次
-    临时没给 `iv30`，裸覆盖会把已经攒到的有效值清成 NULL ——
-    样本数不增反减，而这份历史**补不回来**。所以对可空的三个字段用
-    `COALESCE(新值, 旧值)`：有新值就更新，没有就保留旧的。
+    ⚠️ **No bare `INSERT OR REPLACE`.** Rescanning the same session when upstream happens not to
+    return `iv30` this time, a bare overwrite wipes an already-accrued valid value to NULL —
+    the sample count falls instead of rising, and this history **cannot be backfilled**. So the three
+    nullable fields use `COALESCE(new, old)`: update when there is a new value, keep the old when there is not.
     """
     _ensure()
     now = _now()
@@ -99,16 +99,16 @@ def record_quotes(rows: Iterable[dict]) -> dict:
 def history(symbols: Optional[list[str]] = None,
             lookback: int = 252,
             as_of: Optional[str] = None) -> dict[str, dict]:
-    """取每只标的的 iv30 / volume 历史（按时段升序）。
+    """Fetch each symbol's iv30 / volume history (ascending by session).
 
-    返回 `{symbol: {"iv": [...], "volume": [...]}}`。
+    Returns `{symbol: {"iv": [...], "volume": [...]}}`.
 
-    ⚠️ **`as_of` 必须传。** 看历史某一天的扫描结果时，若把之后的数据
-    也算进 IV Rank 的样本里，就是**前视偏差** —— 用还没发生的行情
-    去判断当天 IV 是高是低。极端情况下当前值会落在样本区间外，
-    算出来的排名甚至超出 0-100。
-    ⚠️ 一次查完再在内存里分组，**不是逐只查** —— 6,000 只逐只查
-    等于 6,000 次往返，扫描页会卡到没法用。
+    ⚠️ **`as_of` is mandatory.** Viewing a past day's scan results with later data counted into the
+    IV Rank sample is **lookahead bias** — judging whether that day's IV was high or low using
+    quotes that had not happened yet. In the extreme the current value falls outside the sample range
+    and the resulting rank goes beyond 0-100 altogether.
+    ⚠️ One query, grouped in memory afterwards, and **never one query per symbol** — 6,000 symbols
+    one at a time is 6,000 round trips, and the scanner page becomes unusable.
     """
     _ensure()
     out: dict[str, dict] = {}
@@ -128,8 +128,8 @@ def history(symbols: Optional[list[str]] = None,
     with db.connect() as conn:
         for r in conn.execute(sql, args):
             d = out.setdefault(r["symbol"], {"iv": [], "volume": []})
-            # ⚠️ 空值**跳过**而不是补 0：补 0 会把 IV 区间的下沿拉到 0，
-            #    IV Rank 于是永远显示很高。
+            # ⚠️ Nulls are **skipped**, not filled with 0: a 0 drags the bottom of the IV range down to 0,
+            #    after which IV Rank reads high forever.
             if r["iv30"] is not None:
                 d["iv"].append(float(r["iv30"]))
             if r["volume"] is not None:
@@ -148,15 +148,15 @@ def latest_session() -> Optional[str]:
 
 
 def quotes_at(session: str) -> list[dict]:
-    """截至某交易时段，**每只标的各自最新的一条**行情。
+    """As of a given trading session, **each symbol's own most recent** quote.
 
-    ⚠️ **不是 `WHERE session = ?`。** 一轮扫描里各标的的 `last_trade_time`
-    未必相同（停牌、上游延迟更新、扫描跨了交易时段都会造成这种情况）。
-    只取等于最新时段的那批，会把另一批**成功入库的**标的整个隐掉 ——
-    界面上表现成"它们不在扫描结果里"，而它们只是时段旧一天。
+    ⚠️ **Not `WHERE session = ?`.** Symbols within one scan need not share a `last_trade_time`
+    (a halt, a delayed upstream update, or a scan spanning two sessions all cause it).
+    Take only those equal to the newest session and another set of **successfully stored** symbols vanishes whole —
+    presenting as "they are not in the scan results" when they are merely a session older.
 
-    这里按"≤ 目标时段的最新一条"取，并把各行自己的 session 一起返回，
-    对不上的时候用户能一眼看见。
+    So this takes "the most recent row at or before the target session" and returns each row's own session
+    alongside, so a mismatch is visible to the user at a glance.
     """
     _ensure()
     with db.connect() as conn:
@@ -202,7 +202,7 @@ def stats() -> dict:
             "SELECT COUNT(*) n, COUNT(DISTINCT symbol) syms, "
             "COUNT(DISTINCT session) sessions, MIN(session) lo, MAX(session) hi "
             "FROM quote_snapshot").fetchone()
-        # 攒够 IV Rank 的标的有几只 —— 这是"这一栏现在有多可用"的直接答案
+        # How many symbols have accrued enough for IV Rank — the direct answer to "how usable is this section right now"
         ready = conn.execute(
             "SELECT COUNT(*) n FROM (SELECT symbol FROM quote_snapshot "
             "WHERE iv30 IS NOT NULL GROUP BY symbol HAVING COUNT(*) >= ?)",

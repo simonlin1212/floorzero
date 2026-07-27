@@ -1,21 +1,21 @@
-"""扫描器的后台作业。
+"""The scanner's background job.
 
-一轮全市场扫描 = 6,049 次轻量行情请求。在自律限流 4 次/秒下约 **26 分钟** ——
-所以它必须是后台任务 + 进度上报，而不是一个会转圈 26 分钟的接口。
+One market-wide scan = 6,049 light quote requests. At our self-imposed 4 requests/second that is about **26 minutes** —
+so it has to be a background task reporting progress, not an endpoint that spins for 26 minutes.
 
-━━━ ⚠️ 三个刻意的选择 ━━━
+━━━ ⚠️ Three deliberate choices ━━━
 
-1. **并发线程数 > 1，但共用同一个限流器。**
-   限流器决定真实速率（4/s），线程只是用来盖住网络往返延迟。
-   把限流器绕开去追速度，等于拿封 IP 换几分钟。
+1. **More than one worker thread, all sharing one rate limiter.**
+   The limiter sets the real rate (4/s); the threads only cover the network round-trip latency.
+   Going around the limiter for speed trades a banned IP for a few minutes.
 
-2. **单只失败不中断整轮**，但**逐条记下来**并汇总。
-   一轮里若有 800 只取不到，结果表看上去只是"少了些票"；
-   不留痕的话，"取不到"就伪装成了"这些票没有数据"。
+2. **One symbol failing does not stop the round**, but **every failure is recorded** and summarised.
+   If 800 symbols could not be fetched in a round, the results table merely looks like "a few symbols missing";
+   without the trace, "could not fetch" has disguised itself as "these symbols have no data".
 
-3. **可以只扫一个子集**（`symbols` 参数）。
-   多数人只关心自己盯的几十只 —— 那是几十秒的事，
-   没必要为了看三只票的 IV Rank 等 26 分钟。
+3. **A subset can be scanned on its own** (the `symbols` parameter).
+   Most people care about the few dozen they follow — that is a matter of seconds,
+   and there is no reason to wait 26 minutes to see the IV Rank of three symbols.
 """
 from __future__ import annotations
 
@@ -26,8 +26,8 @@ from typing import Optional
 from sources import cboe
 from modules import scanner_store as store
 
-#: 并发线程数。真实速率由 `cboe._limiter`（4/s）决定，
-#: 线程只是用来盖住网络往返延迟，不是用来提速的。
+#: Worker threads. The real rate is set by `cboe._limiter` (4/s);
+#: the threads only cover network round-trip latency and are not there to go faster.
 WORKERS = 8
 
 
@@ -47,10 +47,10 @@ class ScanState:
         self.cancel = False
 
     def _snapshot_locked(self) -> dict:
-        """⚠️ 调用方须**已持锁** —— `threading.Lock` 不可重入，
-        持锁时再调 `snapshot()` 会死锁（Congress 分栏踩过）。"""
+        """⚠️ The caller must **already hold the lock** — `threading.Lock` is not reentrant,
+        so calling `snapshot()` while holding it deadlocks (as the Congress section found out)."""
         pct = (self.done / self.total * 100.0) if self.total else 0.0
-        # 剩余时间按已完成的实测速率外推，**不用固定值猜**
+        # Time remaining is extrapolated from the rate actually measured so far, **never guessed at a fixed value**
         return {
             "running": self.running, "stage": self.stage,
             "total": self.total, "done": self.done, "percent": round(pct, 1),
@@ -78,11 +78,11 @@ def _run(symbols: Optional[list[str]]) -> None:
     batch_id = 0
     try:
         with STATE.lock:
-            STATE.stage = "取标的全集"
+            STATE.stage = "fetching the symbol universe"
         universe = symbols or cboe.option_roots()
         with STATE.lock:
             STATE.total = len(universe)
-            STATE.stage = f"扫描 {len(universe)} 只"
+            STATE.stage = f"scanning {len(universe)} symbols"
         batch_id = store.start_batch(len(universe))
 
         results: list[dict] = []
@@ -93,8 +93,8 @@ def _run(symbols: Optional[list[str]]) -> None:
 
         def one(sym: str) -> None:
             nonlocal attempted
-            # ⚠️ 取消时**照样把 done 加上**，否则进度条永远停在半路 ——
-            #    作业其实已经结束，界面却像是卡住了。
+            # ⚠️ On cancellation, **still increment done**, or the progress bar stops halfway forever —
+            #    the job has actually finished while the interface looks stuck.
             with STATE.lock:
                 cancelled = STATE.cancel
             if cancelled:
@@ -106,26 +106,26 @@ def _run(symbols: Optional[list[str]]) -> None:
             try:
                 q = cboe.quote(sym)
             except cboe.DataNotAvailable:
-                # 这只票确实没有行情 —— 是「没有」，不是「取不到」，不算失败
+                # This symbol genuinely has no quote — an absence, not a failed fetch, and not counted as a failure
                 with STATE.lock:
                     STATE.done += 1
                 return
-            except ValueError as e:                 # 代码本身不合法
+            except ValueError as e:                 # the symbol itself is not valid
                 _err(f"{sym}: {e}")
                 with STATE.lock:
                     STATE.done += 1
                 return
-            except RuntimeError as e:               # 网络/限流/上游异常 —— 必须留痕
+            except RuntimeError as e:               # network / rate limit / upstream fault — must leave a trace
                 _err(f"{sym}: {e}")
                 with STATE.lock:
                     STATE.done += 1
                 return
             except Exception as e:                  # noqa: BLE001
-                # ⚠️ **兜住所有意外**。上游若返回一个我们没预料到的结构，
-                #    这里抛出的 AttributeError/TypeError 会从 `ex.map()` 冒出去，
-                #    整轮直接中断 —— 连**已经抓成功的几千只**都不会入库。
-                #    一只票的意外不该毁掉整轮，记下来接着跑。
-                _err(f"{sym}: 未预料的异常 {type(e).__name__}: {e}")
+                # ⚠️ **Catch everything unexpected.** Should upstream return a structure we did not anticipate,
+                #    the AttributeError/TypeError raised here escapes through `ex.map()` and takes the whole
+                #    round down — so even the **several thousand already fetched successfully** never get stored.
+                #    One symbol's surprise should not destroy the round: record it and carry on.
+                _err(f"{sym}: unexpected exception {type(e).__name__}: {e}")
                 with STATE.lock:
                     STATE.done += 1
                 return
@@ -142,38 +142,38 @@ def _run(symbols: Optional[list[str]]) -> None:
             list(ex.map(one, universe))
 
         with STATE.lock:
-            STATE.stage = "写入本地历史"
+            STATE.stage = "writing local history"
         rec = store.record_quotes(results)
         sess = max((r["session"] for r in results if r.get("session")), default=None)
-        # ⚠️ 上游给了行情却没给交易时段的，会被丢弃 —— **必须算进失败**，
-        #    否则界面显示"全部成功"，而那些标的其实没进库。
+        # ⚠️ Symbols where upstream gave a quote but no trading session are dropped — **they have to count as failures**,
+        #    or the interface reports "all succeeded" while those symbols never entered the store.
         dropped = rec["dropped_no_session"]
         with STATE.lock:
             STATE.stored = rec["stored"]
             STATE.dropped = dropped
             if dropped:
                 STATE.errors.append(
-                    f"{dropped} 只有行情但**上游没给交易时段**，已丢弃"
-                    f"（归档键错了会污染 IV 样本）")
+                    f"{dropped} had quotes but **no trading session from upstream** and were dropped "
+                    f"(the wrong key would contaminate the IV samples)")
                 STATE.failed += dropped
-            STATE.stage = "已完成" if not STATE.cancel else "已取消"
+            STATE.stage = "finished" if not STATE.cancel else "cancelled"
             failed = STATE.failed
         note = []
         if STATE.cancel:
-            note.append("用户取消")
+            note.append("cancelled by the user")
         if dropped:
-            note.append(f"{dropped} 只缺交易时段被丢弃")
-        # ⚠️ `scanned` 记的是**真实尝试数**，不是 `len(results)` ——
-        #    后者把"尝试过但取不到"的排除在外，看上去就像根本没扫过它们。
+            note.append(f"{dropped} dropped for want of a trading session")
+        # ⚠️ `scanned` records **how many were actually attempted**, not `len(results)` —
+        #    the latter leaves out "attempted but unfetchable", which then looks as though they were never scanned at all.
         store.finish_batch(batch_id, attempted, rec["stored"], failed, sess,
                            note="；".join(note))
-    except Exception as e:                          # noqa: BLE001 —— 后台线程兜底
-        _err(f"扫描中断: {type(e).__name__}: {e}")
+    except Exception as e:                          # noqa: BLE001 — background-thread backstop
+        _err(f"Scan interrupted: {type(e).__name__}: {e}")
         with STATE.lock:
-            STATE.stage = "中断"
+            STATE.stage = "interrupted"
         if batch_id:
             store.finish_batch(batch_id, STATE.done, STATE.stored, STATE.failed,
-                               None, note=f"中断: {type(e).__name__}")
+                               None, note=f"interrupted: {type(e).__name__}")
     finally:
         with STATE.lock:
             STATE.running = False
@@ -181,14 +181,14 @@ def _run(symbols: Optional[list[str]]) -> None:
 
 
 def start(symbols: Optional[list[str]] = None) -> dict:
-    """启动一轮扫描（已在跑则原样返回当前状态，不排队第二个）。"""
+    """Start a scan (already running, it returns the current state unchanged rather than queueing a second)."""
     with STATE.lock:
         if STATE.running:
             return {**STATE._snapshot_locked(), "started": False,
-                    "note": "已有一轮扫描在跑，先等它结束或取消。"}
+                    "note": "A scan is already running; wait for it to finish, or cancel it."}
         STATE.running = True
         STATE.cancel = False
-        STATE.stage = "启动中"
+        STATE.stage = "starting"
         STATE.total = len(symbols) if symbols else 0
         STATE.done = STATE.stored = STATE.failed = STATE.dropped = 0
         STATE.errors = []
@@ -202,7 +202,7 @@ def start(symbols: Optional[list[str]] = None) -> dict:
 def cancel() -> dict:
     with STATE.lock:
         STATE.cancel = True
-        STATE.stage = "取消中"
+        STATE.stage = "cancelling"
         return STATE._snapshot_locked()
 
 
