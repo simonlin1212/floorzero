@@ -136,7 +136,7 @@ Reusing Vibe-Trading's sidebar pattern, with 10 main sections:
 ## 6. ⚠️ Three known hard problems (recorded honestly)
 
 1. **History is the weak point.** UW has been running for years and has accrued it; a self-hosting user starts on **day one with none**.
-   → Mitigation: `history.py` accrues from installation; EDGAR and FINRA carry their own history and can be backfilled; option chain history genuinely cannot.
+   → Mitigation: `history.py` accrues from installation; EDGAR and FINRA carry their own history and can be backfilled; option chain history genuinely cannot be backfilled.
 2. **Real-time streaming is out of reach.** UW has 14 WebSocket endpoints on the live tape, which needs the OPRA real-time feed (paid).
    → We do **delayed** only (Cboe's free delayed data is enough for research, not for chasing fills).
 3. **The sheer volume.** Matching 197 endpoints in one go is unrealistic — **deliver section by section**, each one a milestone that can be accepted on its own.

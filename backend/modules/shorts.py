@@ -46,20 +46,20 @@ from typing import Optional
 #: The SEC's and FINRA's own words — **shown verbatim, never paraphrased into ours**
 OFFICIAL_NOTES = {
     "ftd_cumulative": (
-        "SEC guidance, verbatim: \"Fails to deliver on a given day are a cumulative number "
+        "SEC guidance: \"Fails to deliver on a given day are a cumulative number "
         "of all fails outstanding until that day... The figure is not a daily "
         "amount of fails... may have little or no relationship to yesterday's "
         "aggregate fails. Thus, it is important to note that the age of fails "
         "cannot be determined by looking at these numbers.\" "
         "→ It is a **cumulative balance at a point in time**, not that day's additions. So this page computes no day-on-day change and speaks of no surge."),
     "ftd_not_naked": (
-        "SEC guidance, verbatim: \"fails-to-deliver can occur for a number of reasons on "
+        "SEC guidance: \"fails-to-deliver can occur for a number of reasons on "
         "both long and short sales. Therefore, fails-to-deliver are not "
         "necessarily the result of short selling, and are not evidence of "
         "abusive short selling or 'naked' short selling.\" "
-        "→ A failure to deliver **can come from a long just as much as a short**, and is not evidence of naked shorting."),
+        "→ A failure to deliver **can come from either a long or a short sale**, and is not evidence of naked shorting."),
     "volume_not_interest": (
-        "FINRA guidance, verbatim: \"short interest position data does not—and is not "
+        "FINRA guidance: \"short interest position data does not—and is not "
         "intended to—equate to the daily short sale volume data.\" "
         "And the file holds **off-exchange** trades only (not consolidated with exchange data). "
         "→ Short sale volume is a daily flow, and only the off-exchange part of it; "

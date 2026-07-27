@@ -2,7 +2,7 @@
 
 The MCP server inherits these definitions automatically; a system AI or multi-agent setup later reuses the same file.
 A new tool changes only this file; do not write a second set in mcp_server.py (a trap VibeResearch fell into:
-tool definitions scattered about → three exits with different capabilities).
+tool definitions scattered about → three interfaces whose capabilities disagree).
 
 ⚠️ Compliance: tool output gives **data and computed results only** — no buy or sell advice, and no undervalued/overvalued labels.
 """
@@ -58,7 +58,7 @@ TOOLS: list[dict] = [
             "⚠️ **Three points that have to be read together**: (1) it is **a cumulative balance on a settlement date**, not that day's additions; "
             "the SEC states that consecutive days 'may have little or no relationship' and that "
             "'the age of fails cannot be determined'; "
-            "(2) the SEC states that a failure to deliver **can arise from a long just as much as a short** "
+            "(2) the SEC states that a failure to deliver **can arise from either a long or a short sale** "
             "and is **not evidence of naked shorting**; (3) the per-symbol figure is the **mean** of the balances across settlement dates, never their sum "
             "(one undelivered trade reappears on consecutive days)."
         ),
@@ -115,7 +115,7 @@ TOOLS: list[dict] = [
         "description": (
             "Query trades by insiders of US listed companies (officers, directors, 10% holders) as filed on SEC Form 4. "
             "⚠️ **By default it returns active open-market trading only (codes P/S)** — about seven tenths of Form 4 is "
-            "compensation: grants, option exercises, tax withholding. Read as 'insiders buying' they overstate the bid several times over. "
+            "compensation: grants, option exercises, tax withholding. Counted as insider buying, they overstate it several times over. "
             "It reads the locally synced cache."
         ),
         "inputSchema": {
@@ -627,7 +627,7 @@ def _tool_get_institution_changes(period: str | None = None,
                                   top: int = 10) -> dict:
     have = institution_store.known_periods()
     if len(have) < 2:
-        return {"summary": f"Comparing needs at least two reporting periods, and there {'is' if have == 1 else 'are'} currently {have or 'none'} — "
+        return {"summary": f"Comparing needs at least two reporting periods, and there {'is' if len(have) == 1 else 'are'} currently {len(have)} — "
                            f"import more quarters first (13F's value is in the change, not the static snapshot)."}
     p = period or have[0]
     pp = prev_period or next((x for x in have if x < p), None)
@@ -680,7 +680,7 @@ def _tool_get_short_fails(symbol: str | None = None,
             f"{c['days']} settlement dates. Largest balances: {hot}. "
             f"⚠️ This is **a cumulative balance on a settlement date**, not that day's additions (per the SEC, consecutive days "
             f"'may have little or no relationship', and the age of a fail cannot be determined); "
-            f"⚠️ the SEC states plainly that a failure to deliver **can arise from a long as much as a short and is not evidence of naked shorting**; "
+            f"⚠️ the SEC states plainly that a failure to deliver **can arise from either a long or a short sale and is not evidence of naked shorting**; "
             f"⚠️ the table uses the **mean** of the balances across settlement dates, never their sum. "
             f"All of this is statistics on public data and is not investment advice."),
     }

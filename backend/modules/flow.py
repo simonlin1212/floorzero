@@ -148,7 +148,7 @@ class FlowRow:
         ⚠️⚠️ **This is not the money actually traded, and the gap can be large.**
         A chain snapshot carries no per-print price and no VWAP, only the quote at the instant of capture.
         If 1,000 contracts traded at $1 in the morning and the mid is $5 by capture time,
-        this computes $500k against roughly $100k of premium actually paid — **five times over**.
+        this computes $500k against roughly $100k of premium actually paid — **a fivefold overestimate**.
 
         Without a tape it cannot be made exact, so the approach here is: compute it, but **call it
         an estimate at every exit**, never "the amount traded". The field name `notional` stays;

@@ -417,7 +417,7 @@ export default function Insiders() {
             >
               {[0, 1, 2, 4, 8].map((n) => (
                 <option key={n} value={n}>
-                  {n === 0 ? "No quarters" : `${n} quarter${n > 1 ? "s" : ""}`}
+                  {n === 0 ? "Skip quarters" : `Backfill ${n} quarter${n > 1 ? "s" : ""}`}
                 </option>
               ))}
             </select>
@@ -430,7 +430,7 @@ export default function Insiders() {
             >
               {[0, 1, 5, 10, 20].map((n) => (
                 <option key={n} value={n}>
-                  {n === 0 ? "No days" : `${n} day${n > 1 ? "s" : ""}`}
+                  {n === 0 ? "Skip days" : `Backfill ${n} day${n > 1 ? "s" : ""}`}
                 </option>
               ))}
             </select>

@@ -536,7 +536,7 @@ def summary_notes(library: Optional[dict]) -> dict:
         "forms": "This page holds Form 4 only (amendments 4/A excluded by default, to avoid "
                  "double-counting the original). The same SEC dataset also carries Form 3, an "
                  "initial statement of holdings rather than a transaction, and Form 5, the annual "
-                 "catch-up filing at a median 274 days late with 32.6% over a year — both excluded, "
+                 "catch-up filing, median delay 274 days, 32.6% of it filed over a year after the trade — both excluded, "
                  "or they would inflate insider filing delay across the board. Separated out, Form 4's median delay is 2 days, matching the statute.",
         "classification": _classification_note(library, 0, 0, 0),
         "plan": "A 10b5-1 plan is arranged in advance, so a sale under one was often scheduled "
