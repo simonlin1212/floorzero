@@ -4,14 +4,14 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Vibe-Trading 同款视觉
+        // Dark palette
         bg:      "#0a0a0a",
         card:    "#131316",
         card2:   "#1b1b20",
         line:    "#2a2a31",
         ink:     "#f2efe9",
         dim:     "#8e8a83",
-        brand:   "#ff5a1f",   // 朱橙
+        brand:   "#ff5a1f",   // vermilion
         pos:     "#22c55e",
         neg:     "#ef4444",
         info:    "#3b82f6",

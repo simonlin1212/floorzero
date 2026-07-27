@@ -1,14 +1,15 @@
-"""宏观数据源 —— 美债收益率曲线（Treasury）+ 持仓报告（CFTC）。
+"""Macro sources — Treasury yield curve and CFTC positioning.
 
-━━━ 合规：两个都是 S 级 ━━━
-美国财政部与 CFTC 的公开数据，政府作品、不限商用、可再分发。
-本分栏是全项目**最干净**的一条线 —— 没有 OPRA、没有 §13107、没有 FINRA 条款。
+━━━ Compliance: both are tier S ━━━
+US Treasury and CFTC public data. Government works: commercial use and redistribution unrestricted.
+This is the **cleanest** lane in the project — no OPRA, no §13107, no FINRA terms.
 
-━━━ ⚠️ 两个必须讲清的口径 ━━━
-1. **收益率曲线倒挂**：短端高于长端。市场常用 10Y−2Y 与 10Y−3M 两个口径，
-   **它们的倒挂时点可以差好几个月**，说"倒挂了"必须讲清用的是哪一个。
-2. **COT 持仓报告有三天时滞**：报告的是**周二**的持仓，**周五**才发布。
-   看到的永远是三天前的状态。
+━━━ ⚠️ Two definitions that must be stated ━━━
+1. **Curve inversion**: short end above long end. Two spreads are in common use,
+   10Y−2Y and 10Y−3M, and **they can cross zero months apart** — so "the curve
+   inverted" says nothing until you say which one.
+2. **COT lags three days**: it reports **Tuesday's** positions, published **Friday**.
+   What you see is always three days old.
 """
 from __future__ import annotations
 
@@ -27,7 +28,7 @@ TREASURY_XML = ("https://home.treasury.gov/resource-center/data-chart-center/"
                 "interest-rates/pages/xml")
 CFTC_SODA = "https://publicreporting.cftc.gov/resource"
 
-#: 收益率曲线的期限字段（Treasury XML 里的 d:BC_* 名 → 年数）
+#: Tenor fields on the curve (Treasury XML `d:BC_*` names → years)
 TENORS: dict[str, float] = {
     "BC_1MONTH": 1 / 12, "BC_2MONTH": 2 / 12, "BC_3MONTH": 0.25,
     "BC_4MONTH": 4 / 12, "BC_6MONTH": 0.5, "BC_1YEAR": 1, "BC_2YEAR": 2,
@@ -43,21 +44,21 @@ TENOR_LABEL = {
 
 
 def yield_curve(year: int) -> Iterator[dict]:
-    """某年的每日收益率曲线（Treasury 官方 XML）。"""
+    """Daily yield curve for one year (official Treasury XML)."""
     url = f"{TREASURY_XML}?data=daily_treasury_yield_curve&field_tdr_date_value={year}"
     _limiter.wait()
     try:
         r = requests.get(url, headers={"User-Agent": user_agent()}, timeout=90)
     except requests.RequestException as e:
-        raise RuntimeError(f"Treasury 网络故障: {type(e).__name__}: {e}") from e
+        raise RuntimeError(f"Treasury network failure: {type(e).__name__}: {e}") from e
     if r.status_code == 404:
-        raise DataNotAvailable(f"Treasury 无 {year} 年数据")
+        raise DataNotAvailable(f"Treasury has no data for {year}")
     if r.status_code != 200:
         raise RuntimeError(f"Treasury HTTP {r.status_code}: {year}")
 
     blocks = re.findall(r"<m:properties>(.*?)</m:properties>", r.text, re.S)
     if not blocks:
-        raise RuntimeError(f"Treasury {year} 未解析出任何记录（XML 结构可能已变更）")
+        raise RuntimeError(f"Treasury {year}: parsed no records (the XML shape may have changed)")
     for b in blocks:
         fields = dict(re.findall(r"<d:(\w+)[^>]*>([^<]*)</d:\1>", b))
         d = fields.get("NEW_DATE", "")[:10]
@@ -70,49 +71,49 @@ def yield_curve(year: int) -> Iterator[dict]:
         yield row
 
 
-#: CFTC 金融期货持仓报告（Traders in Financial Futures）的 Socrata 数据集
+#: CFTC Traders in Financial Futures — the Socrata dataset id
 CFTC_TFF = "gpe5-46if"
 
 
 def _cftc_get(params: dict) -> list[dict]:
-    """打一次 CFTC Socrata。
+    """One call to CFTC Socrata.
 
-    ⚠️ 用 requests 的 params 让它自己编码，**别手工拼 URL**：
-    市场名里含 `&`（"S&P 500"），手工拼进 query string 会被当成参数分隔符 → 400。
+    ⚠️ Let requests do the encoding via `params`; **never hand-build the URL**.
+    Market names contain `&` ("S&P 500"), which a hand-built query string reads as a separator → 400.
     """
     _limiter.wait()
     try:
         r = requests.get(f"{CFTC_SODA}/{CFTC_TFF}.json", params=params,
                          headers={"User-Agent": user_agent()}, timeout=90)
     except requests.RequestException as e:
-        raise RuntimeError(f"CFTC 网络故障: {type(e).__name__}: {e}") from e
+        raise RuntimeError(f"CFTC network failure: {type(e).__name__}: {e}") from e
     if r.status_code == 404:
-        # ⚠️ **这不是「没数据」。** 实测（2026-07-26）：
-        #   有效数据集 + 零匹配 → `200 []`
-        #   数据集 ID 不存在   → `404 {"code":"dataset.missing"}`
-        # 所以 404 只可能是数据集被改名/下线，或我们的 ID 写错了 ——
-        # 配置故障必须冒泡，不能回退成"市场上没有持仓数据"。
+        # ⚠️ **This is not "no data".** Measured 2026-07-26:
+        #   valid dataset + zero matches → `200 []`
+        #   dataset id does not exist   → `404 {"code":"dataset.missing"}`
+        # So a 404 can only mean the dataset was renamed or retired, or our id is wrong —
+        # a configuration failure, which must propagate rather than degrade into "the market has no positioning data".
         raise RuntimeError(
-            "CFTC 数据集不存在（404）—— 数据集 ID 可能已变更，"
-            f"当前用的是 {CFTC_TFF}。这是配置问题，不是「没有数据」。")
+            "CFTC dataset not found (404) — the dataset id may have changed; "
+            f"currently using {CFTC_TFF}. This is a configuration problem, not \"no data\".")
     if r.status_code == 400:
-        # SoQL 语法/参数问题 —— 把上游的说明带出来，不要只报一个状态码
-        raise RuntimeError(f"CFTC 拒绝该查询 (400): {(r.text or '')[:160]}")
+        # A SoQL syntax or parameter problem — carry upstream's explanation, not just a status code
+        raise RuntimeError(f"CFTC rejected the query (400): {(r.text or '')[:160]}")
     if r.status_code != 200:
         raise RuntimeError(f"CFTC HTTP {r.status_code}")
     try:
         return r.json()
     except ValueError as e:
-        raise RuntimeError("CFTC 返回非 JSON（可能是错误页）") from e
+        raise RuntimeError("CFTC returned non-JSON (possibly an error page)") from e
 
 
 def cot_markets() -> list[dict]:
-    """TFF 覆盖的全部市场（含各自最后一期日期与记录数）。
+    """Every market TFF covers, with each one's last report date and record count.
 
-    ⚠️ **必须带 `last_date` 一起返回**：这个数据集里躺着大量**早已停更**的
-    合约（实测 186 个市场里只有 90 个还在更新，有的停在 2022 年）。
-    只给一串名字，用户选中一个停更的就会看到"没数据"，
-    而真相是"这个合约不报了"——**那是两件事**。
+    ⚠️ **`last_date` must come back with it.** This dataset holds a great many contracts
+    that **stopped reporting long ago** (measured: only 90 of 186 markets are still live,
+    some frozen since 2022). Return bare names and a user who picks a dead one sees
+    "no data", when the truth is "this contract is no longer reported" — **two different things**.
     """
     rows = _cftc_get({
         "$select": ("market_and_exchange_names, "
@@ -134,15 +135,15 @@ def cot_markets() -> list[dict]:
 
 def cot_rows(limit: int = 500, market_contains: Optional[str] = None,
              exact: bool = False) -> list[dict]:
-    """CFTC 持仓报告（TFF：金融期货的交易商分类）。
+    """CFTC positioning (TFF: trader categories for financial futures).
 
-    ⚠️ **有三天时滞**：报告的是**周二**收盘的持仓，**周五**下午才发布。
+    ⚠️ **Lags three days**: it reports **Tuesday's** close, published **Friday** afternoon.
 
-    `exact=True` 要求市场名**完全相等**，模糊匹配用于搜索。
-    ⚠️ 画时间序列时**必须用 exact**：`like '%S&P 500%'` 会同时命中
+    `exact=True` requires the market name to match exactly; fuzzy matching is for search.
+    ⚠️ **Time series must use exact**: `like '%S&P 500%'` also matches
     "S&P 500 Consolidated"、"E-MINI S&P 500"、"S&P 500 QUARTERLY DIVIDEND IND"
-    三条**不同合约**的记录，按日期排下来就是三条线揉成一条锯齿——
-    看上去像持仓在剧烈翻转，其实只是在不同合约之间跳。
+    three **different contracts**, and ordering those by date braids them into one
+    sawtooth that looks like violent position flips but is only hopping between contracts.
     """
     params: dict = {"$limit": limit,
                     "$order": "report_date_as_yyyy_mm_dd DESC"}

@@ -7,5 +7,5 @@ dist/
 .env
 *.db
 
-# 私有工作笔记：含指向作者其它项目的路径，不进公开仓库
+# Private working notes: contain paths into the author's other projects. Not for the public repo.
 .private/

@@ -1,11 +1,11 @@
-"""CBOE 官方延时期权数据源。
+"""Cboe official delayed options data.
 
-⚠️ 合规（C 级）：Cboe 的 Use of Content 政策要求使用前取得书面批准与 license。
-本模块**仅供用户在自己机器上做个人研究**；FloorZero 只分发代码、不托管数据，
-所以运行它的用户是 personal use，我们不是 OPRA redistributor。
-⛔ 绝不能把本模块的输出做成对外展示的在线服务（=$1,500/月 redistributor fee）。
+⚠️ Compliance (tier C): Cboe's Use of Content policy requires written approval and a licence.
+This module is **for personal research on your own machine only**. FloorZero ships code,
+never data, so the person running it is doing personal use and we are not an OPRA redistributor.
+⛔ Never turn this module's output into a publicly visible service (= $1,500/month redistributor fee).
 
-代码基于 global-stock-data V2.0（已过 Codex 三轮审计）的已验证实现。
+Based on the verified implementation in global-stock-data V2.0 (three Codex review passes).
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ CBOE_BASE = "https://cdn.cboe.com/api/global/delayed_quotes"
 _UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36")
 
-# OCC 合约代码：标的 + YYMMDD + C/P + 8 位行权价（千分之一美元）
+# OCC symbol: root + YYMMDD + C/P + 8-digit strike (in thousandths of a dollar)
 _OSI = re.compile(
     r"^(?P<root>[A-Z]+)(?P<y>\d{2})(?P<m>\d{2})(?P<d>\d{2})"
     r"(?P<cp>[CP])(?P<strike>\d{8})$"
@@ -31,20 +31,20 @@ _OSI = re.compile(
 try:
     from zoneinfo import ZoneInfo
     _ET = ZoneInfo("America/New_York")
-except Exception:                                    # Windows 可能缺 tzdata
+except Exception:                                    # Windows may lack tzdata
     _ET = None
 
 
 class DataNotAvailable(RuntimeError):
-    """该标的/该日确实没有数据 —— 调用方可安全跳过。
+    """This ticker/day genuinely has no data — callers may safely skip it.
 
-    与配置错误、限流、网络故障区分开：后者必须冒泡，
-    否则「取不到」会被伪装成「没有」。
+    Kept distinct from configuration errors, rate limiting and network failure, which
+    must propagate. Otherwise "could not fetch" masquerades as "does not exist".
     """
 
 
 class _RateLimiter:
-    """线程安全的最小间隔节流器（用锁，避免并发下被击穿）。"""
+    """Thread-safe minimum-interval throttle (locked, so concurrency cannot punch through)."""
 
     def __init__(self, max_per_sec: float) -> None:
         self._interval = 1.0 / float(max_per_sec)
@@ -59,12 +59,12 @@ class _RateLimiter:
             self._last = time.monotonic()
 
 
-_limiter = _RateLimiter(4)          # CBOE 自律保护值
+_limiter = _RateLimiter(4)          # self-imposed ceiling for Cboe
 
 
 @dataclass(frozen=True)
 class Contract:
-    """单个期权合约（不可变，便于安全传递与缓存）。"""
+    """A single option contract (immutable, so it is safe to pass around and cache)."""
     symbol: str
     expiry: str            # YYYY-MM-DD
     type: str              # "call" | "put"
@@ -83,7 +83,7 @@ class Contract:
 
     @property
     def dte(self) -> int:
-        """距到期天数（按美东日期算）。"""
+        """Days to expiry (by US/Eastern date)."""
         return (datetime.strptime(self.expiry, "%Y-%m-%d").date()
                 - datetime.strptime(et_today(), "%Y-%m-%d").date()).days
 
@@ -94,12 +94,12 @@ class Chain:
     spot: float
     timestamp: Optional[str]
     contracts: tuple[Contract, ...]
-    #: 数据所属的**交易时段**（YYYY-MM-DD，来自 CBOE 的 `last_trade_time`）。
-    #: ⚠️ 与 `timestamp` 不是一回事：`timestamp` 是 CBOE **发布**这份文件的时刻
-    #: （实测周五 16:00 ET 收盘的数据，发布时间戳写的是 `2026-07-25 03:44:48`）。
-    #: 做本地历史沉淀**必须按 session 归档**——按墙上时间归档的话，
-    #: 周六和周日各打开一次，会把同一份周五收盘数据存成"两天的观测"，
-    #: 差值算出来全是 0，看着像"持仓没变"，其实是根本没有新数据。
+    #: The **trading session** this data belongs to (YYYY-MM-DD, from Cboe's `last_trade_time`).
+    #: ⚠️ Not the same thing as `timestamp`, which is when Cboe **published** the file
+    #: (measured: Friday's 16:00 ET close carries a publish stamp of `2026-07-25 03:44:48`).
+    #: Local history **must be keyed by session** — keyed by wall clock, opening the page
+    #: once on Saturday and again on Sunday stores one Friday close as "two observations",
+    #: and the diff comes out all zeros: it looks like "nothing moved" but there was no new data.
     session: Optional[str] = None
 
     def expiries(self) -> list[str]:
@@ -107,7 +107,7 @@ class Chain:
 
     def filter(self, expiry: Optional[str] = None, dte_max: Optional[int] = None,
                traded_only: bool = False) -> list[Contract]:
-        """expiry='0DTE' 取当日到期；dte_max 取 N 天内；traded_only 只要今日有成交的。"""
+        """expiry='0DTE' takes today's expiry; dte_max takes N days out; traded_only keeps today's trades."""
         cs = list(self.contracts)
         if expiry == "0DTE":
             cs = [c for c in cs if c.expiry == et_today()]
@@ -121,15 +121,15 @@ class Chain:
 
 
 def et_today() -> str:
-    """美东今日 YYYY-MM-DD。
+    """Today's date in US/Eastern, YYYY-MM-DD.
 
-    ⚠️ 必须区分 EDT(UTC-4) 与 EST(UTC-5)：硬编码 UTC-4 会让冬令时
-    UTC 04:00–05:00 这一小时算成次日，导致 0DTE 选错到期日。
+    ⚠️ EDT (UTC-4) and EST (UTC-5) must be told apart: hardcoding UTC-4 pushes the
+    04:00–05:00 UTC hour into the next day in winter, picking the wrong 0DTE expiry.
     """
     now = datetime.now(timezone.utc)
     if _ET is not None:
         return now.astimezone(_ET).strftime("%Y-%m-%d")
-    # 无 tzdata 的回退：按美国 DST 规则自算（切换发生在当地 2:00 = 07:00/06:00 UTC）
+    # Fallback without tzdata: apply US DST rules directly (switch at local 2:00 = 07:00/06:00 UTC)
     y = now.year
     mar8 = datetime(y, 3, 8, tzinfo=timezone.utc)
     dst_start = (mar8 + timedelta(days=(6 - mar8.weekday()) % 7)).replace(hour=7)
@@ -140,7 +140,7 @@ def et_today() -> str:
 
 
 def parse_osi(symbol: str) -> Optional[dict]:
-    """解析 OCC 合约代码 → {expiry, type, strike}；无法解析返回 None。"""
+    """Parse an OCC symbol → {expiry, type, strike}; None when it cannot be parsed."""
     m = _OSI.match(symbol)
     if not m:
         return None
@@ -153,43 +153,43 @@ def parse_osi(symbol: str) -> Optional[dict]:
 
 
 def assert_us_ticker(ticker: str) -> str:
-    """CBOE 只覆盖美股；传入港股/A 股代码时给出明确提示而不是空结果。"""
+    """Cboe covers US equities only; a HK or A-share code gets a clear message, not an empty result."""
     t = str(ticker).upper().strip()
     if t.endswith(".HK") or (t.isdigit() and len(t) in (4, 5, 6)):
-        raise ValueError(f"'{ticker}' 不是美股代码；CBOE 期权仅覆盖美股。")
+        raise ValueError(f"'{ticker}' is not a US ticker; Cboe options cover US equities only.")
     if not t or not t.replace(".", "").replace("-", "").isalnum():
-        raise ValueError(f"无效 ticker: '{ticker}'")
+        raise ValueError(f"invalid ticker: '{ticker}'")
     return t
 
 
 def _get(url: str, timeout: int = 30) -> dict:
-    """拉一个 CBOE JSON 端点。
+    """Fetch one Cboe JSON endpoint.
 
-    ⚠️ 异常分类必须**正向识别**，不能用排除法：
-    · 404          = 标的确实没有数据 → DataNotAvailable（调用方可跳过）
-    · 403 / 429 / 5xx = 被拒绝、限流、上游故障 → RuntimeError（必须冒泡）
-    把 403 归成「没数据」会让"被封 IP"静默伪装成"这个标的没期权"，
-    使用者永远查不出真实原因。
+    ⚠️ Exceptions must be classified **positively**, never by elimination:
+    · 404             = this ticker really has no data → DataNotAvailable (caller may skip)
+    · 403 / 429 / 5xx = refused, throttled, upstream broken → RuntimeError (must propagate)
+    Filing a 403 under "no data" lets a blocked IP silently masquerade as "this ticker has
+    no options", and the real cause becomes undiscoverable.
     """
     _limiter.wait()
     try:
         r = requests.get(url, headers={"User-Agent": _UA}, timeout=timeout)
         r.raise_for_status()
-        return r.json()                    # 放进 try：上游可能 200 却返回 HTML
+        return r.json()                    # inside the try: upstream can return 200 with HTML
     except requests.HTTPError as e:
         code = e.response.status_code
         if code == 404:
-            raise DataNotAvailable(f"CBOE 无此标的数据 (404): {url[:70]}") from e
-        hint = {403: "被拒绝（限流或封禁）", 429: "请求过快"}.get(code, "")
+            raise DataNotAvailable(f"Cboe has no data for this ticker (404): {url[:70]}") from e
+        hint = {403: "refused (throttled or blocked)", 429: "too many requests"}.get(code, "")
         raise RuntimeError(f"CBOE HTTP {code} {hint}: {url[:70]}") from e
-    except ValueError as e:                # r.json() 解析失败（HTML 错误页等）
-        raise RuntimeError(f"CBOE 返回非 JSON（可能是错误页）: {url[:70]}") from e
+    except ValueError as e:                # r.json() failed (an HTML error page, etc.)
+        raise RuntimeError(f"Cboe returned non-JSON (possibly an error page): {url[:70]}") from e
     except requests.RequestException as e:
-        raise RuntimeError(f"CBOE 请求失败: {type(e).__name__}: {e}") from e
+        raise RuntimeError(f"Cboe request failed: {type(e).__name__}: {e}") from e
 
 
 def option_chain(ticker: str) -> Chain:
-    """拉取单只美股的期权全链（延时）。"""
+    """Fetch the full option chain for one US ticker (delayed)."""
     tk = assert_us_ticker(ticker)
     raw = _get(f"{CBOE_BASE}/options/{tk}.json")
     data = raw.get("data") or {}
@@ -209,11 +209,11 @@ def option_chain(ticker: str) -> Chain:
             last=o.get("last_trade_price"),
         ))
     if not out:
-        raise DataNotAvailable(f"{tk} 未返回任何期权合约（可能无期权或不在 CBOE 覆盖内）")
+        raise DataNotAvailable(f"{tk} returned no contracts (no options, or outside Cboe's coverage)")
     spot = data.get("current_price")
     if not spot:
-        raise DataNotAvailable(f"{tk} 未返回现价")
-    # 交易时段：`last_trade_time` 形如 "2026-07-24T16:00:00"（美东收盘时刻）
+        raise DataNotAvailable(f"{tk} returned no spot price")
+    # Trading session: `last_trade_time` looks like "2026-07-24T16:00:00" (US/Eastern close)
     ltt = data.get("last_trade_time") or ""
     session = ltt[:10] if len(ltt) >= 10 and ltt[4] == "-" else None
     return Chain(ticker=tk, spot=float(spot),
@@ -221,9 +221,9 @@ def option_chain(ticker: str) -> Chain:
                  contracts=tuple(out))
 
 
-# ── 短时快照缓存（REST 与 MCP **共用**）──
-# 放在数据源层而不是 app.py：否则 MCP 路径绕过缓存，
-# 同一次 AI 会话里 get_gex 与 get_gex_curve 会拿到两个不同快照，结论对不上。
+# ── Short-lived snapshot cache (**shared** by REST and MCP) ──
+# It lives in the source layer rather than app.py: otherwise the MCP path bypasses it and
+# get_gex and get_gex_curve see two different snapshots inside one AI session, so the
 _CACHE: dict[str, tuple[float, "Chain"]] = {}
 _CACHE_LOCKS: dict[str, threading.Lock] = {}
 _CACHE_GUARD = threading.Lock()
@@ -236,13 +236,13 @@ def _cache_lock(key: str) -> threading.Lock:
 
 
 def cached_option_chain(ticker: str) -> Chain:
-    """带缓存的期权链读取；同一标的的并发请求会合并成一次上游调用。"""
+    """Cached chain read; concurrent requests for one ticker collapse into a single upstream call."""
     key = assert_us_ticker(ticker)
     hit = _CACHE.get(key)
     if hit and time.monotonic() - hit[0] < CACHE_TTL:
         return hit[1]
     with _cache_lock(key):
-        hit = _CACHE.get(key)              # 双重检查：等锁期间可能已被填好
+        hit = _CACHE.get(key)              # double-check: it may have been filled while we waited
         if hit and time.monotonic() - hit[0] < CACHE_TTL:
             return hit[1]
         chain = option_chain(key)
@@ -251,37 +251,37 @@ def cached_option_chain(ticker: str) -> Chain:
 
 
 def quote(ticker: str) -> dict:
-    """个股延时快照（含现价，可与期权链配合定 ATM）。"""
+    """Delayed equity snapshot (carries spot, useful for pinning ATM against the chain)."""
     return _get(f"{CBOE_BASE}/quotes/{assert_us_ticker(ticker)}.json")["data"]
 
-# ── 扫描器用的两个轻量端点 ──
+# ── Two light endpoints the scanner needs ──
 
 def option_roots() -> list[str]:
-    """全部**有期权**的标的代码（CBOE 官方清单，实测 6,300 个 / 217KB）。
+    """Every ticker that **has options** (Cboe's official list; measured at 6,300 / 217KB).
 
-    这是扫描器的全集。⚠️ 它是"挂了期权的标的"，不是"今天有成交的标的" ——
-    里头有大量常年零成交的冷门票。
+    This is the scanner's universe. ⚠️ It means "has options listed", not "traded today" —
+    it holds a great many names with years of zero volume.
     """
     raw = _get(f"{CBOE_BASE}/symbol_book/option-roots.json")
     data = raw.get("data") or []
     out, seen = [], set()
     for row in data:
         sym = (row.get("symbol") or "").strip().upper()
-        # 同一标的可能有多个 root（拆股后的调整合约等），按 symbol 去重
+        # One ticker can carry several roots (adjusted contracts after splits, etc.); dedupe by symbol
         if sym and sym not in seen:
             seen.add(sym)
             out.append(sym)
     if not out:
-        raise RuntimeError("CBOE 期权标的清单为空（接口结构可能已变更）")
+        raise RuntimeError("Cboe's optionable-ticker list came back empty (the endpoint shape may have changed)")
     return out
 
 
 @dataclass(frozen=True)
 class Quote:
-    """轻量行情快照 —— **只有标的层，没有期权链**。
+    """Light quote snapshot — **underlying only, no option chain**.
 
-    扫描器靠它做第一遍粗筛：0.4KB / 只，而全链是 1.5MB / 只（**3,750 倍**）。
-    全市场拉全链需要约 3.7 小时 / 9.5GB，拉轻量行情约 26 分钟（限流 4/s）。
+    The scanner's first pass runs on this: 0.4KB per name against 1.5MB for a full chain (**3,750x**).
+    Full chains market-wide would take about 3.7 hours and 9.5GB; light quotes take about 26 minutes (4/s).
     """
 
     symbol: str
@@ -292,21 +292,21 @@ class Quote:
     low: Optional[float]
     prev_close: Optional[float]
     volume: Optional[float]
-    #: 30 天隐含波动率（%）。⚠️ **IV Rank 需要历史**，单点 iv30 排不出高低。
+    #: 30-day implied volatility (%). ⚠️ **IV Rank needs history**; one iv30 reading ranks nothing.
     iv30: Optional[float]
     iv30_change: Optional[float]
-    #: 数据所属交易时段（YYYY-MM-DD）
+    #: The trading session this data belongs to (YYYY-MM-DD)
     session: Optional[str]
     security_type: Optional[str]
 
 
 def quote(ticker: str) -> Quote:
-    """单只标的的轻量行情（不含期权链）。"""
+    """Light quote for one ticker (no option chain)."""
     tk = assert_us_ticker(ticker)
     raw = _get(f"{CBOE_BASE}/quotes/{tk}.json")
     d = raw.get("data") or {}
     if not d.get("symbol"):
-        raise DataNotAvailable(f"{tk} 无行情数据")
+        raise DataNotAvailable(f"{tk} has no quote data")
     ltt = d.get("last_trade_time") or ""
     return Quote(
         symbol=d["symbol"],

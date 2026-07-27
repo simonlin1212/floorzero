@@ -1,9 +1,11 @@
 # FloorZero — notes for Claude Code
 
-Read `docs/模块设计.md` (architecture) and `docs/开发日志.md` (build log) before
-changing anything structural. The build log records, per section, which sources were
-probed, what was measured, and which defects were found — most non-obvious decisions
-in this codebase are explained there rather than in the code.
+Read `docs/ARCHITECTURE.md` before changing anything structural.
+
+Most non-obvious decisions here were paid for rather than reasoned out: a source
+behaved unexpectedly, a review found a defect, a fix introduced a regression. Where
+that history matters it is written into the comment next to the code, not filed
+somewhere else — so the comments are load-bearing. Read them before rewriting them.
 
 ## The constraint that shapes everything
 

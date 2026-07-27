@@ -7,7 +7,7 @@
 html, body, #root { height: 100%; }
 body { @apply bg-bg text-ink font-sans antialiased; }
 
-/* 全局细节：与 Vibe-Trading 一致的网格底纹 */
+/* Global texture: the faint grid backdrop */
 .grid-bg {
   background-image:
     linear-gradient(rgba(255,90,31,.045) 1px, transparent 1px),

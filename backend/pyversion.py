@@ -1,14 +1,14 @@
-"""最低 Python 版本闸。
+"""Minimum Python version gate.
 
-⚠️ **必须在任何其它导入之前跑，且本文件自己不能用任何新语法** ——
-它存在的意义就是在旧版本上给出一句人话，而不是让用户撞进
-某个模块深处的 SyntaxError 去猜哪里不对。
+⚠️ **This must run before every other import, and must itself use no modern syntax.**
+Its whole reason for existing is to say one plain sentence on an old interpreter,
+rather than let the user crash into a SyntaxError deep inside some module and guess.
 
-实际下限由用到的特性决定（2026-07-26 全量扫描）：
-- `zoneinfo`（3.9+）：美东日期换算，硬依赖
+The real floor comes from the features actually used (full scan, 2026-07-26):
+- `zoneinfo` (3.9+): US/Eastern date arithmetic, a hard dependency
 - `str.removesuffix`（3.9+）
-- `X | Y` 注解：全部文件都有 `from __future__ import annotations`，
-  所以它**不构成** 3.10 的要求。没有用到任何 3.10+ 独有特性。
+- `X | Y` annotations: every file carries `from __future__ import annotations`,
+  so they do **not** imply 3.10. Nothing 3.10-only is used anywhere.
 """
 import sys
 
@@ -16,7 +16,7 @@ MIN = (3, 9)
 
 if sys.version_info < MIN:
     raise SystemExit(
-        "FloorZero 需要 Python %d.%d 或更高，当前是 %d.%d。\n"
-        "原因：美东时区换算依赖标准库 zoneinfo（3.9 引入）。\n"
-        "装个新版 Python 再跑，或用 pyenv/conda 建一个 3.9+ 的环境。"
+        "FloorZero needs Python %d.%d or newer; this is %d.%d.\n"
+        "Why: US/Eastern date handling depends on the stdlib zoneinfo module (added in 3.9).\n"
+        "Install a newer Python, or make a 3.9+ environment with pyenv or conda."
         % (MIN[0], MIN[1], sys.version_info[0], sys.version_info[1]))

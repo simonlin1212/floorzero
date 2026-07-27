@@ -1,14 +1,14 @@
-# Python 3.9+（zoneinfo 与 str.removesuffix 是硬下限；未用任何 3.10+ 特性）
-# 启动时由 backend/pyversion.py 强制检查，版本不够会直接给出人话提示。
-# ⚠️ 启动前必须设置 FZ_CONTACT（见项目根 .env.example）——
-#    SEC 与国会站点要求 UA 带联系方式，未配置会直接报错。
-# FloorZero 后端依赖 —— 刻意保持极简（延续 global-stock-data「零重依赖」原则）
+# Python 3.9+ (zoneinfo and str.removesuffix are the hard floor; nothing 3.10-only is used).
+# Enforced at startup by backend/pyversion.py, which says so in plain words.
+# ⚠️ FZ_CONTACT must be set before starting — see .env.example at the repo root.
+#    SEC and the congressional sites want a UA carrying contact details; unset, it errors out.
+# FloorZero backend dependencies — deliberately minimal.
 fastapi>=0.110
 uvicorn[standard]>=0.27
 requests>=2.31
-pypdf>=4.0            # 众议院 PTR 是 PDF；纯 Python，不用装 poppler 系统二进制
+pypdf>=4.0            # House PTRs are PDFs; pure Python, no poppler system binary needed
 
-# ── 可选 ──
-# curl_cffi>=0.6      # 仅参议院需要：eFD 由 Akamai 按 TLS 指纹拦截，
-#                     # requests 无论怎么伪装请求头都是 403，必须做 TLS 伪装。
-#                     # 不装 = 参议院分栏如实显示"不可用+安装提示"，众议院照常可用。
+# ── optional ──
+# curl_cffi>=0.6      # Senate only: eFD is behind Akamai TLS fingerprinting, and
+#                     # requests gets 403 no matter how the headers are dressed up.
+#                     # Without it the Senate lane says "unavailable + how to install"; the House still works.

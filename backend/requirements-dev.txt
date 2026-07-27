@@ -1,8 +1,8 @@
-# 开发依赖。运行本身只需要 requirements.txt 里那四个。
+# Development dependencies. Running the app needs only the four in requirements.txt.
 #
-# 跑测试：
+# Run the tests:
 #     pip install -r requirements-dev.txt
 #     python -m pytest
 #
-# 测试不打网络、也不碰 ~/.floorzero —— 每个落库的用例都走一次性目录。
+# Tests touch no network and never write to ~/.floorzero — every case that stores goes to a throwaway dir.
 pytest>=8.0

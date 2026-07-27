@@ -1,10 +1,10 @@
-"""本地 SQLite 存储的公共底座。
+"""Shared foundation for local SQLite storage.
 
-所有「装上就开始攒」的本地数据都落在同一个库里（`~/.floorzero/history.db`），
-由各模块注册自己的表。
+Everything that "starts accruing the day you install it" lands in one database
+(`~/.floorzero/history.db`); each module registers its own tables.
 
-⚠️ **不放仓库内**：更新代码 / 重新 clone 不该弄丢用户攒的历史
-（VibeResearch 的 issue #12 就是这个坑）。
+⚠️ **Not inside the repository.** Updating the code or re-cloning must not cost the
+user the history they have accrued (VibeResearch issue #12 was exactly this).
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ _applied: set[str] = set()
 
 
 def ensure_schema(name: str, schema_sql: str) -> None:
-    """建表（幂等）。`name` 只用于避免同一进程内重复执行。"""
+    """Create tables (idempotent). `name` only guards against repeating within one process."""
     if name in _applied:
         return
     with _LOCK:
@@ -36,7 +36,7 @@ def ensure_schema(name: str, schema_sql: str) -> None:
 
 @contextmanager
 def connect() -> Iterator[sqlite3.Connection]:
-    """取一条连接（行按名字取值）。调用方负责先 `ensure_schema`。"""
+    """Take a connection (rows addressable by name). Callers must `ensure_schema` first."""
     os.makedirs(DEFAULT_DIR, exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
