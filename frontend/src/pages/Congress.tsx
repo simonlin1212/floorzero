@@ -370,7 +370,7 @@ export default function Congress() {
         Members of Congress must disclose their trades publicly within set deadlines under the STOCK Act. The data comes
         straight from the<b className="text-ink"> Clerk of the House </b>and
         <b className="text-ink"> Senate eFD </b>— freely obtainable by the public,
-        but <b className="text-ink">commercial use is forbidden in statute</b> (see the notes below).
+        but <b className="text-ink">commercial use is prohibited by statute</b> (see the notes below).
       </PageHead>
 
       {/* The sync bar: first use has to fill the cache, and that should be said outright */}
@@ -540,7 +540,7 @@ export default function Congress() {
       )}
 
       {filterEmpty && !err && (
-        <Card title="Nothing matches the current filter" sub={`${st?.trades ?? 0} trades are cached locally — the data is there, just not under these conditions`}>
+        <Card title="Nothing matches the current filter" sub={`${st?.trades ?? 0} trades are held locally — the data is there, just not under these conditions`}>
           <div className="text-sm leading-relaxed text-dim">
             Try widening the date range, switching chamber, or clearing the ticker filter.
           </div>
@@ -811,7 +811,7 @@ export default function Congress() {
             <span className="font-mono"> 5 U.S.C. §13107(c)(1)(B) </span>
             (the Ethics in Government Act),
             <b className="text-ink">obtaining or using these reports for any commercial purpose is unlawful</b>{" "}
-            (news and communications media disseminating to the public excepted); §13107(c)(2) lets the Attorney General bring
+            (with an exception for news and communications media disseminating to the public); §13107(c)(2) lets the Attorney General bring
             a civil action with a maximum fine of $10,000. The restriction <b className="text-ink">applies to both chambers</b>.
             <br />
             So: public inspection, personal research, academic and journalistic use ✅;

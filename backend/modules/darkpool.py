@@ -17,10 +17,10 @@ NOTES = {
         "**ATS** is a genuine dark pool (an alternative trading system that displays no quotes); "
         "**non-ATS off-exchange** is wholesaler **internalisation** — retail order flow sold to market makers "
         "and filled inside their own books, which is not a dark pool. Measured on NVDA for the week of "
-        "2026-06-29, non-ATS off-exchange was **2.4× larger than ATS**. Add the two together and call it \"dark pool volume\" and the figure is more than double. This page always shows them apart."),
+        "2026-06-29, non-ATS off-exchange was **2.4× larger than ATS**. Add the two together and call it \"dark pool volume\" and the figure is more than double. This page always shows them separately."),
     "no_double_count": (
         "The endpoint returns **aggregate rows** and **per-firm detail rows** at once: two cuts of the same "
-        "volume (measured, the two totals match exactly, to zero). Sum them without distinguishing and the "
+        "volume (measured, the two totals match exactly, with zero discrepancy). Sum them without distinguishing and the "
         "result is precisely twice the truth. This page totals the detail rows only, and **reconciles them week by week** against the aggregate rows, flagging any mismatch outright."),
     "otc_anonymous": (
         "⚠️ **Non-ATS off-exchange does not disclose which firm at the symbol level** (every MPID is blank) — "

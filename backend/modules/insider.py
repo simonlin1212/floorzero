@@ -18,7 +18,7 @@ Reading grants, exercises and gifts as "insiders buying" is the classic misreadi
     S sale     7,880 shares @ $170.44  → flagged "disposed"
 
 Exercised and sold the same day. A blunt count reports "insiders bought $1.2m";
-**he bought not one share on the open market and sold all he received** — pay being cashed out, not conviction.
+**he did not buy a single share on the open market, and sold every share he received** — that is compensation being cashed out, not conviction.
 
 → Hence this module's first principle: **classify by transaction code, not by the acquired/disposed flag**.
    `is_open_market` (P/S) is the part that carries any signal.
@@ -541,7 +541,7 @@ def summary_notes(library: Optional[dict]) -> dict:
         "classification": _classification_note(library, 0, 0, 0),
         "plan": "A 10b5-1 plan is arranged in advance, so a sale under one was often scheduled "
                 "months earlier and means something different from a sale decided on the day. "
-                "Note that not marked, which is every filing before 2023, is not the same as marked as not under a plan.",
+                "Note that \"unmarked\" — which is every filing before 2023 — is not the same as \"marked as not under a plan\".",
         "price": "Some filings put the total value into the price-per-share field; one reads "
                  "$24m per share. Rows above $1m per share, or above $200bn for a single trade, "
                  "are dropped from the value totals, but **subtler mis-entries cannot be caught** — read the values as approximate.",

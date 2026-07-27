@@ -16,7 +16,7 @@ Measured lags: 2025Q4 published 2026-01-07 (+7 days), 2026Q1 on 2026-04-07 (+7 d
 2025Q3 on 2025-11-18 (**+49 days**) — there is no stable pattern.
 As of 2026-07-26 the newest available was still 2026Q1, **a 116-day gap**.
 
-→ So the architecture has to be "**ZIP for history (cheap) + XML for the recent window (dear, but small)**".
+→ So the architecture has to be "**ZIP for history (cheap) + XML for the recent window (costly, but small)**".
 ZIP alone never shows the last few months; XML alone costs tens of thousands of requests to backfill a year.
 
 ━━━ Rate limit ━━━

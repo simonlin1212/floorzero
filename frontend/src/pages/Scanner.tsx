@@ -332,13 +332,13 @@ export default function Scanner() {
             {/* ⚠️ `error_count` counts **messages**, and dozens missing a session collapse into one.
                 The symbols actually affected must be reported through failed, or 20 dropped shows as "1 issue". */}
             <b className="text-brand">
-              {scan.failed} symbols did not reach the store last round ({scan.error_count} kinds of reason)
+              {scan.failed} symbols did not reach the store last round ({scan.error_count} distinct reasons)
               {(scan.dropped_no_session ?? 0) > 0 &&
                 `, of which ${scan.dropped_no_session} had quotes but no trading session from upstream`}
             </b>
             <span className="text-dim">
               {" "}
-              — they do not appear in the results, but that is <b className="text-ink">could not fetch</b>,
+              — they do not appear in the results, but that is a <b className="text-ink">failed fetch</b>,
               not "these symbols have no data".
             </span>
             <ul className="mt-1 space-y-0.5 font-mono text-[10px] text-dim">

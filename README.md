@@ -61,7 +61,7 @@ It is **not** a data service, a SaaS, or a hosted dashboard. There is no demo si
 there will not be one — see below for why that is a design constraint rather than laziness.
 
 The intended user is someone who wants to run their own analysis, build their own tools,
-or feed the numbers to an LLM. It is not a "open it and watch the tape" app; brokers do
+or feed the numbers to an LLM. It is not an "open it and watch the tape" app; brokers do
 that better and for free.
 
 ## Why you run it yourself
@@ -131,7 +131,7 @@ Two of these deserve their own paragraph.
 
 **Congressional filings are public record, but 5 U.S.C. §13107(c)(1)(B) makes it unlawful
 to obtain or use them "for any commercial purpose"** (news media excepted), with penalties
-to $10,000. Free, open-source, self-hosted personal research is fine. Any paid product or
+of up to $10,000. Free, open-source, self-hosted personal research is fine. Any paid product or
 commercial service must not include this lane. This is *not* the same as EDGAR, which
 constrains request rate and User-Agent but not commercial use.
 
@@ -162,7 +162,7 @@ a reason, not as zero.
 
 **No cross-source score.** The Stock page shows nine lanes whose ages differ by two orders
 of magnitude — measured on NVDA, chain data two days old and the latest Form 4 a hundred
-and twenty-eight. Compressing that into one bullish-bearish number treats a
+and twenty-eight days old. Compressing that into one bullish-bearish number treats a
 quarter-old position as contemporary with yesterday's option volume.
 
 **No conclusions at all**, in fact. The output is data and arithmetic. There are no
@@ -216,7 +216,7 @@ positives — they passed against deliberately broken implementations. Archiving
 wall-clock date went undetected because both calls in the test happened on the same day;
 a dropped row was checked by the function's own counter rather than by querying the
 table; a full-segment replace was verified through a summary the same module produced;
-and "only no_data means absent" was enforced by looking for a Chinese word in the label
+and "only no_data means absent" was enforced by looking for a particular word in the label
 text. All four now assert against the stored rows or against a constant the code exports
 (`MEANS_ABSENT`), which the UI and MCP layer read too rather than each guessing.
 

@@ -288,9 +288,9 @@ export default function Darkpool() {
               </div>
               {(
                 [
-                  ["Permitted uses", status.terms.permitted],
-                  ["Restriction (d)", status.terms.restriction_d],
-                  ["Restriction (e)", status.terms.restriction_e],
+                  ["Permitted Uses", status.terms.permitted],
+                  ["Restrictions (d)", status.terms.restriction_d],
+                  ["Restrictions (e)", status.terms.restriction_e],
                 ] as const
               ).map(([k, v]) => (
                 <div key={k}>
@@ -299,11 +299,11 @@ export default function Darkpool() {
                 </div>
               ))}
               <div>
-                <b className="text-ink">Where it is ambiguous:</b>
+                <b className="text-ink">There is a genuinely ambiguous area:</b>
                 {status.terms.ambiguity}
               </div>
               <div>
-                <b className="text-ink">Our position:</b>
+                <b className="text-ink">How this project handles it:</b>
                 {status.terms.our_stance}
               </div>
             </div>

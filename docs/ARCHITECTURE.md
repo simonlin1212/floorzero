@@ -1,7 +1,7 @@
 # FloorZero module design (measured against Unusual Whales, in full)
 
 > Written 2026-07-26 · named **FloorZero** on 2026-07-27 (working name Vibe-Flow until then).
-> The idea: **an open-source Unusual Whales** — putting open code through the wall UW charges $29-99 a month for.
+> The idea: **an open-source Unusual Whales** — giving away in code what UW charges $29-99 a month for.
 > The compliance foundation: **distribute code only, and the user runs it themselves** (the data lands on their machine) → we are never an OPRA redistributor.
 
 ---

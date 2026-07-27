@@ -802,7 +802,7 @@ export default function Insiders() {
             <b className="text-ink"> 274 days</b>, three in ten over a year) — both excluded,
             or they would inflate the filing delay across the board. 4/A amendments are excluded by default too
             (they usually restate the original's transactions, so counting both double-counts;
-            <b className="text-ink">this project does not pair originals with amendments and substitute</b>).
+            <b className="text-ink">this project does not pair originals with amendments and substitute one for the other</b>).
             Separated out, Form 4's median delay is 2 days, matching the statute.
           </li>
           <li>

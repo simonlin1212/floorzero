@@ -151,7 +151,7 @@ def test_incomputable_rows_sink_to_the_bottom_rather_than_counting_as_the_lowest
     assert [r.symbol for r in out] == ["HIGH", "ZERO", "NONE"]
 
 
-def test_filtering_reports_incomputable_apart_from_failing_the_condition():
+def test_filtering_distinguishes_incomputable_rows_from_rows_that_failed_the_condition():
     """Among the rows `min_iv_rank=80` filters out, "not enough history accrued" is not "a rank below 80"."""
     rows = [sc.build_row({"symbol": "A", "iv30": 30.0}, [20.0] * 5, [])]
     kept, exc = sc.apply_filters(rows, min_iv_rank=80)

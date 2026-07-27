@@ -106,7 +106,7 @@ function isoPeriod(raw: string): string {
 const KINDS = [
   { v: "share", label: "Shares", hint: "Long positions in 13(f) securities" },
   { v: "call", label: "Calls", hint: "Listed under the underlying" },
-  { v: "put", label: "Puts", hint: "Bearish — folded into the holdings totals, they count bearish as bullish" },
+  { v: "put", label: "Puts", hint: "Bearish — folded into the holdings totals, they get counted as bullish exposure" },
   { v: "all", label: "All", hint: "Includes puts, mixing bearish exposure in" },
 ];
 
@@ -374,7 +374,7 @@ export default function Institutions() {
   return (
     <>
       <PageHead kicker="Institutional Holdings · SEC 13F" title="Institutional holdings">
-        Investment managers running over $100m must report their holdings quarterly under Section 13(f). The data comes from
+        Investment managers with over $100m in assets under management must report their holdings quarterly under Section 13(f). The data comes from
         <b className="text-ink"> the SEC's official structured dataset </b>—
         US government public record, with <b className="text-ink">no restriction on commercial use</b>.
       </PageHead>
@@ -382,7 +382,7 @@ export default function Institutions() {
       {/* ⭐ The thing this section most needs to say first */}
       <div className="mb-5 rounded-2xl border border-brand/30 bg-brand/[0.06] p-5">
         <div className="mb-2 font-mono text-[11px] uppercase tracking-wider text-brand">
-          "Institutional holdings" misleads as a phrase
+          The phrase "institutional holdings" is misleading
         </div>
         <p className="text-sm leading-relaxed text-dim">
           A 13F reports <b className="text-ink">long positions in 13(f) securities at one instant, quarter-end</b>. It
@@ -500,7 +500,7 @@ export default function Institutions() {
             One quarter's dataset is 95MB compressed and about <b className="text-ink">3.32m</b> holdings.
             The default value threshold is <b className="text-ink">$1m</b> —
             measured, it keeps 37.5% of the rows and covers <b className="text-ink">99.37%</b> of the value,
-            which is a good trade. For precision down to small positions, choose "Everything".
+            which is a good tradeoff. For precision down to small positions, choose "Everything".
           </div>
           {batch && (
             <div>

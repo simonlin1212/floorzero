@@ -8,9 +8,9 @@ not the bid" answerable, and it is what UW's **bullish / bearish flow** labels r
 
 **We have no tape.** Cboe's free delayed feed gives a **snapshot of the chain**:
 each contract's **cumulative volume for the day**, its **open interest**, bid/ask and greeks.
-Getting the tape means the OPRA feed — precisely what this project avoids so as not to be a redistributor.
+Getting the tape means paying for the OPRA feed — precisely what this project avoids so as not to be a redistributor.
 
-So the two piles are cleanly separated:
+So there is a clean line between the two:
 
 | Computable (a snapshot suffices) | Not computable (needs prints) |
 |---|---|
@@ -53,7 +53,7 @@ LIMITS = {
         "This page comes from an **options chain snapshot** (each contract's cumulative volume "
         "and open interest for the day), not the print-by-print tape. So **sweep detection, "
         "block-size tiering, buyer/seller direction and opening/closing calls are all out of "
-        "reach** — those need OPRA print data, which this project deliberately does not touch (touching it means paying as a redistributor, and the whole self-hosted model stops working)."),
+        "reach** — those need OPRA print data, which this project deliberately does not touch (touching it means paying OPRA's redistribution fee, which breaks the whole self-hosted model)."),
     "no_direction": (
         "⛔ **This page attaches no bullish or bearish inflow label.** Telling whether an options "
         "trade was buyer- or seller-initiated requires knowing whether it printed at the ask or the "

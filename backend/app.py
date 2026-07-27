@@ -44,7 +44,7 @@ from modules import stock as stock_parse
 
 app = FastAPI(
     title="FloorZero API",
-    description="An open-source Unusual Whales · self-hosted · your data stays on your own machine",
+    description="An open-source, self-hosted alternative to Unusual Whales — your data stays on your own machine",
     version="0.1.0",
 )
 
@@ -246,7 +246,7 @@ def history_stats() -> dict:
 
 # ═══════════════════════ Congressional trades (tier S source) ═══════════════════════
 # ⚠️ Compliance: both chambers' disclosures are US government public record (freely obtainable),
-#    but **5 U.S.C. §13107(c)(1)(B) forbids any commercial purpose in statute**
+#    but **5 U.S.C. §13107(c)(1)(B) prohibits any commercial purpose by statute**
 #    (news media disseminating to the public excepted), with a maximum fine of $10,000, in both chambers.
 #    → Free, open-source and self-hosted for personal research ✅; no paid product may include this lane ❌.
 #    A **different tier** from SEC EDGAR (which does not restrict commercial use); see sources/congress.py.
@@ -519,7 +519,7 @@ def insider_sync_start(
                                description="Fill the last few **published** quarters (cheap: about 3 seconds a quarter, "
                                            "100k transactions each)"),
     days: int = Query(5, ge=0, le=120,
-                      description="How many **outstanding** business days to fetch one by one this run (dear, about 90 seconds a day). "
+                      description="How many **outstanding** business days to fetch one by one this run (costly, about 90 seconds a day). "
                                   "It walks back from today skipping those already done, so calling it repeatedly fills "
                                   "the gap between the quarterly dataset and today a stretch at a time (currently about 117 days)"),
 ) -> dict:

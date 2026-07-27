@@ -113,7 +113,7 @@ class Trade:
 
         Two 2026 House filings were measured with a filing date before the trade date (a negative delay);
         the original reads `P 12/26/2026 01/21/2026`, with the trade date set in the future,
-        and it is near certainly a clerical error (2025 was meant). But "near certainly" is not grounds —
+        and it is almost certainly a clerical error (2025 was meant). But "almost certainly" is not grounds —
         picking a year and writing it in is inventing data. The right move is to flag the anomaly, link the
         original, and drop it from the delay statistics (or -320 days skews both the median and the distribution).
         """

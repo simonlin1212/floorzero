@@ -1,6 +1,6 @@
 """Congressional trade disclosures (STOCK Act) — the official House and Senate sources.
 
-━━━ ⚠️ Compliance: the data is public, but **commercial use is forbidden in statute** ━━━
+━━━ ⚠️ Compliance: the data is public, but **commercial use is prohibited by statute** ━━━
 **5 U.S.C. §13107(c)(1)** (Ethics in Government Act; the text itself read 2026-07-26):
 
     "It shall be unlawful for any person to obtain or use a report—
@@ -151,7 +151,7 @@ class Filing:
 
 
 def _parse_us_date(s: Optional[str]) -> Optional[date]:
-    """Parse M/D/YYYY or MM/DD/YYYY; returns None when it cannot (the source data has dirt in it by nature)."""
+    """Parse M/D/YYYY or MM/DD/YYYY; returns None when it cannot (this source data is inherently messy)."""
     if not s:
         return None
     try:

@@ -129,8 +129,8 @@ TOOLS: list[dict] = [
                 "group": {"type": "string",
                           "enum": ["open_market", "compensation", "other", "all"],
                           "description": "Transaction group, default open_market"},
-                "plan": {"type": "string", "enum": ["yes", "no"],
-                         "description": "Whether it was a 10b5-1 pre-arranged trade"},
+                "plan": {"type": "string", "enum": ["yes", "no", "unknown"],
+                         "description": "10b5-1 plan: yes / no = explicitly marked not under a plan / unknown = the filing did not mark it (no such field before 2023)"},
                 "since": {"type": "string", "description": "Earliest trade date, YYYY-MM-DD"},
                 "min_value": {"type": "number", "description": "Minimum trade value (dollars)"},
                 "limit": {"type": "integer", "description": "Maximum trades to return, default 50"},
@@ -159,7 +159,7 @@ TOOLS: list[dict] = [
         "description": (
             "Query US congressional stock trades disclosed under the STOCK Act (House + Senate). "
             "Filterable by ticker, member, chamber, direction and earliest trade date. "
-            "⚠️ Amounts are **ranges**, not exact figures; disclosure lags by tens of days by nature; "
+            "⚠️ Amounts are **ranges**, not exact figures; disclosure inherently lags by tens of days; "
             "it reads the locally synced cache, and is empty if nothing has been synced."
         ),
         "inputSchema": {

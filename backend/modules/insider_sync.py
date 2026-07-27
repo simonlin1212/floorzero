@@ -226,7 +226,7 @@ def start(quarters_back: int = 2, days: int = 5) -> dict:
     """Start a sync.
 
     `quarters_back` = how many recent quarters to fill (cheap, seconds per quarter)
-    `days`          = how many recent business days to fetch one by one (dear, about 90 seconds a day)
+    `days`          = how many recent business days to fetch one by one (costly, about 90 seconds a day)
 
     ⚠️ The default is (2, 5) rather than "fill everything": the gap currently runs to 117 days, over 3 hours of work.
     Anything that expensive is the user's decision, never something run quietly on their behalf.

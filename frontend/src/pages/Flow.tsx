@@ -732,7 +732,7 @@ export default function Flow() {
             )}
             <div className="mt-2 text-[10px]">
               ⚠️ What is shown here is <b className="text-ink">not enough accrued yet</b>,
-              not "open interest did not change" — the two must be tellable apart in the interface.
+              not "open interest did not change" — the two must be distinguishable in the interface.
             </div>
           </div>
         )}
@@ -753,7 +753,7 @@ export default function Flow() {
             )}
             {(oi.incomplete_excluded ?? 0) > 0 && (
               <div className="mb-3 rounded-lg border border-brand/40 bg-brand/8 px-3 py-2 text-xs">
-                <b className="text-brand">{oi.incomplete_excluded} contracts are not yet expired yet absent from the end snapshot</b>
+                <b className="text-brand">{oi.incomplete_excluded} contracts are not yet expired, yet absent from the end snapshot</b>
                 <span className="text-dim">
                   ({num(oi.incomplete_oi ?? 0)} of open interest) — Cboe lists contracts through to expiry,
                   so this can only mean <b className="text-ink">that pull was incomplete</b>. They are excluded.
