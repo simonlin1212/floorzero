@@ -1,10 +1,10 @@
-"""AI 工具层 —— **唯一定义处**。
+"""The AI tool layer — **the single place tools are defined**.
 
-MCP server 从这里自动继承工具定义；以后接系统 AI / 多 agent 也复用同一份。
-新增工具只改这个文件，别在 mcp_server.py 里另写一套（VibeResearch 踩过的坑：
-工具定义散在多处 → 三条出口能力不一致）。
+The MCP server inherits these definitions automatically; a system AI or multi-agent setup later reuses the same file.
+A new tool changes only this file; do not write a second set in mcp_server.py (a trap VibeResearch fell into:
+tool definitions scattered about → three exits with different capabilities).
 
-⚠️ 合规：工具输出**只给数据与计算结果**，不给买卖建议、不打「低估/高估」标签。
+⚠️ Compliance: tool output gives **data and computed results only** — no buy or sell advice, and no undervalued/overvalued labels.
 """
 from __future__ import annotations
 
@@ -30,23 +30,23 @@ from modules import stock as stock_parse
 from sources import macro as macro_src
 from modules import shorts as shorts_parse
 
-# ── 工具 schema（MCP / function-calling 通用）──
+# ── Tool schemas (shared by MCP and function-calling) ──
 TOOLS: list[dict] = [
     {
         "name": "get_gex",
         "description": (
-            "获取某只美股的 GEX（伽马敞口）画像：总 GEX、gamma flip 价位、"
-            "call/put wall、按行权价与到期日的分布。"
-            "GEX 为正表示做市商对冲会抑制波动，为负表示会放大波动。"
+            "A US stock's GEX (gamma exposure) profile: total GEX, the gamma flip price, "
+            "call and put walls, and the distribution across strikes and expiries. "
+            "Positive GEX means dealer hedging suppresses volatility; negative means it amplifies volatility."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "ticker": {"type": "string", "description": "美股代码，如 SPY / NVDA"},
+                "ticker": {"type": "string", "description": "US ticker, e.g. SPY / NVDA"},
                 "dte_max": {"type": "integer",
-                            "description": "只统计 N 天内到期的合约；0 表示只看当日到期(0DTE)。不传=全链"},
+                            "description": "Count only contracts expiring within N days; 0 means same-day expiry (0DTE). Omitted = the whole chain"},
                 "strike_pct": {"type": "number",
-                               "description": "行权价范围 ±比例，默认 0.05（±5%）"},
+                               "description": "Strike range, ± this fraction; default 0.05 (±5%)"},
             },
             "required": ["ticker"],
         },
@@ -54,158 +54,158 @@ TOOLS: list[dict] = [
     {
         "name": "get_short_fails",
         "description": (
-            "查询 SEC 交割失败（fails-to-deliver）数据。"
-            "⚠️ **三条必须一起读的口径**：(1) 它是**某结算日的累计余额**不是当日新增，"
-            "SEC 明说相邻两日「may have little or no relationship」、"
-            "「the age of fails cannot be determined」；"
-            "(2) SEC 明说交割失败**既可能来自多头也可能来自空头**，"
-            "**不是裸卖空的证据**；(3) 按标的汇总用的是各结算日余额的**均值**不是加总"
-            "（同一笔未交割会在连续多日重复出现）。"
+            "Query SEC fails-to-deliver data. "
+            "⚠️ **Three points that have to be read together**: (1) it is **a cumulative balance on a settlement date**, not that day's additions; "
+            "the SEC states that consecutive days 'may have little or no relationship' and that "
+            "'the age of fails cannot be determined'; "
+            "(2) the SEC states that a failure to deliver **can arise from a long just as much as a short** "
+            "and is **not evidence of naked shorting**; (3) the per-symbol figure is the **mean** of the balances across settlement dates, never their sum "
+            "(one undelivered trade reappears on consecutive days)."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "symbol": {"type": "string", "description": "股票代码"},
-                "settlement_date": {"type": "string", "description": "结算日 YYYY-MM-DD"},
-                "since": {"type": "string", "description": "结算日下限 YYYY-MM-DD"},
-                "min_quantity": {"type": "number", "description": "余额下限（股）"},
-                "top": {"type": "integer", "description": "榜单取前几名，默认 10"},
+                "symbol": {"type": "string", "description": "Ticker"},
+                "settlement_date": {"type": "string", "description": "Settlement date, YYYY-MM-DD"},
+                "since": {"type": "string", "description": "Earliest settlement date, YYYY-MM-DD"},
+                "min_quantity": {"type": "number", "description": "Minimum balance (shares)"},
+                "top": {"type": "integer", "description": "How many to list, default 10"},
             },
         },
     },
     {
         "name": "get_institution_holdings",
         "description": (
-            "查询机构 13F 持仓（SEC 季度申报）。"
-            "⚠️ **13F 只报季末时点、13(f) 证券的多头持仓** —— 不含空头（SEC 另立 Form SHO）、"
-            "现金、债券、仅境外上市股票、私募持仓。看跌期权按标的列示，是**看空**，"
-            "默认已排除在持仓统计外。申报至少滞后 45 天。"
+            "Query institutional 13F holdings (the SEC's quarterly filing). "
+            "⚠️ **13F reports long positions in 13(f) securities as of quarter-end** only — no shorts (the SEC created Form SHO for those), "
+            "no cash, bonds, stocks listed only outside the US or private holdings. Puts are listed under their underlying and are **bearish**, "
+            "so they are excluded from the holdings totals by default. Filings run at least 45 days behind."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "cusip": {"type": "string", "description": "CUSIP（不是股票代码 —— 13F 只给 CUSIP）"},
-                "manager": {"type": "string", "description": "机构名（模糊匹配），如 Berkshire"},
-                "period": {"type": "string", "description": "报告期 YYYY-MM-DD（季末）"},
+                "cusip": {"type": "string", "description": "CUSIP (not a ticker — 13F gives CUSIPs only)"},
+                "manager": {"type": "string", "description": "Manager name (fuzzy match), e.g. Berkshire"},
+                "period": {"type": "string", "description": "Reporting period, YYYY-MM-DD (quarter-end)"},
                 "kind": {"type": "string", "enum": ["share", "call", "put", "all"],
-                         "description": "持仓类型，默认 share"},
-                "top": {"type": "integer", "description": "各榜单取前几名，默认 10"},
+                         "description": "Position kind, default share"},
+                "top": {"type": "integer", "description": "How many per table, default 10"},
             },
         },
     },
     {
         "name": "get_institution_changes",
         "description": (
-            "机构持仓的季度环比：新建仓 / 加仓 / 减仓 / 清仓。"
-            "⭐ 13F 的主要价值在变动，单季持仓只是静态快照。"
-            "⚠️ 「清仓」只代表该标的不再出现在 13(f) 多头持仓里，不等于机构看空。"
+            "Quarter-on-quarter change in institutional holdings: new positions / added / trimmed / exited. "
+            "⭐ 13F's value is in the change; a single quarter is only a static snapshot. "
+            "⚠️ An exit means only that the symbol no longer appears among 13(f) long holdings, not that the manager turned bearish."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "period": {"type": "string", "description": "本期报告期 YYYY-MM-DD"},
-                "prev_period": {"type": "string", "description": "上期报告期 YYYY-MM-DD"},
-                "manager": {"type": "string", "description": "只看某家机构"},
-                "top": {"type": "integer", "description": "各榜单取前几名，默认 10"},
+                "period": {"type": "string", "description": "This reporting period, YYYY-MM-DD"},
+                "prev_period": {"type": "string", "description": "The previous reporting period, YYYY-MM-DD"},
+                "manager": {"type": "string", "description": "Restrict to one manager"},
+                "top": {"type": "integer", "description": "How many per table, default 10"},
             },
         },
     },
     {
         "name": "get_insider_trades",
         "description": (
-            "查询美股上市公司内部人（高管/董事/10%股东）依 SEC Form 4 申报的交易。"
-            "⚠️ **默认只返回公开市场主动买卖（代码 P/S）** —— Form 4 里约七成是"
-            "授予/期权行权/代扣税等薪酬类交易，把它们当成'内部人买入'会把买盘夸大数倍。"
-            "读的是本地已同步的缓存。"
+            "Query trades by insiders of US listed companies (officers, directors, 10% holders) as filed on SEC Form 4. "
+            "⚠️ **By default it returns active open-market trading only (codes P/S)** — about seven tenths of Form 4 is "
+            "compensation: grants, option exercises, tax withholding. Read as 'insiders buying' they overstate the bid several times over. "
+            "It reads the locally synced cache."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "ticker": {"type": "string", "description": "股票代码，如 NVDA"},
-                "owner": {"type": "string", "description": "内部人姓名（模糊匹配）"},
+                "ticker": {"type": "string", "description": "Ticker, e.g. NVDA"},
+                "owner": {"type": "string", "description": "Insider name (fuzzy match)"},
                 "direction": {"type": "string", "enum": ["buy", "sell"]},
                 "role": {"type": "string", "enum": ["officer", "director", "ten_pct"],
-                         "description": "身份：高管/董事/10%股东"},
+                         "description": "Role: officer / director / 10% holder"},
                 "group": {"type": "string",
                           "enum": ["open_market", "compensation", "other", "all"],
-                          "description": "交易大类，默认 open_market"},
+                          "description": "Transaction group, default open_market"},
                 "plan": {"type": "string", "enum": ["yes", "no"],
-                         "description": "是否 10b5-1 预设计划交易"},
-                "since": {"type": "string", "description": "交易日下限 YYYY-MM-DD"},
-                "min_value": {"type": "number", "description": "成交金额下限（美元）"},
-                "limit": {"type": "integer", "description": "最多返回几笔，默认 50"},
+                         "description": "Whether it was a 10b5-1 pre-arranged trade"},
+                "since": {"type": "string", "description": "Earliest trade date, YYYY-MM-DD"},
+                "min_value": {"type": "number", "description": "Minimum trade value (dollars)"},
+                "limit": {"type": "integer", "description": "Maximum trades to return, default 50"},
             },
         },
     },
     {
         "name": "get_insider_summary",
         "description": (
-            "内部人交易聚合：净买卖金额、集群买入榜（多少位不同内部人买同一只）、"
-            "活跃内部人。只统计公开市场交易。⚠️ 只呈现事实，不给买卖建议。"
+            "Insider trades aggregated: net buy and sell value, a cluster-buying table (how many distinct insiders bought the same name), "
+            "and the most active insiders. Open-market transactions only. ⚠️ It presents facts and gives no buy or sell advice."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "ticker": {"type": "string"},
-                "since": {"type": "string", "description": "交易日下限 YYYY-MM-DD"},
+                "since": {"type": "string", "description": "Earliest trade date, YYYY-MM-DD"},
                 "role": {"type": "string", "enum": ["officer", "director", "ten_pct"]},
                 "min_value": {"type": "number"},
-                "top": {"type": "integer", "description": "各榜单取前几名，默认 10"},
+                "top": {"type": "integer", "description": "How many per table, default 10"},
             },
         },
     },
     {
         "name": "get_congress_trades",
         "description": (
-            "查询美国国会议员依 STOCK Act 公开申报的股票交易（众议院 + 参议院）。"
-            "可按标的、议员、院别、方向、起始交易日筛选。"
-            "⚠️ 金额是**区间**不是精确值；披露天然滞后数十天；"
-            "读的是本地已同步的缓存，未同步则为空。"
+            "Query US congressional stock trades disclosed under the STOCK Act (House + Senate). "
+            "Filterable by ticker, member, chamber, direction and earliest trade date. "
+            "⚠️ Amounts are **ranges**, not exact figures; disclosure lags by tens of days by nature; "
+            "it reads the locally synced cache, and is empty if nothing has been synced."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "ticker": {"type": "string", "description": "股票代码，如 NVDA"},
-                "member": {"type": "string", "description": "议员姓名（模糊匹配）"},
+                "ticker": {"type": "string", "description": "Ticker, e.g. NVDA"},
+                "member": {"type": "string", "description": "Member name (fuzzy match)"},
                 "chamber": {"type": "string", "enum": ["house", "senate"],
-                            "description": "院别，不传=两院"},
+                            "description": "Chamber; omitted = both"},
                 "tx_type": {"type": "string", "enum": ["buy", "sell"],
-                            "description": "买入/卖出，不传=全部"},
-                "since": {"type": "string", "description": "交易日下限 YYYY-MM-DD"},
-                "limit": {"type": "integer", "description": "最多返回几笔，默认 50"},
+                            "description": "Buy or sell; omitted = all"},
+                "since": {"type": "string", "description": "Earliest trade date, YYYY-MM-DD"},
+                "limit": {"type": "integer", "description": "Maximum trades to return, default 50"},
             },
         },
     },
     {
         "name": "get_congress_summary",
         "description": (
-            "国会议员交易的聚合视图：最活跃标的、交易最多的议员、买卖比、披露延迟统计。"
-            "⚠️ 金额为区间中值加总，只能横向比较，不是真实成交额。"
+            "Congressional trades aggregated: the most active tickers, the members trading most, the buy/sell ratio, and disclosure delay statistics. "
+            "⚠️ Amounts are sums of range midpoints, good for comparison between rows and not real trade sizes."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "since": {"type": "string", "description": "交易日下限 YYYY-MM-DD"},
+                "since": {"type": "string", "description": "Earliest trade date, YYYY-MM-DD"},
                 "chamber": {"type": "string", "enum": ["house", "senate"]},
-                "top": {"type": "integer", "description": "各榜单取前几名，默认 10"},
+                "top": {"type": "integer", "description": "How many per table, default 10"},
             },
         },
     },
     {
         "name": "get_gex_curve",
         "description": (
-            "获取 GEX 随假设股价变化的曲线，用于定位 gamma flip。"
-            "每个价位都用 Black-Scholes 重算 gamma（不是复用当前 gamma）。"
+            "The GEX curve against hypothetical share prices, for locating the gamma flip. "
+            "Every price recomputes gamma with Black-Scholes (rather than reusing the current gamma)."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "ticker": {"type": "string"},
                 "dte_max": {"type": "integer",
-                            "description": "只统计 N 天内到期；不传=全链（与 get_gex 默认一致）"},
-                "span_pct": {"type": "number", "description": "扫描股价范围 ±比例，默认 0.06"},
+                            "description": "Count only expiries within N days; omitted = the whole chain (matching get_gex's default)"},
+                "span_pct": {"type": "number", "description": "Price range to sweep, ± this fraction; default 0.06"},
                 "strike_pct": {"type": "number",
-                               "description": "行权价范围 ±比例，默认 0.05（须与 get_gex 一致）"},
+                               "description": "Strike range, ± this fraction; default 0.05 (must match get_gex)"},
             },
             "required": ["ticker"],
         },
@@ -213,8 +213,8 @@ TOOLS: list[dict] = [
     {
         "name": "get_option_chain_summary",
         "description": (
-            "获取某只美股期权链的概览：现价、合约总数、可用到期日、"
-            "以及按到期天数分桶的成交量分布（看市场有多短线）。"
+            "An overview of a US stock's options chain: spot, total contracts, available expiries, "
+            "and volume bucketed by days to expiry (showing how short-dated the market is)."
         ),
         "inputSchema": {
             "type": "object",
@@ -225,17 +225,17 @@ TOOLS: list[dict] = [
     {
         "name": "get_option_flow",
         "description": (
-            "获取某只美股当日的期权异动与持仓结构：vol/OI 异动榜、"
-            "认沽/认购比（成交量/持仓量/权利金 三口径）、绝对 delta 敞口、到期分布。"
-            "⚠️ 数据是**链快照**不是逐笔成交带 —— **无法**判断主动买卖方向、"
-            "无法做 sweep 检测与大单分级，本工具因此**不给任何看涨/看跌标签**。"
+            "A US stock's unusual options activity and positioning for the day: the vol/OI table, "
+            "the put/call ratio (on volume, open interest and premium), absolute delta exposure, and the expiry distribution. "
+            "⚠️ The data is a **chain snapshot**, not the print-by-print tape — buyer/seller direction **cannot** be determined, "
+            "and sweep detection and block-size tiering are impossible, so this tool **attaches no bullish or bearish label**."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "ticker": {"type": "string"},
-                "dte_max": {"type": "integer", "description": "只看 N 天内到期；不传=全链"},
-                "top": {"type": "integer", "description": "异动榜条数，默认 15"},
+                "dte_max": {"type": "integer", "description": "Only expiries within N days; omitted = the whole chain"},
+                "top": {"type": "integer", "description": "Rows in the unusual table, default 15"},
             },
             "required": ["ticker"],
         },
@@ -243,16 +243,16 @@ TOOLS: list[dict] = [
     {
         "name": "get_oi_change",
         "description": (
-            "获取本地已沉淀的期权持仓量（OI）变化 —— 两个快照日之间谁在建仓/平仓。"
-            "⚠️ 这份历史**补不回来**，只有本机攒过才有；没攒够会明确返回 enough=false"
-            "（那是「还没攒够」，不是「持仓没变化」）。"
+            "The change in locally accrued options open interest — who was opening or closing between two snapshot days. "
+            "⚠️ This history **cannot be backfilled** and exists only where this machine has accrued it; without enough it returns enough=false "
+            "(meaning 'not enough accrued yet', not 'open interest did not change')."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "ticker": {"type": "string"},
-                "date_from": {"type": "string", "description": "YYYY-MM-DD，不传=次新快照"},
-                "date_to": {"type": "string", "description": "YYYY-MM-DD，不传=最新快照"},
+                "date_from": {"type": "string", "description": "YYYY-MM-DD; omitted = the second-newest snapshot"},
+                "date_to": {"type": "string", "description": "YYYY-MM-DD; omitted = the newest snapshot"},
             },
             "required": ["ticker"],
         },
@@ -260,40 +260,40 @@ TOOLS: list[dict] = [
     {
         "name": "scan_market",
         "description": (
-            "在**本地已扫过**的行情快照里筛标的：IV Rank / IV 百分位 / 成交量放大倍数 / "
-            "价格 / 涨跌幅。"
-            "⚠️ **IV Rank 按定义需要历史**，本机攒不够时该字段为空 —— "
-            "那是「还没攒够」，不是「排名低」，两者绝不能混同。"
-            "⚠️ 读的是本地快照，不现拉；没扫过会明确说明。"
+            "Screen symbols within the quote snapshots **already scanned locally**: IV Rank / IV percentile / volume multiple / "
+            "price / change. "
+            "⚠️ **IV Rank needs history by definition**, and the field is null where this machine has not accrued enough — "
+            "which means 'not enough accrued yet', not 'a low rank'. The two must never be conflated. "
+            "⚠️ It reads local snapshots and fetches nothing live; if nothing has been scanned it says so plainly."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "min_iv_rank": {"type": "number", "description": "IV Rank 下限 0-100"},
-                "min_volume": {"type": "number", "description": "成交量下限（股）"},
+                "min_iv_rank": {"type": "number", "description": "Minimum IV Rank, 0-100"},
+                "min_volume": {"type": "number", "description": "Minimum volume (shares)"},
                 "min_volume_x": {"type": "number",
-                                 "description": "成交量至少是本地历史中位数的几倍"},
+                                 "description": "Volume as at least this multiple of the local historical median"},
                 "min_price": {"type": "number"},
                 "sort": {"type": "string",
                          "description": "iv_rank/iv_percentile/iv30/volume/volume_x/change_pct"},
-                "top": {"type": "integer", "description": "返回几只，默认 20"},
+                "top": {"type": "integer", "description": "How many symbols to return, default 20"},
             },
         },
     },
     {
         "name": "get_darkpool",
         "description": (
-            "查询某只美股的场外成交（FINRA 周度）。"
-            "⚠️ **ATS（真暗池）与非 ATS 场外（批发商内部化）是两类不同的成交，"
-            "本工具分开返回，绝不相加叫「暗池成交量」** —— 实测非 ATS 常比 ATS 大一倍以上。"
-            "⚠️ 数据**滞后约四周**，非 ATS 场外**不披露机构名**。"
-            "⚠️ 该数据源默认关闭（FINRA 条款），未开启时会明确说明。"
+            "Query a US stock's off-exchange volume (FINRA, weekly). "
+            "⚠️ **ATS (a genuine dark pool) and non-ATS off-exchange (wholesaler internalisation) are two different kinds of trading; "
+            "this tool returns them apart and never adds them into a 'dark pool volume'** — measured, non-ATS is often more than double ATS. "
+            "⚠️ The data runs **about four weeks behind**, and non-ATS off-exchange **does not disclose the firm**. "
+            "⚠️ This source is off by default (FINRA's terms); when it is off, the tool says so plainly."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "ticker": {"type": "string"},
-                "week": {"type": "string", "description": "周起始日 YYYY-MM-DD，不传=最新"},
+                "week": {"type": "string", "description": "Week start, YYYY-MM-DD; omitted = the newest"},
             },
             "required": ["ticker"],
         },
@@ -301,13 +301,13 @@ TOOLS: list[dict] = [
     {
         "name": "get_stock",
         "description": (
-            "一只美股在九条数据线上的全部画像：行情/期权链、GEX、期权流、IV 排名、"
-            "内部人 Form 4、交割失败、国会申报、机构 13F、场外/暗池。"
-            "⚠️ **这九块的新鲜度相差两个数量级**（期权链是上一个交易时段，"
-            "13F 是三个月前的季末），每块都带自己的时点与滞后天数 —— "
-            "⛔ **不要把它们当成同一时刻的事**，本工具也**不做任何跨源综合评分**。"
-            "⚠️ 某块缺失时会给出**它自己的原因**（还没同步/没攒够/源被关着/"
-            "取数失败/定位不到），这些**都不等于**「这只票没有那类活动」。"
+            "A US stock's full profile across nine data lanes: quote and options chain, GEX, options flow, IV ranking, "
+            "insider Form 4, fails to deliver, congressional filings, institutional 13F, and off-exchange / dark pools. "
+            "⚠️ **These nine differ in freshness by two orders of magnitude** (the option chain is the last trading session, "
+            "the 13F a quarter-end three months back), so each carries its own instant and lag in days — "
+            "⛔ **do not treat them as contemporaneous**, and this tool **produces no cross-source score**. "
+            "⚠️ A missing block gives **its own reason** (not yet synced / not enough accrued / source switched off / "
+            "fetch failed / cannot be located), and **none of those mean** 'this symbol has no such activity'."
         ),
         "inputSchema": {
             "type": "object",
@@ -318,69 +318,69 @@ TOOLS: list[dict] = [
     {
         "name": "get_yield_curve",
         "description": (
-            "获取美债收益率曲线：最新一天的完整期限结构 + 两条利差"
-            "（10Y-2Y 与 10Y-3M）的历史。"
-            "⚠️ 「倒挂」有两条常用口径且时点可差数月，本工具两条都给、不挑一条。"
+            "The Treasury yield curve: the latest day's full term structure plus the history of both spreads "
+            "(10Y-2Y and 10Y-3M). "
+            "⚠️ 'Inversion' has two common definitions that can invert months apart; this tool gives both and picks neither."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "years": {"type": "integer",
-                          "description": "往前看几年，默认 3（1 年常看不到穿越零轴）"},
+                          "description": "How many years back, default 3 (one year often never shows the crossing of zero)"},
             },
         },
     },
     {
         "name": "get_cot",
         "description": (
-            "获取 CFTC 金融期货持仓报告（TFF）：杠杆基金 / 资产管理 / 交易商"
-            "三类的多空与净持仓。⚠️ 有三天时滞（报周二持仓、周五发布）。"
-            "不传 market 则返回可选合约清单。"
+            "The CFTC financial futures positioning report (TFF): long, short and net positions for "
+            "leveraged funds, asset managers and dealers. ⚠️ It runs three days behind (Tuesday's positions, published Friday). "
+            "Omit market to get the list of available contracts."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "market": {"type": "string",
-                           "description": "合约名关键词，如 'E-MINI S&P 500' / 'TREASURY'"},
-                "periods": {"type": "integer", "description": "取最近几期，默认 12"},
+                           "description": "Contract name keyword, e.g. 'E-MINI S&P 500' / 'TREASURY'"},
+                "periods": {"type": "integer", "description": "How many recent reports, default 12"},
             },
         },
     },
 ]
 
 
-# ── 实现 ──
+# ── Implementations ──
 def _tool_get_gex(ticker: str, dte_max: int | None = None,
                   strike_pct: float = 0.05) -> dict:
     chain = cboe.cached_option_chain(ticker)
     profile = greeks.compute(chain, dte_max=dte_max, strike_pct=strike_pct)
     out = greeks.to_dict(profile)
-    # 给 AI 一句人话总结，省得它自己揣摩符号含义
+    # A sentence of plain words for the AI, so it need not work out what the sign means
     flip = out["gamma_flip"]
-    # ⚠️ 三种 regime 都要如实描述。把 neutral 归进「正」会凭空告诉 AI
-    # 「做市商对冲会抑制波动」，那是无中生有的解读。
+    # ⚠️ All three regimes have to be described honestly. Folding neutral into "positive" would tell the AI
+    # "dealer hedging suppresses volatility" out of nothing at all.
     regime_txt = {
-        "positive": "正 gamma，做市商对冲会抑制波动",
-        "negative": "负 gamma，做市商对冲会放大波动",
-        "neutral": "零敞口，没有可测量的 gamma（可能是所选合约缺 gamma 数据，或多空恰好抵消）",
+        "positive": "positive gamma; dealer hedging suppresses volatility",
+        "negative": "negative gamma; dealer hedging amplifies volatility",
+        "neutral": "zero exposure, no measurable gamma (the selected contracts may lack gamma data, or longs and shorts cancel exactly)",
     }[out["regime"]]
     out["summary"] = (
-        f"{out['ticker']} 现价 ${out['spot']}，总 GEX {out['total_gex_bn']:+.2f}B（{regime_txt}）。"
-        + (f"Gamma flip 在 ${flip}，现价在其"
-           f"{'下方' if out['spot'] < flip else '上方'}。" if flip else "区间内未出现 gamma flip。")
+        f"{out['ticker']} spot ${out['spot']}, total GEX {out['total_gex_bn']:+.2f}B ({regime_txt}). "
+        + (f"The gamma flip is at ${flip}, with spot "
+           f"{'below' if out['spot'] < flip else 'above'} it." if flip else "No gamma flip occurs within the range.")
     )
     return out
 
 
 def _tool_get_gex_curve(ticker: str, dte_max: int | None = None,
                         span_pct: float = 0.06, strike_pct: float = 0.05) -> dict:
-    """⚠️ 默认口径必须与 get_gex 一致（dte_max=None 全链、strike_pct=0.05）。
-    否则 AI 同时调两个工具时，曲线零点会和 get_gex 返回的 gamma_flip 对不上。"""
+    """⚠️ The defaults must match get_gex (dte_max=None for the whole chain, strike_pct=0.05).
+    Otherwise, when the AI calls both tools, the curve's zero will not agree with the gamma_flip get_gex returned."""
     chain = cboe.cached_option_chain(ticker)
     lo_k, hi_k = chain.spot * (1 - strike_pct), chain.spot * (1 + strike_pct)
     cs = [c for c in chain.filter(dte_max=dte_max) if lo_k <= c.strike <= hi_k]
     if not cs:
-        raise ValueError(f"{ticker} 无符合条件的合约")
+        raise ValueError(f"{ticker} has no contracts matching those conditions")
     lo, hi = chain.spot * (1 - span_pct), chain.spot * (1 + span_pct)
     curve = [{"price": round(lo + (hi - lo) * i / 40, 2),
               "gex_bn": round(greeks.total_gex_at(cs, lo + (hi - lo) * i / 40) / 1e9, 4)}
@@ -396,7 +396,7 @@ def _tool_get_option_chain_summary(ticker: str) -> dict:
         if not c.volume:
             continue
         d = c.dte
-        key = "0-1天" if d <= 1 else "2-7天" if d <= 7 else "8-30天" if d <= 30 else "30天以上"
+        key = "0-1d" if d <= 1 else "2-7d" if d <= 7 else "8-30d" if d <= 30 else "over 30d"
         buckets[key] += c.volume
     total = sum(buckets.values()) or 1
     return {
@@ -406,12 +406,12 @@ def _tool_get_option_chain_summary(ticker: str) -> dict:
         "expiries": chain.expiries()[:12],
         "volume_by_dte": {k: {"volume": v, "pct": round(v / total * 100, 1)}
                           for k, v in buckets.items()},
-        "note": "0-1天占比高说明该标的的期权交易极度短线化（0DTE 生态）",
+        "note": "A large share in 0-1d means this symbol's options trading is extremely short-dated (a 0DTE ecosystem)",
     }
 
 
 def _row_to_trade(r: dict):
-    """DB 行 → Trade。与 REST 层同一套派生逻辑，避免两条出口字段不一致。"""
+    """DB row → Trade. The same derivation as the REST layer, so the two exits cannot disagree on fields."""
     from datetime import date as _d
 
     def d(v):
@@ -438,12 +438,12 @@ def _tool_get_congress_trades(ticker: str | None = None, member: str | None = No
     trades = [congress_parse.to_dict(_row_to_trade(r)) for r in rows]
     st = congress_store.stats()
     if not trades and st["trades"] == 0:
-        # 空结果有两种成因，必须说清是哪一种
+        # An empty result has two causes, and which one has to be said
         return {"trades": [], "count": 0,
-                "summary": "本地还没有同步任何国会申报数据 —— "
-                           "这是**尚未同步**，不是没有交易。先调用 POST /api/congress/sync。"}
-    # ⚠️ 交易类型不止买卖：还有 E（交换）。用 len-buys 当卖出数会把交换算成卖出。
-    # 判定规则与 summarize() 保持一致：P=买入，S 开头=卖出（含"部分卖出"），其余单列。
+                "summary": "No congressional filings have been synced locally yet — "
+                           "which means **nothing has been synced**, not that there were no trades. Call POST /api/congress/sync first."}
+    # ⚠️ Transaction types are not only buys and sells: there is E (exchange) too. Using len-buys as the sell count counts exchanges as sells.
+    # The rule matches summarize(): P = buy, anything starting with S = sell (including partial sales), and the rest is listed apart.
     buys = sum(1 for t in trades if t["tx_type"] == "P")
     sells = sum(1 for t in trades if str(t["tx_type"]).startswith("S"))
     others = len(trades) - buys - sells
@@ -453,15 +453,15 @@ def _tool_get_congress_trades(ticker: str | None = None, member: str | None = No
         "coverage": {"cached_trades": st["trades"],
                      "unparsed_filings": st["unparsed_filings"],
                      "last_sync": st["last_sync"]},
-        "summary": (f"返回 {len(trades)} 笔（买入 {buys} / 卖出 {sells}"
-                    + (f" / 其他类型 {others}（如交换）" if others else "") + "）。"
-                    f"本地共缓存 {st['trades']} 笔，另有 {st['unparsed_filings']} 份申报"
-                    f"为纸质扫描件未能解析。金额均为区间不是精确值；"
-                    f"披露滞后数十天，不代表当前持仓。"),
+        "summary": (f"Returned {len(trades)} trades ({buys} buys / {sells} sells"
+                    + (f" / {others} of other types, such as exchanges" if others else "") + "). "
+                    f"{st['trades']} are cached locally in total, with a further {st['unparsed_filings']} filings "
+                    f"unparsed as paper scans. Amounts are ranges rather than exact figures, "
+                    f"and disclosure lags by tens of days, so it does not represent current holdings."),
     }
 
 
-#: Congress 汇总的取数上限。⚠️ 命中超过它就只是"最新 N 笔"的统计。
+#: The fetch limit for the Congress summary. ⚠️ Beyond it, the statistics only describe the newest N trades.
 _CONGRESS_SUMMARY_LIMIT = 5000
 
 
@@ -474,28 +474,28 @@ def _tool_get_congress_summary(since: str | None = None, chamber: str | None = N
     out["by_ticker"] = out["by_ticker"][:n]
     out["by_member"] = out["by_member"][:n]
     if not rows:
-        out["summary"] = "该条件下本地无数据（可能是尚未同步，或该时间段确实无申报）。"
+        out["summary"] = "Nothing local matches those conditions (possibly not synced yet, or genuinely nothing filed in that period)."
         return out
-    hot = "、".join(f"{t['ticker']}({t['trades']}笔)" for t in out["by_ticker"][:5])
-    # ⚠️ 命中超上限时必须说出来：REST 端点有 truncated 标记，
-    # MCP 这边不说的话，AI 会把"最新 5000 笔的统计"当成整段时间的结论。
+    hot = ", ".join(f"{t['ticker']} ({t['trades']} trades)" for t in out["by_ticker"][:5])
+    # ⚠️ Hitting the limit has to be said: the REST endpoint carries a truncated flag,
+    # and without saying it here the AI takes "statistics over the newest 5,000" for a conclusion about the whole period.
     truncated = len(rows) >= _CONGRESS_SUMMARY_LIMIT
     out["scope"] = {"chamber": chamber, "since": since, "sampled": len(rows),
                     "limit": _CONGRESS_SUMMARY_LIMIT, "truncated": truncated}
-    prefix = (f"⚠️ 命中已达上限 {_CONGRESS_SUMMARY_LIMIT} 笔，"
-              f"以下统计**只覆盖最新 {len(rows)} 笔**，不是该时间段全部。"
+    prefix = (f"⚠️ The {_CONGRESS_SUMMARY_LIMIT}-trade limit was reached, so the statistics below "
+              f"**cover only the newest {len(rows)} trades** and not the whole period. "
               if truncated else "")
     out["summary"] = (prefix +
-        f"共 {out['total_trades']} 笔（买 {out['buys']} / 卖 {out['sells']}）。"
-        f"最活跃标的：{hot}。披露延迟中位 {out['delay']['median_days']} 天，"
-        f"其中 {out['delay']['over_45d_count']} 笔超过 45 天 —— "
-        f"这是事实统计不是违规认定（期限有周末顺延等情形）。"
-        f"金额为区间中值加总，仅供横向比较。")
+        f"{out['total_trades']} trades in total ({out['buys']} buys / {out['sells']} sells). "
+        f"Most active tickers: {hot}. The median disclosure delay is {out['delay']['median_days']} days, "
+        f"with {out['delay']['over_45d_count']} beyond 45 days — "
+        f"a statement of fact, not a finding of violation (the deadline rolls over weekends and so on). "
+        f"Amounts are sums of range midpoints, for comparison between rows only.")
     return out
 
 
 def _ins_row(r: dict):
-    """DB 行 → InsiderTrade。与 REST 层同一条派生路径。"""
+    """DB row → InsiderTrade. The same derivation path as the REST layer."""
     from datetime import date as _d
 
     def d(v):
@@ -529,34 +529,34 @@ def _tool_get_insider_trades(ticker: str | None = None, owner: str | None = None
     st = insider_store.stats()
     if not rows and st["trades"] == 0:
         return {"trades": [], "count": 0,
-                "summary": "本地还没有同步任何 Form 4 数据 —— 这是**尚未同步**，"
-                           "不是没有内部人交易。先调用 POST /api/insider/sync。"}
+                "summary": "No Form 4 data has been synced locally yet — which means **nothing has been synced**, "
+                           "not that there were no insider trades. Call POST /api/insider/sync first."}
     out = [insider_parse.to_dict(_ins_row(r)) for r in rows]
     buys = sum(1 for t in out if t["direction"] == "buy")
     sells = sum(1 for t in out if t["direction"] == "sell")
     bv = sum(t["value"] or 0 for t in out if t["direction"] == "buy")
     sv = sum(t["value"] or 0 for t in out if t["direction"] == "sell")
-    scope = ("公开市场主动买卖" if group == "open_market"
-             else "薪酬类（授予/行权/代扣税）" if group == "compensation"
-             else "其他类型" if group == "other" else "全部类型")
+    scope = ("active open-market trading" if group == "open_market"
+             else "compensation (grants, exercises, tax withholding)" if group == "compensation"
+             else "other types" if group == "other" else "all types")
     return {
         "trades": out, "count": len(out), "buys": buys, "sells": sells,
         "coverage": {"cached_trades": st["trades"],
                      "open_market_pct": st["open_market_pct"],
                      "range": [st["earliest"], st["latest"]],
                      "last_sync": st["last_sync"]},
-        "summary": (f"返回 {len(out)} 笔（{scope}）：买入 {buys} 笔 ${bv:,.0f}、"
-                    f"卖出 {sells} 笔 ${sv:,.0f}。本地共 {st['trades']:,} 行，"
-                    f"其中公开市场仅占 {st['open_market_pct']}% —— "
-                    f"其余是授予/行权/代扣税等薪酬类，不代表买卖决策。"),
+        "summary": (f"Returned {len(out)} trades ({scope}): {buys} buys worth ${bv:,.0f} "
+                    f"and {sells} sells worth ${sv:,.0f}. There are {st['trades']:,} rows locally, "
+                    f"of which open market is only {st['open_market_pct']}% — "
+                    f"the rest being grants, exercises and tax withholding, which represent no decision to trade."),
     }
 
 
 def _tool_get_insider_summary(ticker: str | None = None, since: str | None = None,
                               role: str | None = None, min_value: float | None = None,
                               top: int = 10) -> dict:
-    # ⚠️ 与 REST 走同一条 SQL 全量聚合，不是"取最新 N 行再算" ——
-    # 否则 MCP 报出的总额会是「最新 N 行」的，却被 AI 当成整个区间的结论。
+    # ⚠️ It runs the same full SQL aggregation as REST, not "take the newest N rows and compute" —
+    # otherwise the totals MCP reports describe the newest N rows while the AI takes them for the whole period.
     agg = insider_store.aggregate(top=max(1, min(top, 50)), ticker=ticker,
                                   since=since, role=role, group="open_market",
                                   min_value=min_value)
@@ -572,16 +572,16 @@ def _tool_get_insider_summary(ticker: str | None = None, since: str | None = Non
         "notes": insider_parse.summary_notes(lib), "stats": lib,
     }
     if not c["n"]:
-        out["summary"] = "该条件下本地无公开市场交易（可能尚未同步，或该区间确无）。"
+        out["summary"] = "No open-market trades locally under those conditions (possibly not synced yet, or genuinely none in that period)."
         return out
     om = out["open_market"]
-    cluster = "、".join(f"{c['ticker']}({c['insider_count']}人)"
-                        for c in out["cluster_buys"][:5]) or "无"
+    cluster = ", ".join(f"{c['ticker']} ({c['insider_count']} insiders)"
+                        for c in out["cluster_buys"][:5]) or "none"
     out["summary"] = (
-        f"公开市场买入 {om['buys']} 笔 ${om['buy_value']:,}、"
-        f"卖出 {om['sells']} 笔 ${om['sell_value']:,}。"
-        f"多人买入的标的：{cluster}。其中 {out['plan_sells']} 笔卖出属 10b5-1 预设计划"
-        f"（几个月前排定，非临时决定）。以上只是已申报事实的统计，不构成投资建议。")
+        f"Open-market buying: {om['buys']} trades worth ${om['buy_value']:,}; "
+        f"selling: {om['sells']} trades worth ${om['sell_value']:,}. "
+        f"Symbols bought by several insiders: {cluster}. Of the sales, {out['plan_sells']} were under 10b5-1 plans "
+        f"(arranged months earlier, not decided on the day). All of this is statistics on filed facts and is not investment advice.")
     return out
 
 
@@ -592,22 +592,22 @@ def _tool_get_institution_holdings(cusip: str | None = None,
     st = institution_store.stats()
     if not st["holdings"]:
         return {"holdings": [], "count": 0,
-                "summary": "本地还没有导入任何 13F 数据 —— 这是**尚未导入**，"
-                           "不是机构没有持仓。先调用 POST /api/institution/sync。"}
+                "summary": "No 13F data has been imported locally yet — which means **nothing has been imported**, "
+                           "not that institutions hold nothing. Call POST /api/institution/sync first."}
     p = period or (st["periods"][0] if st["periods"] else None)
     agg = institution_store.aggregate(top=max(1, min(top, 50)), cusip=cusip,
                                       manager=manager, period=p, kind=kind)
     c = agg["counts"]
     puts = (agg["by_kind"].get("put") or {}).get("value") or 0
-    hot = "、".join(f"{x['issuer'][:22]}({_money(x['value'])}, {x['holders']}家)"
-                    for x in agg["by_issuer"][:5]) or "无"
+    hot = ", ".join(f"{x['issuer'][:22]} ({_money(x['value'])}, {x['holders']} holders)"
+                    for x in agg["by_issuer"][:5]) or "none"
     return {
         **agg, "period": p, "stats": st,
-        "summary": (f"{p} 报告期：{c['n']:,} 条持仓、{c['mgrs']:,} 家机构、"
-                    f"合计 {_money(c['val'] or 0)}。持仓最大：{hot}。"
-                    f"⚠️ 13F 只含**多头**且只含 13(f) 证券，不含空头/现金/债券/"
-                    f"境外上市股票；看跌期权（本期 {_money(puts)}）按标的列示、"
-                    f"已单独归类不计入持仓；数据至少滞后 45 天。"),
+        "summary": (f"Reporting period {p}: {c['n']:,} holdings across {c['mgrs']:,} managers, "
+                    f"totalling {_money(c['val'] or 0)}. Largest holdings: {hot}. "
+                    f"⚠️ 13F carries **long** positions in 13(f) securities only — no shorts, cash, bonds or "
+                    f"stocks listed only outside the US; puts ({_money(puts)} this period) are listed under their "
+                    f"underlying, classified separately and excluded from the holdings; and the data lags by at least 45 days."),
     }
 
 
@@ -617,21 +617,21 @@ def _tool_get_institution_changes(period: str | None = None,
                                   top: int = 10) -> dict:
     have = institution_store.known_periods()
     if len(have) < 2:
-        return {"summary": f"需要至少两个报告期才能比对，当前只有 {have or '零'} —— "
-                           f"先导入更多季度（13F 的价值在变动，不在静态快照）。"}
+        return {"summary": f"Comparing needs at least two reporting periods, and there {'is' if have == 1 else 'are'} currently {have or 'none'} — "
+                           f"import more quarters first (13F's value is in the change, not the static snapshot)."}
     p = period or have[0]
     pp = prev_period or next((x for x in have if x < p), None)
     if not pp:
-        return {"summary": f"{p} 之前没有已导入的报告期，无法比对。已有：{'、'.join(have)}"}
+        return {"summary": f"No imported reporting period precedes {p}, so there is nothing to compare against. Available: {', '.join(have)}"}
     out = institution_store.changes(period=p, prev_period=pp,
                                     top=max(1, min(top, 50)), manager=manager)
-    fmt = lambda rows: "、".join(f"{r['issuer'][:20]}({_money(r['delta_value'])})"
-                                 for r in rows[:4]) or "无"
+    fmt = lambda rows: ", ".join(f"{r['issuer'][:20]} ({_money(r['delta_value'])})"
+                                 for r in rows[:4]) or "none"
     out["summary"] = (
-        f"{pp} → {p}：新建仓 {out['counts']['new']} / 加仓 {out['counts']['increased']} / "
-        f"减仓 {out['counts']['decreased']} / 清仓 {out['counts']['exited']}。"
-        f"加仓最多：{fmt(out['increased'])}；减仓最多：{fmt(out['decreased'])}。"
-        f"⚠️ 「清仓」只代表不再出现在 13(f) 多头持仓里，不等于看空。{out['floor_note']}")
+        f"{pp} → {p}: {out['counts']['new']} new / {out['counts']['increased']} added / "
+        f"{out['counts']['decreased']} trimmed / {out['counts']['exited']} exited. "
+        f"Largest additions: {fmt(out['increased'])}. Largest reductions: {fmt(out['decreased'])}. "
+        f"⚠️ An exit means only that it no longer appears among 13(f) long holdings, not that the manager turned bearish. {out['floor_note']}")
     return out
 
 
@@ -654,25 +654,25 @@ def _tool_get_short_fails(symbol: str | None = None,
     st = shorts_store.stats()
     if not st["rows"]:
         return {"fails": [], "count": 0,
-                "summary": "本地还没有导入 FTD 数据 —— 这是**尚未导入**，"
-                           "不是市场上没有交割失败。先调用 POST /api/shorts/sync。"}
+                "summary": "No FTD data has been imported locally yet — which means **nothing has been imported**, "
+                           "not that the market has no failures to deliver. Call POST /api/shorts/sync first."}
     agg = shorts_store.aggregate(top=max(1, min(top, 50)), symbol=symbol,
                                  settlement_date=settlement_date, since=since,
                                  min_quantity=min_quantity)
     c = agg["counts"]
-    hot = "、".join(
-        f"{x['symbol']}(均 {(x['avg_quantity'] or 0):,.0f} 股)"
-        for x in agg["by_symbol"][:5]) or "无"
+    hot = ", ".join(
+        f"{x['symbol']} (mean {(x['avg_quantity'] or 0):,.0f} shares)"
+        for x in agg["by_symbol"][:5]) or "none"
     return {
         **agg, "stats": st, "notes": shorts_parse.OFFICIAL_NOTES,
         "summary": (
-            f"{c['lo']} ~ {c['hi']} 共 {c['n']:,} 条记录、{c['syms']:,} 只标的、"
-            f"{c['days']} 个结算日。余额最大：{hot}。"
-            f"⚠️ 这是**某结算日的累计余额**不是当日新增（SEC：相邻两日"
-            f"「may have little or no relationship」、无法判断 fails 的存续时长）；"
-            f"⚠️ SEC 明说交割失败**既可能来自多头也可能来自空头、不是裸卖空的证据**；"
-            f"⚠️ 榜单用的是各结算日余额的**均值**不是加总。"
-            f"以上只是已公开数据的统计，不构成投资建议。"),
+            f"{c['lo']} to {c['hi']}: {c['n']:,} records across {c['syms']:,} symbols and "
+            f"{c['days']} settlement dates. Largest balances: {hot}. "
+            f"⚠️ This is **a cumulative balance on a settlement date**, not that day's additions (per the SEC, consecutive days "
+            f"'may have little or no relationship', and the age of a fail cannot be determined); "
+            f"⚠️ the SEC states plainly that a failure to deliver **can arise from a long as much as a short and is not evidence of naked shorting**; "
+            f"⚠️ the table uses the **mean** of the balances across settlement dates, never their sum. "
+            f"All of this is statistics on public data and is not investment advice."),
     }
 
 
@@ -684,53 +684,53 @@ def _tool_get_option_flow(ticker: str, dte_max: int | None = None,
     out = flow_parse.summarize(chain, traded, all_rows=scope,
                                top=max(1, min(top, 60)))
     c, rt = out["counts"], out["ratios"]
-    hot = "；".join(
-        f"{x['expiry']} {'认沽' if x['type'] == 'put' else '认购'} {x['strike']:g}"
-        f"（成交 {x['volume']:,.0f} 张"
-        + ("、前收持仓为 0（**这不代表今天全是新开仓** —— 也可能是"
-           "冷门行权价，或开了又平的日内往返）" if x["zero_prior_oi"]
-           else f"、vol/OI {x['vol_oi']:.1f}")
-        # ⚠️ 别写 `x['notional'] or 0` —— 结构化字段是 null（算不出），
-        #    摘要却说"$0"，同一个响应里两个说法互相打架。
-        + (f"、权利金估算 {_money(x['notional'])}）" if x["notional"] is not None
-           else "、权利金**算不出**（缺双边报价））")
-        for x in out["unusual_rows"][:3]) or "无"
+    hot = "; ".join(
+        f"{x['expiry']} {'put' if x['type'] == 'put' else 'call'} {x['strike']:g}"
+        f" (volume {x['volume']:,.0f}"
+        + (", prior open interest 0 (**which does not mean today is all new positions** — it may equally be "
+           "a cold strike, or an intraday round trip opened and closed)" if x["zero_prior_oi"]
+           else f", vol/OI {x['vol_oi']:.1f}")
+        # ⚠️ Never write `x['notional'] or 0` — the structured field is null (not computable)
+        #    while the summary says "$0": two accounts of the same thing, contradicting each other in one response.
+        + (f", premium estimated at {_money(x['notional'])})" if x["notional"] is not None
+           else ", premium **not computable** (no two-sided quote))")
+        for x in out["unusual_rows"][:3]) or "none"
 
     def _pc(k: str) -> str:
-        """⚠️ `pc=None` 有**两种**原因，不能一律说成"分母为 0"。"""
+        """⚠️ `pc=None` has **two** causes, and neither can be reported as a bare "zero denominator"."""
         d = rt[k]
         if d["pc"] is not None:
             return f"{d['pc']:.2f}"
         if k == "by_notional":
-            # ⚠️ counted=0 有**两种**原因：那一侧根本没成交，或成交了但全缺报价。
-            #    一律说成"缺双边报价"会把"没有认购成交"误诊成数据问题。
+            # ⚠️ counted=0 has **two** causes: that side did not trade at all, or it traded and every quote is missing.
+            #    Reporting both as "no two-sided quote" misdiagnoses "no call volume" as a data problem.
             bad = []
-            for side, cnt, vol in (("认购", d.get("counted_call"), rt["by_volume"]["call"]),
-                                   ("认沽", d.get("counted_put"), rt["by_volume"]["put"])):
+            for side, cnt, vol in (("call", d.get("counted_call"), rt["by_volume"]["call"]),
+                                   ("put", d.get("counted_put"), rt["by_volume"]["put"])):
                 if cnt:
                     continue
-                bad.append(f"{side}侧" + ("今日无成交" if not vol else "成交了但全部缺报价"))
+                bad.append(f"the {side} side " + ("did not trade today" if not vol else "traded but has no quotes at all"))
             if bad:
-                return "算不出（" + "、".join(bad) + "）"
-        return "算不出（分母为 0，即该侧完全没有成交/持仓）"
+                return "not computable (" + ", ".join(bad) + ")"
+        return "not computable (zero denominator: that side has no volume or open interest at all)"
 
     return {
         **out,
         "summary": (
-            f"{chain.ticker} ${chain.spot:.2f}（交易时段 {chain.session or '未知'}）："
-            f"口径 {'全链' if dte_max is None else f'{dte_max} 天内到期'}"
-            f"（⚠️ 网页端默认只看 7 天，口径不同则合约数与各比值都会不同）："
-            f"范围内 {c['scope_contracts']:,} 个合约、其中 {c['traded_contracts']:,} 个今日有成交，"
-            f"合计成交 {c['total_volume']:,.0f} 张、持仓 {c['total_oi']:,.0f} 张。"
-            f"异动 {c['unusual']} 个（含 {c['zero_prior_oi']} 个前收持仓为 0 的）。"
-            f"认沽/认购比：按成交量 {_pc('by_volume')}、"
-            f"按持仓量 {_pc('by_oi')}、按权利金估算 {_pc('by_notional')} "
-            f"—— **三个口径量的是不同的东西，结论不同是正常的**。"
-            f"最大异动：{hot}。"
-            f"⛔ **本数据是链快照，不是逐笔成交带**：无法判断这些成交是买方还是卖方发起，"
-            f"因此**不能**据此说「看涨」或「看跌」，也做不了 sweep 检测与大单分级。"
-            f"权利金为「累计成交量 × 抓取时中间价」的**估算**，与实际成交额可能差数倍。"
-            f"以上为公开延时数据的呈现，不构成投资建议。"),
+            f"{chain.ticker} ${chain.spot:.2f} (trading session {chain.session or 'unknown'}): "
+            f"scope {'the whole chain' if dte_max is None else f'expiring within {dte_max} days'} "
+            f"(⚠️ the web page defaults to 7 days, and a different scope changes the contract count and every ratio): "
+            f"{c['scope_contracts']:,} contracts in range, of which {c['traded_contracts']:,} traded today, "
+            f"totalling {c['total_volume']:,.0f} contracts traded against {c['total_oi']:,.0f} open. "
+            f"{c['unusual']} are unusual (including {c['zero_prior_oi']} with zero prior open interest). "
+            f"Put/call ratio: on volume {_pc('by_volume')}, "
+            f"on open interest {_pc('by_oi')}, on estimated premium {_pc('by_notional')} "
+            f"— **the three measure different things, and disagreeing is normal**. "
+            f"Largest unusual activity: {hot}. "
+            f"⛔ **This data is a chain snapshot, not the print-by-print tape**: whether these trades were buyer- or seller-initiated cannot be determined, "
+            f"so it **cannot** be called bullish or bearish, and sweep detection and block-size tiering are impossible. "
+            f"Premium is an **estimate** of cumulative volume × the mid at capture time, and may be several times the amount actually traded. "
+            f"The above presents public delayed data and is not investment advice."),
     }
 
 
@@ -739,44 +739,44 @@ def _tool_get_oi_change(ticker: str, date_from: str | None = None,
     tk = (ticker or "").strip().upper()
     out = flow_store.oi_change(tk, date_from=date_from, date_to=date_to, top=15)
     if not out.get("enough"):
-        # ⚠️ `enough=false` 有**三种**原因，不能一律归成"本机历史不足"：
-        #    ① 真的只攒了 0~1 天 ② 指定的日期库里没有 ③ 起止日期传反了。
-        #    ②③ 是**参数问题**，说成"历史不足"会把 AI 引向错误的下一步。
+        # ⚠️ `enough=false` has **three** causes and cannot all be put down to "not enough local history":
+        #    ① only 0-1 days really have accrued ② the date given is not in the database ③ the start and end dates are the wrong way round.
+        #    ② and ③ are **parameter problems**, and calling them "not enough history" sends the AI to the wrong next step.
         have = out.get("have", 0)
         if date_from or date_to:
-            why = ("这是**指定的日期有问题**（库里没有那一天，或起止顺序反了）—— "
-                   f"本地已有的快照日：{'、'.join(out.get('dates', [])[:8]) or '无'}。")
+            why = ("This is **a problem with the dates given** (the database has no such day, or the order is reversed) — "
+                   f"the snapshot days held locally: {', '.join(out.get('dates', [])[:8]) or 'none'}.")
         elif have < 2:
-            why = ("这是**本机历史不足**（这份数据补不回来，只能逐日攒），"
-                   "不是市场上持仓没有变动。")
+            why = ("This is **not enough local history** (this data cannot be backfilled and only accrues daily), "
+                   "not an absence of change in the market's positions.")
         else:
-            why = "这不是「持仓没有变化」，具体原因见 note。"
-        return {**out, "summary": f"{tk} 无法计算持仓量变化：{out['note']} {why}"}
+            why = "This does not mean open interest did not change; see note for the specific reason."
+        return {**out, "summary": f"Cannot compute the open-interest change for {tk}: {out['note']} {why}"}
     t = out["totals"]
-    top3 = "；".join(
-        f"{x['expiry']} {'认沽' if x['type'] == 'put' else '认购'} {x['strike']:g} "
-        f"{x['change']:+,.0f} 张" for x in out["gained"][:3]) or "无"
-    span = ("相邻两个快照" if out["is_consecutive"]
-            else f"相隔 {out['span_days']} 天、中间还夹着 "
-                 f"{out['snapshots_between']} 次观测，属**累计**变化")
+    top3 = "; ".join(
+        f"{x['expiry']} {'put' if x['type'] == 'put' else 'call'} {x['strike']:g} "
+        f"{x['change']:+,.0f}" for x in out["gained"][:3]) or "none"
+    span = ("two adjacent snapshots" if out["is_consecutive"]
+            else f"{out['span_days']} days apart with "
+                 f"{out['snapshots_between']} observations in between, so the change is **cumulative**")
     return {**out, "summary": (
-        f"{tk} {out['date_from']} → {out['date_to']}（{span}）："
-        f"认购持仓净变 {t['call_change']:+,.0f} 张、认沽 {t['put_change']:+,.0f} 张，"
-        f"涉及 {t['contracts']:,} 个合约。增持最多：{top3}。"
-        + (f"已排除 {out['expired_excluded']} 个期间到期的合约"
-           f"（{out['expired_oi']:,.0f} 张）—— 到期消失不是平仓。"
+        f"{tk} {out['date_from']} → {out['date_to']} ({span}): "
+        f"call open interest changed by {t['call_change']:+,.0f} and put by {t['put_change']:+,.0f}, "
+        f"across {t['contracts']:,} contracts. Largest increases: {top3}. "
+        + (f"Excluded {out['expired_excluded']} contracts that expired during the period "
+           f"({out['expired_oi']:,.0f} of open interest) — leaving the chain at expiry is not closing out. "
            if out.get("expired_excluded") else "")
-        # ⚠️ 网页端会为这两条打警告横幅，工具层不说就成了「两个视图对
-        #    同一份数据的可信度表述不一致」—— 本项目反复踩的那类坑。
-        + (f"⚠️ **本次比较可信度存疑**：有 {out['incomplete_excluded']} 个尚未到期的合约"
-           f"不在结束快照里（{out['incomplete_oi']:,.0f} 张持仓），说明那次抓取不完整，已排除。"
+        # ⚠️ The web page raises a warning banner for these two, and saying nothing here would leave "two views
+        #    describing the same data's reliability differently" — the class of trap this project keeps hitting.
+        + (f"⚠️ **This comparison's reliability is in doubt**: {out['incomplete_excluded']} unexpired contracts "
+           f"are absent from the end snapshot ({out['incomplete_oi']:,.0f} of open interest), which means that pull was incomplete. They are excluded. "
            if out.get("incomplete_excluded") else "")
-        + (f"⚠️ 有 {out['new_listings']} 个合约只出现在结束快照里、按「从 0 新增」计入 —— "
-           f"**期间新挂牌**与**起始那次漏抓**在数据上无法区分"
-           f"（两次合约数 {out.get('contracts_from')} → {out.get('contracts_to')}）。"
+        + (f"⚠️ {out['new_listings']} contracts appear only in the end snapshot and are counted as rising from 0 — "
+           f"**listed during the period** and **missed by the start pull** cannot be told apart in the data "
+           f"(contract counts {out.get('contracts_from')} → {out.get('contracts_to')}). "
            if out.get("new_listings") else "")
-        + f"⚠️ 持仓量增减**不指示方向**：每张合约都有买卖两方，"
-          f"净新增的多头与空头数量相同。以上不构成投资建议。")}
+        + f"⚠️ A rise or fall in open interest **indicates no direction**: every contract has a buyer and a seller, "
+          f"so net new longs and shorts are equal. None of the above is investment advice.")}
 
 
 def _tool_scan_market(min_iv_rank: float | None = None,
@@ -788,9 +788,9 @@ def _tool_scan_market(min_iv_rank: float | None = None,
     st = scanner_store.stats()
     if not sess:
         return {"rows": [], "count": 0, "stats": st,
-                "summary": ("本地还没有任何扫描结果 —— 这是**还没扫过**，"
-                            "不是市场上没有符合条件的标的。"
-                            "先跑一轮扫描（POST /api/scanner/scan）。")}
+                "summary": ("There are no scan results here yet — which means **nothing has been scanned**, "
+                            "not that no symbol in the market matches. "
+                            "Run a scan first (POST /api/scanner/scan).")}
     quotes = scanner_store.quotes_at(sess)
     hist = scanner_store.history([q["symbol"] for q in quotes], as_of=sess)
     rows = [scanner_parse.build_row(
@@ -801,43 +801,43 @@ def _tool_scan_market(min_iv_rank: float | None = None,
         rows, min_iv_rank=min_iv_rank, min_volume=min_volume,
         min_volume_x=min_volume_x, min_price=min_price)
     kept = scanner_parse.sort_rows(kept, sort)
-    total = len(kept)                      # ⚠️ 截断**之前**的总数
+    total = len(kept)                      # ⚠️ The count **before** truncation
     kept = kept[:max(1, min(top, 100))]
-    hot = "；".join(
-        f"{r.symbol}（IV30 " + ("—" if r.iv30 is None else f"{r.iv30:.1f}")
-        + (f"、IV Rank {r.iv_rank:.0f}" if r.iv_rank is not None
-           else "、IV Rank 空（"
-                + scanner_parse.REASON_LABEL.get(r.iv_reason or "unknown", "原因未知")
-                + (f"，还差 {r.iv_days_needed} 个交易日"
-                   if r.iv_reason == "insufficient_history" else "") + "）")
-        + "）" for r in kept[:5]) or "无"
-    # ⚠️ 「因为算不出而被排除」必须和「不满足条件」分开说，
-    #    否则 AI 会把"本机历史不足"读成"全市场只有这么几只符合"。
+    hot = "; ".join(
+        f"{r.symbol} (IV30 " + ("—" if r.iv30 is None else f"{r.iv30:.1f}")
+        + (f", IV Rank {r.iv_rank:.0f}" if r.iv_rank is not None
+           else ", IV Rank null ("
+                + scanner_parse.REASON_LABEL.get(r.iv_reason or "unknown", "reason unknown")
+                + (f", {r.iv_days_needed} more trading days needed"
+                   if r.iv_reason == "insufficient_history" else "") + ")")
+        + ")" for r in kept[:5]) or "none"
+    # ⚠️ "Excluded because it could not be computed" has to be said apart from "failed the condition",
+    #    or the AI reads "not enough local history" as "only this handful in the whole market qualifies".
     exc = ""
     def _why(d: dict) -> str:
-        return "、".join(
-            f"{scanner_parse.REASON_LABEL.get(k, k)} {v} 只" for k, v in d.items())
+        return ", ".join(
+            f"{scanner_parse.REASON_LABEL.get(k, k)}: {v}" for k, v in d.items())
     if excluded["excluded_no_iv_rank"]:
-        exc += (f"⚠️ 另有 {excluded['excluded_no_iv_rank']} 只因 **IV Rank 算不出**"
-                f"而被该条件滤掉（{_why(excluded['iv_reasons'])}）—— "
-                f"它们是**算不出**，不是不满足条件。")
+        exc += (f"⚠️ A further {excluded['excluded_no_iv_rank']} were filtered out by that condition because "
+                f"**IV Rank could not be computed** ({_why(excluded['iv_reasons'])}) — "
+                f"they are **not computable**, not failing the condition. ")
     if excluded["excluded_no_volume_x"]:
-        exc += (f"⚠️ 另有 {excluded['excluded_no_volume_x']} 只因**量比算不出**"
-                f"而被该条件滤掉（{_why(excluded['volume_reasons'])}）。")
+        exc += (f"⚠️ A further {excluded['excluded_no_volume_x']} were filtered out because "
+                f"**the volume multiple could not be computed** ({_why(excluded['volume_reasons'])}). ")
     return {
         "rows": [scanner_parse.to_dict(r) for r in kept],
-        # ⚠️ `count` 与 REST 同口径 = **截断前**的符合总数。
-        #    返回截断后的条数会让同一份数据在两个视图里报出不同的总量。
+        # ⚠️ `count` matches REST = the total matching **before** truncation.
+        #    Returning the post-truncation count makes one dataset report two different totals in two views.
         "count": total, "returned": len(kept),
         "session": sess, "excluded": excluded, "stats": st,
         "summary": (
-            f"交易时段 {sess}：本地共扫到 {len(rows):,} 只，筛出 {total} 只"
-            f"（本次返回前 {len(kept)} 只）。"
-            f"前几名：{hot}。{exc}"
-            f"本地已攒 {st['sessions']} 个交易时段、"
-            f"其中 {st['iv_ready_symbols']:,} 只标的攒够了 IV Rank 所需历史"
-            f"（需 {scanner_parse.IV_MIN_SAMPLE} 个交易日；这份历史**补不回来**，"
-            f"只能逐日攒）。以上为公开延时数据的统计，不构成投资建议。"),
+            f"Trading session {sess}: {len(rows):,} symbols scanned locally, {total} matching "
+            f"(the first {len(kept)} returned here). "
+            f"Leading: {hot}. {exc}"
+            f"{st['sessions']} trading sessions have accrued locally, "
+            f"of which {st['iv_ready_symbols']:,} symbols have the history IV Rank requires "
+            f"({scanner_parse.IV_MIN_SAMPLE} trading days; this history **cannot be backfilled** "
+            f"and only accrues daily). The above is statistics on public delayed data and is not investment advice."),
     }
 
 
@@ -846,64 +846,64 @@ def _tool_get_darkpool(ticker: str, week: str | None = None) -> dict:
     try:
         raw = darkpool_src.weekly(tk)
     except darkpool_src.FinraDisabled as e:
-        # ⚠️ 这是**配置状态**，不是「这只票没有场外成交」
+        # ⚠️ This is a **configuration state**, not "this symbol has no off-exchange volume"
         return {"enabled": False, "error": str(e),
-                "summary": (f"暗池/场外数据源**当前关闭**，取不到 {tk} 的数据。"
-                            f"这是**配置状态**，不是「这只票没有场外成交」。"
-                            f"设置 FZ_ENABLE_FINRA=1 才启用；关闭是刻意的，"
-                            f"因为 FINRA 条款限非商业用途且禁止用其数据建库。")}
+                "summary": (f"The dark pool / off-exchange source is **currently off**, so no data for {tk} could be fetched. "
+                            f"This is a **configuration state**, not 'this symbol has no off-exchange volume'. "
+                            f"Set FZ_ENABLE_FINRA=1 to enable it; off is deliberate, "
+                            f"because FINRA's terms restrict it to non-commercial use and forbid building a database from their data.")}
     parsed = darkpool_parse.parse(raw)
     weeks = darkpool_parse.weeks_of(parsed)
     if not weeks:
-        # ⚠️ 与 REST 同语义：认得的类型一行没有、却有未知类型 = **解析不兼容**，
-        #    不能说成"这只票没有场外成交"。
+        # ⚠️ Same semantics as REST: not one row of a known type, yet unknown types present = **a parser incompatibility**,
+        #    which must not be reported as "this symbol has no off-exchange volume".
         if parsed["unknown_types"]:
-            return {"error": "解析不兼容", "unknown_types": parsed["unknown_types"],
-                    "summary": (f"FINRA 返回了本程序不认识的记录类型 "
-                                f"{parsed['unknown_types']} —— 解析规则可能已过时。"
-                                f"这是**解析不兼容**，"
-                                f"**不是**「{tk} 没有场外成交」。")}
-        return {"rows": [], "summary": f"{tk} 无场外成交记录。"}
+            return {"error": "parser incompatibility", "unknown_types": parsed["unknown_types"],
+                    "summary": (f"FINRA returned record types this program does not recognise "
+                                f"{parsed['unknown_types']} — the parsing rules may be out of date. "
+                                f"This is a **parser incompatibility**, "
+                                f"and **not** '{tk} has no off-exchange volume'.")}
+        return {"rows": [], "summary": f"No off-exchange records for {tk}."}
     wk = week or weeks[-1]
     if wk not in weeks:
         return {"weeks": weeks[-8:],
-                "summary": f"没有 {wk} 这一周。可选：{'、'.join(weeks[-8:])}。"}
-    # ⚠️ **与 REST 走同一个函数**（含本地分母）—— 上一版 MCP 不读分母，
-    #    同一只票同一周网页端能给占比、工具端永远 null，两个视图口径不一致。
+                "summary": f"No such week as {wk}. Available: {', '.join(weeks[-8:])}."}
+    # ⚠️ **It goes through the same function as REST** (local denominator included) — the previous MCP version did not read the denominator,
+    #    so for one symbol in one week the web page could give a share while the tool layer always returned null: two views, disagreeing.
     from app import _consolidated
     out = _consolidated(tk, wk, parsed)
     a, o = out["ats"], out["otc"]
-    # ⚠️ `shares` 可能为空（上游字段缺失）—— 无条件 `:,.0f` 会抛 TypeError，
-    #    整个工具结果丢失，而 REST/UI 那边能正常显示"—"。
+    # ⚠️ `shares` may be null (an upstream field missing) — an unconditional `:,.0f` raises TypeError and
+    #    loses the entire tool result, while REST and the UI display "—" quite happily.
     def _v(x: dict) -> str:
-        sh = "—" if x["shares"] is None else f"{x['shares']:,.0f} 股"
+        sh = "—" if x["shares"] is None else f"{x['shares']:,.0f} shares"
         avg = ("" if x["avg_trade_size"] is None
-               else f"（均 {x['avg_trade_size']:,.0f} 股/笔）")
-        return f"{x['mpid'] or '（不披露）'} {(x['name'] or '')[:24]} {sh}{avg}"
-    top = "；".join(_v(v) for v in out["venues"]["ats"][:3]) or "无"
+               else f" (mean {x['avg_trade_size']:,.0f} shares/trade)")
+        return f"{x['mpid'] or '(not disclosed)'} {(x['name'] or '')[:24]} {sh}{avg}"
+    top = "; ".join(_v(v) for v in out["venues"]["ats"][:3]) or "none"
     return {
         **out, "ticker": tk, "weeks": weeks[-12:],
         "summary": (
-            f"{tk} {wk} 起那周："
-            f"**ATS（真暗池）{a['shares']:,.0f} 股**（{a['firms']} 家、"
-            f"{a['trades']:,.0f} 笔）；"
-            f"**非 ATS 场外（批发商内部化）{o['shares']:,.0f} 股**"
-            f"（{o['records']} 条记录，其中能点名 {o['firms']} 家）。"
-            + (f"⚠️ 有 {a['null_share_records'] + o['null_share_records']} 条记录"
-               f"成交量为空、已排除（未当成 0），合计因此偏小。"
+            f"{tk}, week beginning {wk}: "
+            f"**ATS (genuine dark pools) {a['shares']:,.0f} shares** ({a['firms']} firms, "
+            f"{a['trades']:,.0f} trades); "
+            f"**non-ATS off-exchange (wholesaler internalisation) {o['shares']:,.0f} shares** "
+            f"({o['records']} records, of which {o['firms']} can be named). "
+            + (f"⚠️ {a['null_share_records'] + o['null_share_records']} records "
+               f"have a null volume and were excluded (not counted as 0), so the totals are correspondingly small. "
                if (a["null_share_records"] + o["null_share_records"]) else "")
-            + "⛔ **这两个数不能相加叫「暗池成交量」** —— 内部化不是暗池，"
-            + f"相加会把数字虚高一倍以上。ATS 前几家：{top}。"
-            + f"⚠️ 数据**滞后约四周**（最新一周 {weeks[-1]}），是事后统计不是实时监控。"
-            + (f"场外占比：ATS {out['share']['ats_pct']:.2f}%、"
-               f"非 ATS {out['share']['otc_pct']:.2f}%"
-               f"（分母为本地沉淀的该周日成交量之和）。"
+            + "⛔ **These two numbers must not be added into a 'dark pool volume'** — internalisation is not a dark pool, "
+            + f"and adding them more than doubles the figure. Leading ATS venues: {top}. "
+            + f"⚠️ The data runs **about four weeks behind** (newest week {weeks[-1]}); it is after-the-fact statistics, not live monitoring. "
+            + (f"Off-exchange share: ATS {out['share']['ats_pct']:.2f}%, "
+               f"non-ATS {out['share']['otc_pct']:.2f}% "
+               f"(the denominator being the sum of that week's daily volume accrued locally). "
                if out.get("share") else
-               f"⚠️ **场外占比算不出**：{out['share_note']}")
-            + (f"⚠️ 本次取满了 {darkpool_src.MAX_LIMIT} 行上限、周序列可能不全，"
-               f"且该接口不支持排序，截掉了哪几周无从得知。"
+               f"⚠️ **The off-exchange share cannot be computed**: {out['share_note']} ")
+            + (f"⚠️ This fetch hit the {darkpool_src.MAX_LIMIT}-row limit, so the weekly series may be incomplete, "
+               f"and since the endpoint cannot sort, which weeks were cut is unknowable. "
                if parsed.get("truncated") else "")
-            + "以上为公开数据的呈现，不构成投资建议。"),
+            + "The above presents public data and is not investment advice."),
     }
 
 
@@ -912,53 +912,53 @@ def _tool_get_stock(ticker: str) -> dict:
     out = _get(ticker)
     ok = [l for l in out["lanes"] if l["ok"]]
     miss = [l for l in out["lanes"] if not l["ok"]]
-    have = "；".join(
-        f"{l['title']}（{l['as_of'] or '时点未知'}"
-        + (f"，{l['lag_days']} 天前）" if l["lag_days"] is not None else "）")
-        for l in ok) or "无"
-    # ⚠️ 缺的那些必须**逐条给出自己的原因**，而且**不能笼统说成"没有"** ——
-    #    `disabled` / `fetch_failed` / `no_mapping` 说的是"我们拿不到"，
-    #    只有 `no_data` 才是"这只票确实没有那类记录"。上一版把两者混在一句
-    #    "X 条没有 …… 这些都不等于没有活动"里，自相矛盾且两头都不对。
-    # ⚠️ 用 `stock_parse.MEANS_ABSENT` 而不是硬写 "no_data" ——
-    #    以后再加一个"确实没有"的原因码，这里会自动跟上。
+    have = "; ".join(
+        f"{l['title']} ({l['as_of'] or 'instant unknown'}"
+        + (f", {l['lag_days']} days ago)" if l["lag_days"] is not None else ")")
+        for l in ok) or "none"
+    # ⚠️ The missing ones must each give **their own reason**, and **must not be lumped together as "absent"** —
+    #    `disabled` / `fetch_failed` / `no_mapping` all say "we cannot get it",
+    #    and only `no_data` says "this symbol genuinely has no such record". The previous version mixed both into one
+    #    "X lanes have none … none of which means no activity", which contradicted itself and was wrong at both ends.
+    # ⚠️ Use `stock_parse.MEANS_ABSENT` rather than hardcoding "no_data" —
+    #    add another "genuinely absent" reason code later and this follows automatically.
     truly_none = [l for l in miss if l["reason"] in stock_parse.MEANS_ABSENT]
     cant_get = [l for l in miss if l["reason"] not in stock_parse.MEANS_ABSENT]
     gone = ""
     if truly_none:
-        gone += ("**确实没有记录**的：" + "、".join(l["title"] for l in truly_none)
-                 + "（这几条是真的没有那类活动）。")
+        gone += ("**Genuinely no record**: " + ", ".join(l["title"] for l in truly_none)
+                 + " (these lanes really do have no such activity). ")
     if cant_get:
-        gone += ("**我们拿不到**的：" + "；".join(
-            f"{l['title']}（{l['reason_label'] or l['reason']}）" for l in cant_get)
-            + " —— ⛔ 这几条**不等于**「这只票没有那类活动」。")
+        gone += ("**We could not get**: " + "; ".join(
+            f"{l['title']} ({l['reason_label'] or l['reason']})" for l in cant_get)
+            + " — ⛔ these **do not mean** 'this symbol has no such activity'. ")
     spread = out.get("lag_spread_days")
     spread_txt = (
-        f"⚠️ 这些数据**横跨 {spread['oldest'] - spread['newest']} 天**"
-        f"（最新 {spread['newest']} 天前、最旧 {spread['oldest']} 天前）——"
-        f"**它们不是同一时刻的事**，串成一个叙事之前先看清各自时点。"
+        f"⚠️ These data **span {spread['oldest'] - spread['newest']} days** "
+        f"(the newest {spread['newest']} days old, the oldest {spread['oldest']}) — "
+        f"**they are not contemporaneous**, so read each one's instant before stringing them into a story. "
         if spread else "")
     return {
         **out,
         "summary": (
-            # ⚠️ 首句也不能说"X 条没有" —— 那里头大多是"我们拿不到"。
-            f"{out['ticker']}：{out['available']} 条线有数据、"
-            f"{out['unavailable']} 条空着（原因见下，多数不是「没有」）。{spread_txt}"
-            f"有数据的：{have}。"
+            # ⚠️ The opening sentence must not say "X lanes have none" either — most of them are "we cannot get it".
+            f"{out['ticker']}: {out['available']} lanes have data and "
+            f"{out['unavailable']} are empty (reasons below; most are not absence). {spread_txt}"
+            f"With data: {have}. "
             f"{gone}"
-            f"⛔ 本工具**不做跨源综合评分**：把不同时点、不同口径的数据"
-            f"加权成一个「多空分数」，等于把三个月前的持仓和昨天的期权成交"
-            f"当成同一件事。以上为公开数据的呈现，不构成投资建议。"),
+            f"⛔ This tool **produces no cross-source score**: weighting data of different instants and "
+            f"definitions into one bullish-bearish number treats a position from three months ago and yesterday's "
+            f"option volume as the same thing. The above presents public data and is not investment advice."),
     }
 
 
 def _n(v: float | None, spec: str = ",.0f") -> str:
-    """空值安全的数字格式化。
+    """Null-safe number formatting.
 
-    ⚠️ 解析层把这些字段声明成 `Optional[float]`，API 与前端都按 "—" 呈现空值，
-    只有工具层直接 `f"{v:,.0f}"` —— 同一份数据在 REST 能看、在 MCP 崩掉，
-    正是本项目反复踩的「同数据两视图口径不一致」。
-    （实测抽样 1000 期 TFF 未见空字段，属**尚未触发**的不一致，不是必现崩溃。）
+    ⚠️ The parsing layer declares these fields `Optional[float]`, and both the API and the frontend render null as "—";
+    only the tool layer wrote `f"{v:,.0f}"` directly — so one dataset displays under REST and crashes under MCP,
+    which is precisely the "two views of one dataset disagreeing" this project keeps hitting.
+    (A sample of 1,000 TFF periods showed no null fields, so this is an inconsistency **not yet triggered** rather than a certain crash.)
     """
     return "—" if v is None else format(v, spec)
 
@@ -977,58 +977,58 @@ def _tool_get_yield_curve(years: int = 3) -> dict:
             if not market_store.save_year(yy, macro_src.yield_curve(yy)):
                 missing.append(yy)
         except macro_src.DataNotAvailable:
-            # ⚠️ 「那一年确实没有」要**带出去**：REST 视图有 missing_years，
-            #    工具视图吞掉的话，AI 看到的窗口就悄悄变短了。
+            # ⚠️ "That year genuinely has none" has to be **carried out**: the REST view has missing_years,
+            #    and swallowing it in the tool view silently shortens the window the AI thinks it has.
             missing.append(yy)
         except RuntimeError as e:
             failed[yy] = str(e)
     pts = [p for p in (market_parse.parse_curve(r)
                        for r in market_store.load_years(wanted)) if p]
     if not pts:
-        return {"error": "取不到收益率数据" + (f"：{failed}" if failed else ""),
-                "note": "这是**取数失败**，不是「没有收益率」。"}
+        return {"error": "could not fetch yield data" + (f": {failed}" if failed else ""),
+                "note": "This is **a failed fetch**, not 'there are no yields'."}
     out = market_parse.curve_series(pts)
     L = out["latest"]
-    # ⚠️ 三态，不是两态：倒挂 / 未倒挂 / **算不出来**（某个期限当天缺值）。
-    #    压成两态就会在缺值时输出"三条口径均为正"——那是把「不知道」说成了事实。
+    # ⚠️ Three states, not two: inverted / not inverted / **not computable** (a tenor missing that day).
+    #    Flattened to two, a missing value outputs "all three spreads are positive" — stating an unknown as a fact.
     inv = [k for k, v in L["inverted"].items() if v is True]
     pos = [k for k, v in L["inverted"].items() if v is False]
     unk = [k for k, v in L["inverted"].items() if v is None]
     parts = []
     if inv:
-        parts.append("、".join(f"{k}={_n(L['spreads'][k], '+.2f')}%" for k in inv) + " 为负")
+        parts.append(", ".join(f"{k}={_n(L['spreads'][k], '+.2f')}%" for k in inv) + " negative")
     if pos and not inv:
-        parts.append(f"{len(pos)} 条口径为正")
+        parts.append(f"{len(pos)} spreads positive")
     elif pos:
-        parts.append(f"其余 {len(pos)} 条为正")
+        parts.append(f"the other {len(pos)} positive")
     if unk:
-        parts.append(f"{'、'.join(unk)} **当日缺期限数据、算不出**")
-    inv_txt = "；".join(parts) if parts else "无可用口径"
+        parts.append(f"{', '.join(unk)} **missing a tenor that day, so not computable**")
+    inv_txt = "; ".join(parts) if parts else "no spread available"
     return {
         **out, "failed": failed, "missing_years": missing,
         "summary": (
-            f"截至 {L['date']}：10Y {L['yields'].get('10Y')}%、"
-            f"2Y {L['yields'].get('2Y')}%、3M {L['yields'].get('3M')}%。"
-            f"利差 10Y-2Y {_n(L['spreads']['10Y-2Y'], '+.2f')}%、"
-            f"10Y-3M {_n(L['spreads']['10Y-3M'], '+.2f')}%（{inv_txt}）。"
-            + (f"⚠️ Treasury 没有 {'、'.join(map(str, missing))} 年的数据"
-               f"（与取数失败不同）。" if missing else "")
-            + (f"⚠️ {'、'.join(map(str, failed))} 年**取数失败**，"
-               f"下面用的是本地已有数据、可能不是最新：{failed}。" if failed else "")
-            + "⚠️ 「倒挂」的两条口径时点可差数月，说结论必须讲清用的哪条。"
-              "以上为美国财政部公开数据的呈现，不构成投资建议。"),
+            f"As of {L['date']}: 10Y {L['yields'].get('10Y')}%, "
+            f"2Y {L['yields'].get('2Y')}%, 3M {L['yields'].get('3M')}%. "
+            f"Spreads: 10Y-2Y {_n(L['spreads']['10Y-2Y'], '+.2f')}%, "
+            f"10Y-3M {_n(L['spreads']['10Y-3M'], '+.2f')}% ({inv_txt}). "
+            + (f"⚠️ Treasury has no data for {', '.join(map(str, missing))} "
+               f"(which is different from a failed fetch). " if missing else "")
+            + (f"⚠️ {', '.join(map(str, failed))} **failed to fetch**, "
+               f"so what follows uses local data that may not be current: {failed}. " if failed else "")
+            + "⚠️ The two definitions of inversion can invert months apart, so any conclusion has to say which one it used. "
+              "The above presents public US Treasury data and is not investment advice."),
     }
 
 
 def _tool_get_cot(market: str | None = None, periods: int = 12) -> dict:
-    """CFTC 持仓。
+    """CFTC positioning.
 
-    ⚠️ **先把合约定死，再取时间序列。** 直接拿关键词去 like 查有两个坑：
-    ① 一个关键词能命中多个合约（"E-MINI S&P 500" 同时命中 E-MINI 与 MICRO E-MINI），
-       而按日期倒序取 N 行，同一天里哪个合约排前面是**任意的** ——
-       问 E-MINI 却答 MICRO 的数字，比报错还糟。
-    ② limit 是**总行数**，多合约命中时 N 行会散在几个合约上，
-       根本凑不出一条时间序列。
+    ⚠️ **Pin the contract down first, then take the time series.** Going straight to a keyword LIKE has two traps:
+    ① one keyword can match several contracts ("E-MINI S&P 500" matches both E-MINI and MICRO E-MINI),
+       and taking N rows by descending date leaves which contract comes first on a given day **arbitrary** —
+       answering a question about E-MINI with MICRO's numbers is worse than an error.
+    ② limit is a **total row count**, so with several contracts matched, N rows scatter across them
+       and never assemble into a time series.
     """
     periods = max(1, min(periods, 200))
     ms = macro_src.cot_markets()
@@ -1038,9 +1038,9 @@ def _tool_get_cot(market: str | None = None, periods: int = 12) -> dict:
     if not market:
         return {"markets": [m["market"] for m in live], "count": len(live),
                 "latest_report": latest, "notes": market_parse.NOTES,
-                "summary": (f"TFF 当前在报 {len(live)} 个合约（共收录 {len(ms)} 个，"
-                            f"其余已停更）。最新一期 {latest}。"
-                            f"传 market 参数取具体合约的持仓。")}
+                "summary": (f"TFF currently reports {len(live)} contracts (out of {len(ms)} recorded; "
+                            f"the rest have stopped updating). The newest report is {latest}. "
+                            f"Pass the market parameter for a specific contract's positioning.")}
 
     key = market.strip().upper()
     matches = [m for m in ms if key in m["market"].upper()]
@@ -1050,19 +1050,19 @@ def _tool_get_cot(market: str | None = None, periods: int = 12) -> dict:
     elif len(matches) == 1:
         chosen = matches[0]
     elif matches:
-        # 命中多个 → **不替调用方挑**，把候选连同各自最后一期给回去
+        # Several matches → **do not choose for the caller**; hand back the candidates with each one's last report
         return {"candidates": [{"market": m["market"], "last_date": m["last_date"],
                                 "reports": m["reports"]} for m in matches[:25]],
                 "count": 0, "rows": [], "notes": market_parse.NOTES,
                 "summary": (
-                    f"「{market}」命中 {len(matches)} 个合约，"
-                    f"**没有替你挑**（它们是不同合约，数字不能混着看）："
-                    + "、".join(m["market"] for m in matches[:6])
+                    f"'{market}' matches {len(matches)} contracts, "
+                    f"and **none was chosen for you** (they are different contracts and their numbers do not mix): "
+                    + ", ".join(m["market"] for m in matches[:6])
                     + ("…" if len(matches) > 6 else "")
-                    + "。用完整合约名再调一次。")}
+                    + ". Call again with the full contract name.")}
     else:
         return {"rows": [], "count": 0, "candidates": [],
-                "summary": f"没有匹配「{market}」的合约。不传 market 可取全部清单。"}
+                "summary": f"No contract matches '{market}'. Omit market to get the full list."}
 
     name = chosen["market"]
     stale = chosen["last_date"] != latest
@@ -1071,23 +1071,23 @@ def _tool_get_cot(market: str | None = None, periods: int = 12) -> dict:
             for c in (market_parse.parse_cot(r) for r in raw) if c]
     if not rows:
         return {"rows": [], "count": 0, "market": name,
-                "summary": f"{name} 没有记录。"}
+                "summary": f"{name} has no records."}
     r0 = rows[0]
-    # ⚠️ 停更合约要说清 —— 否则用户会把 2022 年的数字当成当下的持仓
-    stale_txt = (f"⚠️ 该合约**已停更**，最后一期是 {chosen['last_date']}"
-                 f"（全库最新一期为 {latest}）。" if stale else "")
+    # ⚠️ A contract that has stopped updating has to be flagged — or the user takes a 2022 figure for a current position
+    stale_txt = (f"⚠️ This contract **has stopped updating**; its last report is {chosen['last_date']} "
+                 f"(the newest in the whole dataset being {latest}). " if stale else "")
     return {
         "rows": rows, "count": len(rows), "market": name,
         "last_date": chosen["last_date"], "stale": stale,
         "notes": market_parse.NOTES,
         "summary": (
-            f"{stale_txt}{name} 于 {r0['report_date']}（周二收盘）："
-            f"杠杆基金净 {_n(r0['lev_net'])} 手"
-            f"（多 {_n(r0['lev_long'])} / 空 {_n(r0['lev_short'])}）、"
-            f"资产管理净 {_n(r0['asset_net'])} 手、"
-            f"总持仓 {_n(r0['open_interest'])} 手。"
-            f"⚠️ CFTC 有**三天时滞**：这是周二的状态、周五才发布，不是当下。"
-            f"以上为 CFTC 公开数据的呈现，不构成投资建议。"),
+            f"{stale_txt}{name} as of {r0['report_date']} (Tuesday's close): "
+            f"leveraged funds net {_n(r0['lev_net'])} contracts "
+            f"({_n(r0['lev_long'])} long / {_n(r0['lev_short'])} short), "
+            f"asset managers net {_n(r0['asset_net'])} contracts, "
+            f"and total open interest {_n(r0['open_interest'])} contracts. "
+            f"⚠️ CFTC runs **three days behind**: this is Tuesday's state, published on Friday, and not the present. "
+            f"The above presents public CFTC data and is not investment advice."),
     }
 
 
@@ -1113,16 +1113,16 @@ _IMPL: dict[str, Callable[..., dict]] = {
 
 
 def exec_tool(name: str, args: dict[str, Any]) -> dict:
-    """统一执行入口。异常转成 {"error": ...} 而不是抛出 ——
-    MCP/function-calling 的调用方需要拿到结构化错误，而不是断连。"""
+    """The single execution entry point. Exceptions become {"error": ...} rather than being raised —
+    an MCP or function-calling caller needs a structured error, not a dropped connection."""
     fn = _IMPL.get(name)
     if fn is None:
-        return {"error": f"未知工具：{name}"}
+        return {"error": f"Unknown tool: {name}"}
     try:
         return fn(**args)
     except cboe.DataNotAvailable as e:
-        return {"error": f"无数据：{e}"}
+        return {"error": f"No data: {e}"}
     except (ValueError, TypeError) as e:
-        return {"error": f"参数错误：{e}"}
+        return {"error": f"Bad parameter: {e}"}
     except RuntimeError as e:
-        return {"error": f"取数失败：{e}"}
+        return {"error": f"Fetch failed: {e}"}
