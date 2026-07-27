@@ -7,7 +7,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 Build notes for each section — sources probed, traps measured, defects found and
 fixed — are kept in the module docstrings, beside the code they explain.
 
-## [0.1.0] — 2026-07-26
+## [0.1.0] — 2026-07-27
 
 First complete version. Ten sections, seventeen MCP tools, ten public data sources.
 
@@ -74,3 +74,11 @@ allowing a write, so a regression in `db.py` cannot silently corrupt accrued his
 - Senate eFD reached via TLS-fingerprint impersonation; plain `requests` is refused by
   Akamai regardless of headers.
 - Every section passed repeated adversarial review to convergence.
+- The English itself was reviewed in two independent passes: once against the source it
+  was translated from, to catch dropped sentences and altered numbers, and once by
+  readers given only the English, to catch what reads translated. The second pass found
+  a different class of defect from the first, including two sentences that did not
+  parse — one of them in a banner shown whenever a scan fails.
+- `plan` accepts the same three values through MCP as through REST. The tool schema had
+  offered two while the store implemented three, so an agent could not reach a state the
+  HTTP API exposed.
