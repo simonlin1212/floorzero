@@ -300,7 +300,7 @@ def aggregate(top: int = 20, **filters) -> dict:
 
 
 def stats() -> dict:
-    """Storage overview — **how small the open-market share is has to be in plain sight**."""
+    """Storage overview — **the open-market share has to be in plain sight**."""
     _init()
     with db.connect() as conn:
         t = conn.execute(

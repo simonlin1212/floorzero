@@ -113,7 +113,7 @@ export default function StockPage() {
       {/* ⭐ The easiest thing to misread here */}
       <div className="mb-5 rounded-2xl border border-brand/30 bg-brand/5 p-4 text-xs leading-relaxed text-dim">
         <div className="mb-1.5 font-mono text-[10px] uppercase tracking-widest text-brand">
-          How much the word "overview" is worth, said first
+          How much of the word "overview" is padding
         </div>
         <p className="mb-1.5">
           <Emph>{data?.notes.timeline}</Emph>

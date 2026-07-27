@@ -426,7 +426,7 @@ export default function Darkpool() {
                     <span className="text-dim">
                       {" "}
                       and were <b className="text-ink">excluded</b> rather than counted as 0 — so the totals are correspondingly small,
-                      and no share is given.
+                      and the off-exchange share is withheld.
                     </span>
                   </div>
                 )}

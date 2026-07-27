@@ -266,7 +266,7 @@ export default function Flow() {
         textStyle: { color: "#f2efe9", fontSize: 11 },
         formatter: (ps: { axisValue: string; seriesName: string; data: number }[]) =>
           `<b>${esc(ps[0]?.axisValue)}</b><br/>` +
-          ps.map((p) => `${esc(p.seriesName)}: ${p.data.toLocaleString()}`).join("<br/>"),
+          ps.map((p) => `${esc(p.seriesName)}: ${p.data.toLocaleString()} contracts`).join("<br/>"),
       },
       xAxis: {
         type: "category",
@@ -317,7 +317,7 @@ export default function Flow() {
           ps
             .map(
               (p) =>
-                `${esc(p.seriesName)}: ${Math.abs(p.data).toLocaleString()}`,
+                `${esc(p.seriesName)}: ${Math.abs(p.data).toLocaleString()} contracts`,
             )
             .join("<br/>"),
       },
@@ -679,7 +679,7 @@ export default function Flow() {
                 {flow.by_strike.dropped_contracts > 0 && (
                   <span className="text-dim">
                     ; the {flow.by_strike.dropped_contracts} contracts outside the window
-                    ({num(flow.by_strike.dropped_volume)} contracts of volume) are not drawn,
+                    ({num(flow.by_strike.dropped_volume)} contracts) are not drawn,
                     <b className="text-ink"> so its total does not match the chart above</b>
                   </span>
                 )}

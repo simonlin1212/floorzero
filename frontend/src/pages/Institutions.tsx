@@ -106,7 +106,7 @@ function isoPeriod(raw: string): string {
 const KINDS = [
   { v: "share", label: "Shares", hint: "Long positions in 13(f) securities" },
   { v: "call", label: "Calls", hint: "Listed under the underlying" },
-  { v: "put", label: "Puts", hint: "Bearish — folded into the holdings totals they count bearish as bullish" },
+  { v: "put", label: "Puts", hint: "Bearish — folded into the holdings totals, they count bearish as bullish" },
   { v: "all", label: "All", hint: "Includes puts, mixing bearish exposure in" },
 ];
 

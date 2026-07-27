@@ -103,7 +103,7 @@ def settled_doc_ids(chamber: str) -> set[str]:
 def save_filing(filing: Any, trades: list[dict],
                 unparsed_reason: Optional[str] = None,
                 terminal: bool = False) -> None:
-    """Write one filing and its trades (idempotent, and **a rerun replaces the filing entire**).
+    """Write one filing and its trades (idempotent, and **a rerun replaces the entire filing**).
 
     ⚠️ Trades must be deleted and reinserted rather than `INSERT OR IGNORE`:
     when a filing is reparsed (the parser improved, or upstream issued an amendment),
@@ -123,7 +123,7 @@ def save_filing(filing: Any, trades: list[dict],
             (filing.doc_id, filing.chamber, filing.name, filing.state_district,
              fd, filing.year, filing.detail_url, len(trades), unparsed_reason,
              int(terminal), now))
-        # Replace entire: clear the old rows first (a unique index blocks duplicates, not leftover rows)
+        # Full replacement: clear the old rows first (a unique index blocks duplicates, not leftover rows)
         conn.execute("DELETE FROM congress_trade WHERE chamber = ? AND doc_id = ?",
                      (filing.chamber, filing.doc_id))
         for i, t in enumerate(trades):

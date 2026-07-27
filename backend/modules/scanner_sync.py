@@ -181,7 +181,7 @@ def _run(symbols: Optional[list[str]]) -> None:
 
 
 def start(symbols: Optional[list[str]] = None) -> dict:
-    """Start a scan (already running, it returns the current state unchanged rather than queueing a second)."""
+    """Start a scan (if one is already running, it returns the current state unchanged rather than queueing a second)."""
     with STATE.lock:
         if STATE.running:
             return {**STATE._snapshot_locked(), "started": False,

@@ -13,11 +13,11 @@ const NAV = [
   // ⚠️ Congressional disclosures are government public record, but 5 U.S.C. §13107(c) forbids commercial use —
   //    a different tier from EDGAR's "commercial use allowed", and the tags must keep them apart
   { to: "/congress", label: "Congress", tag: "no commercial use" },
-  { to: "/insiders", label: "Insiders", tag: "tier S · reusable" },
-  { to: "/institutions", label: "Institutions", tag: "tier S · reusable" },
+  { to: "/insiders", label: "Insiders", tag: "tier S · commercial" },
+  { to: "/institutions", label: "Institutions", tag: "tier S · commercial" },
   // FTD is tier S; the FINRA lane is off by default, and the tag reflects only the default state
   { to: "/shorts", label: "Short data", tag: "tier S · FTD" },
-  { to: "/market", label: "Macro", tag: "tier S · reusable" },
+  { to: "/market", label: "Macro", tag: "tier S · commercial" },
 ];
 
 /**
