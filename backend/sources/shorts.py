@@ -67,7 +67,8 @@ FINRA_TERMS = {
                   "API Terms of Service (developer.finra.org) requiring registration."),
     "our_stance": ("This project does not interpret those terms for you. The FINRA source is "
                    "**off by default**; set FZ_ENABLE_FINRA=1 and judge for yourself whether "
-                   "commercial use unrestricted); it works fine with FINRA off."),
+                   "your use complies. This section's primary source is SEC fails-to-deliver "
+                   "(tier S, commercial use unrestricted), so it works fine with FINRA off."),
 }
 
 
