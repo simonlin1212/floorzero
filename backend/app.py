@@ -1,18 +1,18 @@
-"""FloorZero 后端 API。
+"""The FloorZero backend API.
 
-⚠️ 合规：本服务**只应跑在用户自己的机器上**（localhost）。
-FloorZero 分发的是代码，不是数据 —— 用户自部署运行 = personal use。
-⛔ 绝不可把本服务部署成对公网提供期权数据的站点（= OPRA redistributor，$1,500/月）。
-默认只监听 127.0.0.1，就是这个原因。
+⚠️ Compliance: this service **should only ever run on the user's own machine** (localhost).
+FloorZero distributes code, not data — a user running it themselves is personal use.
+⛔ It must never be deployed as a site serving options data to the public internet (= an OPRA redistributor, $1,500/month).
+Binding to 127.0.0.1 by default is exactly why.
 
-启动：
+Start it with:
     cd backend && python -m uvicorn app:app --host 127.0.0.1 --port 8920
 """
 from __future__ import annotations
 
-# ⚠️ 紧跟在 `__future__` 之后 —— 它必须是文件里的第一条语句，
-#    而版本闸要在其余 import 之前跑，好在版本不够时给一句人话，
-#    而不是让用户撞进某个模块深处的 SyntaxError 去猜哪里不对。
+# ⚠️ Immediately after `__future__` — which has to be the first statement in the file —
+#    while the version gate has to run before the rest of the imports, so that too old a version
+#    gets a sentence in plain words rather than dropping the user into a SyntaxError deep inside some module to puzzle over.
 import pyversion  # noqa: F401
 
 from typing import Optional
@@ -44,11 +44,11 @@ from modules import stock as stock_parse
 
 app = FastAPI(
     title="FloorZero API",
-    description="开源版 Unusual Whales · 自部署 · 数据留在你自己机器上",
+    description="An open-source Unusual Whales · self-hosted · your data stays on your own machine",
     version="0.1.0",
 )
 
-# 前端 dev server；生产是同源，不需要放开
+# The frontend dev server; in production it is same-origin and needs no allowance
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5895", "http://127.0.0.1:5895"],
@@ -64,13 +64,13 @@ def health() -> dict:
 @app.get("/api/gex/{ticker}")
 def get_gex(
     ticker: str,
-    expiry: Optional[str] = Query(None, description="指定到期日 YYYY-MM-DD，或 '0DTE'"),
-    dte_max: Optional[int] = Query(None, ge=0, le=365, description="只看 N 天内到期"),
-    strike_pct: float = Query(0.05, gt=0, le=0.5, description="行权价范围 ±比例"),
+    expiry: Optional[str] = Query(None, description="A specific expiry, YYYY-MM-DD, or '0DTE'"),
+    dte_max: Optional[int] = Query(None, ge=0, le=365, description="Only expiries within N days"),
+    strike_pct: float = Query(0.05, gt=0, le=0.5, description="Strike range, ± this fraction"),
 ) -> dict:
-    """单只标的的 GEX 画像。
+    """One symbol's GEX profile.
 
-    不传 expiry / dte_max = 全链（远期合约会稀释信号，通常传 dte_max 更有意义）。
+    Neither expiry nor dte_max = the whole chain (far-dated contracts dilute the signal, so dte_max is usually more useful).
     """
     try:
         chain = cboe.cached_option_chain(ticker)
@@ -78,9 +78,9 @@ def get_gex(
                                  strike_pct=strike_pct)
     except cboe.DataNotAvailable as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
-    except ValueError as e:                              # 参数问题（含跨市场代码）
+    except ValueError as e:                              # a parameter problem (including cross-market symbols)
         raise HTTPException(status_code=400, detail=str(e)) from e
-    except RuntimeError as e:                            # 网络/限流 —— 必须冒泡，不吞
+    except RuntimeError as e:                            # network / rate limit — must propagate, never swallowed
         raise HTTPException(status_code=502, detail=str(e)) from e
 
     out = greeks.to_dict(profile)
@@ -93,29 +93,29 @@ def get_gex(
 def get_gex_curve(
     ticker: str,
     expiry: Optional[str] = Query(None,
-                                  description="指定到期日 YYYY-MM-DD 或 '0DTE' —— "
-                                              "须与 /api/gex 主端点一致"),
+                                  description="A specific expiry, YYYY-MM-DD, or '0DTE' — "
+                                              "must match the main /api/gex endpoint"),
     dte_max: Optional[int] = Query(None, ge=0, le=365,
-                                   description="不传=全链，与 /api/gex 主端点保持一致"),
-    span_pct: float = Query(0.06, gt=0, le=0.3, description="扫描股价范围 ±比例"),
+                                   description="Omitted = the whole chain, consistent with the main /api/gex endpoint"),
+    span_pct: float = Query(0.06, gt=0, le=0.3, description="Price range to sweep, ± this fraction"),
     strike_pct: float = Query(0.05, gt=0, le=0.5,
-                              description="行权价范围 ±比例 —— 必须与 /api/gex 主端点一致，"
-                                          "否则曲线零点与返回的 gamma_flip 来自不同合约集"),
+                              description="Strike range, ± this fraction — must match the main /api/gex endpoint, "
+                                          "or the curve's zero and the returned gamma_flip come from different contract sets"),
     points: int = Query(40, ge=10, le=200),
 ) -> dict:
-    """GEX 随股价变化的曲线 —— 用来直观看到 gamma flip 在哪。
+    """The GEX curve against share price — for seeing where the gamma flip is.
 
-    每个点都用 Black-Scholes 重算 gamma（不能复用当前 spot 下的 gamma）。
+    Every point recomputes gamma with Black-Scholes (the gamma at the current spot cannot be reused).
     """
     try:
         chain = cboe.cached_option_chain(ticker)
         cs = chain.filter(expiry=expiry, dte_max=dte_max)
-        # ⚠️ 用调用方给的 strike_pct，不能写死 ±15%：
-        # 主端点按 strike_pct 算 flip，这里若用不同范围，曲线会在别处穿零。
+        # ⚠️ Use the caller's strike_pct; never hardcode ±15%:
+        # the main endpoint computes the flip from strike_pct, and a different range here puts the curve's zero somewhere else.
         lo_k, hi_k = chain.spot * (1 - strike_pct), chain.spot * (1 + strike_pct)
         cs = [c for c in cs if lo_k <= c.strike <= hi_k]
         if not cs:
-            raise ValueError(f"{ticker} 无符合条件的合约")
+            raise ValueError(f"{ticker} has no contracts matching those conditions")
     except cboe.DataNotAvailable as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except ValueError as e:
@@ -133,7 +133,7 @@ def get_gex_curve(
         "ticker": chain.ticker,
         "spot": round(chain.spot, 2),
         "curve": curve,
-        "note": "每个点均用 Black-Scholes 重算 gamma；曲线穿越 0 处即 gamma flip",
+        "note": "Every point recomputes gamma with Black-Scholes; where the curve crosses 0 is the gamma flip",
     }
 
 @app.get("/api/exposures/{ticker}")
@@ -143,7 +143,7 @@ def get_exposures(
     dte_max: Optional[int] = Query(None, ge=0, le=365),
     strike_pct: float = Query(0.05, gt=0, le=0.5),
 ) -> dict:
-    """Vanna / Charm 曝险（CBOE 不给二阶希腊字母，由 Black-Scholes 自算）。"""
+    """Vanna / charm exposure (Cboe gives no second-order greeks, so Black-Scholes computes them here)."""
     try:
         chain = cboe.cached_option_chain(ticker)
         prof = greeks.compute_exposures(chain, expiry=expiry, dte_max=dte_max,
@@ -163,7 +163,7 @@ def get_gex_surface(
     dte_max: Optional[int] = Query(45, ge=0, le=365),
     strike_pct: float = Query(0.06, gt=0, le=0.5),
 ) -> dict:
-    """expiry × strike 二维 GEX 曲面（ECharts heatmap 直接可用）。"""
+    """A two-dimensional GEX surface over expiry × strike (ready for an ECharts heatmap)."""
     try:
         chain = cboe.cached_option_chain(ticker)
         return greeks.gex_surface(chain, dte_max=dte_max, strike_pct=strike_pct)
@@ -179,16 +179,16 @@ def get_gex_surface(
 def take_snapshot(
     ticker: str,
     expiry: Optional[str] = Query(None,
-                                  description="指定到期日 YYYY-MM-DD 或 '0DTE' —— "
-                                              "须与 /api/gex 主端点一致"),
+                                  description="A specific expiry, YYYY-MM-DD, or '0DTE' — "
+                                              "must match the main /api/gex endpoint"),
     dte_max: Optional[int] = Query(None, ge=0, le=365),
     strike_pct: float = Query(0.05, gt=0, le=0.5),
 ) -> dict:
-    """采集一次快照存进本地历史库（装上即开始积累）。
+    """Capture one snapshot into local history (accrual starts the day it is installed).
 
-    ⚠️ 过滤参数必须与 `/api/gex` 主端点**完全一致**：快照的 scope 就是入库主键
-    的一部分，参数对不上会把「页面上看到的口径」与「历史库里存的口径」写岔，
-    日后画出来的时间序列跟当时看的根本不是一回事。
+    ⚠️ The filter parameters must match the main `/api/gex` endpoint **exactly**: a snapshot's scope is part of
+    the storage key, so mismatched parameters file "the basis shown on the page" and "the basis stored in history"
+    apart, and the series plotted later is not the thing that was being looked at.
     """
     try:
         chain = cboe.cached_option_chain(ticker)
@@ -202,8 +202,8 @@ def take_snapshot(
         raise HTTPException(status_code=400, detail=str(e)) from e
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
-    # 用**数据自身的时间**当时点，不用墙上时钟：CBOE 延时行情隔一阵才更新一次，
-    # 按 now() 入库会把「同一份数据」记成多个观测点（详见 history.record_gex 文档）。
+    # Use **the data's own time** as the instant, not the wall clock: Cboe's delayed quotes update only every so often,
+    # and storing by now() records "one piece of data" as several observations (see history.record_gex).
     created = history.record_gex(prof, exp, captured_at=chain.timestamp)
     return {"ok": True, "created": created, "ticker": prof["ticker"],
             "scope": prof["meta"]["scope"],
@@ -214,21 +214,21 @@ def take_snapshot(
 @app.get("/api/history/{ticker}")
 def get_history(ticker: str,
                 scope: Optional[str] = Query(
-                    None, description="归档键（= /api/gex 返回的 meta.scope_key）。"
-                                      "该标的存在多个口径时必传"),
+                    None, description="The storage key (= meta.scope_key from /api/gex). "
+                                      "Required when the symbol has history under more than one basis"),
                 limit: int = Query(200, ge=1, le=2000)) -> dict:
-    """本地历史序列。
+    """The local historical series.
 
-    ⚠️ **不同口径的 GEX 不是一个量级**（≤7DTE vs 全链差一个数量级），
-    拌进同一个数组就是一条毫无意义的锯齿。所以这里不接受"省略 scope 就全给"：
-    - 库里只有一个口径 → 无歧义，直接给；
-    - 有多个口径却没指定 → **400 并列出可选值**，而不是返回一个会被误读的混合序列。
+    ⚠️ **GEX under different bases is not the same order of magnitude** (≤7DTE against the whole chain differ tenfold),
+    and stirred into one array it is a meaningless sawtooth. So "omit scope and get everything" is not accepted here:
+    - only one basis in the database → unambiguous, return it;
+    - several bases and none specified → **400, listing the choices**, rather than a blended series that will be misread.
     """
     scopes = history.scopes_for(ticker)
     if scope is None and len(scopes) > 1:
         raise HTTPException(
             status_code=400,
-            detail=f"{ticker.upper()} 有多个口径的历史，必须指定 scope（不同口径不可比）："
+            detail=f"{ticker.upper()} has history under several bases, so scope is required (bases are not comparable): "
                    + " | ".join(scopes))
     if scope is None and len(scopes) == 1:
         scope = scopes[0]
@@ -240,47 +240,47 @@ def get_history(ticker: str,
 
 @app.get("/api/history")
 def history_stats() -> dict:
-    """库存概览：让用户看到自己攒了多少。"""
+    """Storage overview: so the user can see how much they have accrued."""
     return history.stats()
 
 
-# ═══════════════════════ 国会议员交易（S 级数据源）═══════════════════════
-# ⚠️ 合规：两院披露是美国政府公开记录（公众可自由获取），
-#    但 **5 U.S.C. §13107(c)(1)(B) 明文禁止任何商业用途**
-#    （新闻媒体面向公众传播除外），罚款上限 $10,000，两院均适用。
-#    → 免费开源 + 用户自部署做个人研究 ✅；收费产品不得包含这条线 ❌。
-#    与 SEC EDGAR **不同级别**（后者不限商用），详见 sources/congress.py。
-#    不像 CBOE 期权数据受 OPRA 约束 —— 对外演示优先用它。
+# ═══════════════════════ Congressional trades (tier S source) ═══════════════════════
+# ⚠️ Compliance: both chambers' disclosures are US government public record (freely obtainable),
+#    but **5 U.S.C. §13107(c)(1)(B) forbids any commercial purpose in statute**
+#    (news media disseminating to the public excepted), with a maximum fine of $10,000, in both chambers.
+#    → Free, open-source and self-hosted for personal research ✅; no paid product may include this lane ❌.
+#    A **different tier** from SEC EDGAR (which does not restrict commercial use); see sources/congress.py.
+#    Unlike Cboe options data it is not bound by OPRA — so prefer it for anything shown externally.
 
 @app.get("/api/congress/trades")
 def congress_trades(
     chamber: Optional[str] = Query(None, pattern="^(house|senate)$"),
     ticker: Optional[str] = Query(None),
     member: Optional[str] = Query(None),
-    since: Optional[str] = Query(None, description="交易日下限 YYYY-MM-DD"),
+    since: Optional[str] = Query(None, description="Earliest trade date, YYYY-MM-DD"),
     tx_type: Optional[str] = Query(None, pattern="^(buy|sell)$"),
     limit: int = Query(300, ge=1, le=2000),
 ) -> dict:
-    """已缓存的议员交易明细（按交易日倒序）。
+    """Cached congressional trade detail (most recent trade date first).
 
-    ⚠️ 读的是**本地缓存**，不是实时抓 —— 众议院单年 313 份 PDF，
-    现抓要 100+ 秒。先调 `/api/congress/sync` 灌数据。
+    ⚠️ This reads the **local cache** and does not fetch live — the House files 313 PDFs in a year,
+    and fetching them takes 100+ seconds. Call `/api/congress/sync` first to fill it.
     """
     rows = congress_store.query_trades(chamber=chamber, ticker=ticker, member=member,
                                        since=since, tx_type=tx_type, limit=limit)
-    # ⚠️ 必须与 /summary 走**同一条派生路径**（_row_to_trade → to_dict）。
-    # 直接返回 DB 原始行会缺 date_anomaly 等派生字段 ——
-    # 结果就是汇总卡说"2 笔日期存疑"、明细表却照常显示 -320 天。
-    # 「同一份数据的两个视图必须同一套加工」，这条在本项目已经踩第三次了。
+    # ⚠️ Must go through **the same derivation path** as /summary (_row_to_trade → to_dict).
+    # Returning raw DB rows loses derived fields such as date_anomaly —
+    # so the summary card says "2 dates look wrong" while the detail table cheerfully shows -320 days.
+    # "Two views of one dataset must share one derivation" — the third time this project has hit it.
     out = [congress_parse.to_dict(_row_to_trade(r)) for r in rows]
     st = congress_store.stats()
     return {
         "trades": out, "count": len(out), "stats": st,
         "disclaimer": {
-            "amount": "金额是**区间**不是精确值 —— STOCK Act 只要求按档披露"
-                      "（如 $1,001-$15,000）。任何金额汇总都是区间中值的估算。",
-            "delay": "「延迟天数」= 归档日 − 交易日，是事实统计，**不是违规认定**："
-                     "法定期限为「知悉后 30 天内、且不晚于交易后 45 天」，周末/假日顺延。",
+            "amount": "Amounts are **ranges**, not exact figures — the STOCK Act only requires banded "
+                      "disclosure (such as $1,001-$15,000). Any total is an estimate from range midpoints.",
+            "delay": "Delay in days = filing date − trade date, a statement of fact and **not a finding of violation**: "
+                     "the statutory deadline is 30 days after becoming aware and no later than 45 days after the trade, rolling over weekends and holidays.",
             "coverage": st["note"],
         },
     }
@@ -288,34 +288,34 @@ def congress_trades(
 
 @app.get("/api/congress/summary")
 def congress_summary(
-    since: Optional[str] = Query(None, description="交易日下限 YYYY-MM-DD"),
+    since: Optional[str] = Query(None, description="Earliest trade date, YYYY-MM-DD"),
     chamber: Optional[str] = Query(None, pattern="^(house|senate)$"),
     ticker: Optional[str] = Query(None),
     member: Optional[str] = Query(None),
     tx_type: Optional[str] = Query(None, pattern="^(buy|sell)$"),
     limit: int = Query(2000, ge=1, le=20000),
 ) -> dict:
-    """按标的 / 议员聚合。
+    """Aggregate by ticker and by member.
 
-    ⚠️ 筛选参数必须与 `/api/congress/trades` **完全一致**：
-    少接一个 ticker/tx_type，就会出现"明细表只剩 NVDA、上方统计卡和图表却还是全市场"——
-    同一屏里两个视图互相打架。这类「同数据两视图口径不一」在本项目已犯四次。
+    ⚠️ The filter parameters must match `/api/congress/trades` **exactly**:
+    miss one ticker or tx_type and you get "the detail table shows only NVDA while the cards and charts above are still market-wide" —
+    two views on one screen contradicting each other. This class of drift between two views of one dataset has happened four times here.
     """
     rows = congress_store.query_trades(chamber=chamber, since=since, ticker=ticker,
                                        member=member, tx_type=tx_type, limit=limit)
     trades = [_row_to_trade(r) for r in rows]
     out = congress_parse.summarize(trades)
     out["stats"] = congress_store.stats()
-    out["scope"] = {"chamber": chamber or "两院", "since": since, "ticker": ticker,
+    out["scope"] = {"chamber": chamber or "both chambers", "since": since, "ticker": ticker,
                     "member": member, "tx_type": tx_type, "sampled": len(rows),
                     "limit": limit,
-                    # 命中上限时要说出来，不能让用户以为看的是全量
+                    # Say so when the limit was hit; do not let the user think they are seeing everything
                     "truncated": len(rows) >= limit}
     return out
 
 
 def _row_to_trade(r: dict) -> congress_parse.Trade:
-    """DB 行 → Trade（聚合函数复用同一套逻辑，避免两处口径漂移）。"""
+    """DB row → Trade (the aggregate functions reuse this same logic, so the two cannot drift)."""
     from datetime import date as _d
 
     def d(v):
@@ -335,47 +335,47 @@ def _row_to_trade(r: dict) -> congress_parse.Trade:
 
 @app.get("/api/congress/unparsed")
 def congress_unparsed(limit: int = Query(100, ge=1, le=500)) -> dict:
-    """读不了的申报清单（大多是纸质扫描件）。
+    """The list of filings that could not be read (mostly paper scans).
 
-    ⭐ 单独开一个端点，是为了**让"读不了"这件事可见**：
-    10% 的众议院 PTR 是整份扫描图片，藏起来会让用户以为看到的就是全部。
+    ⭐ It gets its own endpoint to **make unreadability visible**:
+    10% of House PTRs are whole scanned images, and hiding that leaves the user believing they see everything.
     """
     rows = congress_store.unparsed_filings(limit)
     return {"filings": rows, "count": len(rows),
-            "note": "这些申报确实存在但明细无法自动解析，点 source_url 可看原件。"}
+            "note": "These filings do exist; their detail simply cannot be parsed automatically. Follow source_url to read the original."}
 
 
 @app.post("/api/congress/sync")
 def congress_sync_start(
-    year: Optional[int] = Query(None, ge=2012, le=2100, description="起始年份，默认当年"),
+    year: Optional[int] = Query(None, ge=2012, le=2100, description="Starting year; defaults to the current one"),
     years_back: int = Query(0, ge=0, le=10,
-                            description="往前多回补几年（0=只当年）。众议院归档按年分卷，"
-                                        "每多一年多几百份 PDF"),
+                            description="How many further years back to fill (0 = this year only). The House archive is "
+                                        "split by year, and each extra year is several hundred more PDFs"),
     limit: Optional[int] = Query(None, ge=1, le=5000,
-                                 description="本次最多同步几份（两院共享此额度）"),
+                                 description="Maximum filings this run (a quota shared by both chambers)"),
     chamber: Optional[str] = Query(None, pattern="^(house|senate)$"),
 ) -> dict:
-    """启动增量同步（后台线程，进度查 GET /api/congress/sync）。"""
+    """Start an incremental sync (a background thread; poll GET /api/congress/sync for progress)."""
     ch = (chamber,) if chamber else ("house", "senate")
     return congress_sync.start(year=year, years_back=years_back, limit=limit, chambers=ch)
 
 
 @app.get("/api/congress/sync")
 def congress_sync_status() -> dict:
-    """同步进度。"""
+    """Sync progress."""
     return {**congress_sync.STATE.snapshot(), "stats": congress_store.stats()}
 
 
-# ═══════════════════════ 内部人交易 Form 4（S 级数据源）═══════════════════════
-# ⭐ SEC EDGAR：官方条款只限速率（10 请求/秒）+ 要求声明 UA，
-#    明写 "Anyone can access and download this information for free" ——
-#    **不限商用**。这与国会披露（禁商用）不是一个级别，别混用。
-# ⚠️ 本分栏的核心是**分类**：Form 4 里公开市场主动买卖只占约 1/4，
-#    其余是授予/行权/代扣税等薪酬类。默认只看公开市场，否则信号会被淹没。
+# ═══════════════════════ Insider trades, Form 4 (tier S source) ═══════════════════════
+# ⭐ SEC EDGAR: the official terms limit the rate (10 requests/second) and require a declared UA,
+#    stating plainly "Anyone can access and download this information for free" —
+#    **no restriction on commercial use**. A different tier from the congressional lane (which forbids it); do not conflate them.
+# ⚠️ This section is about **classification**: active open-market trading is only about a quarter of Form 4,
+#    the rest being grants, exercises, tax withholding and the like. The default shows open market only, or the signal drowns.
 
 def _ins_row_to_trade(r: dict) -> insider_parse.InsiderTrade:
-    """DB 行 → InsiderTrade。**明细与汇总共用这一条派生路径**，
-    避免两个视图字段/口径不一致（本项目已在这上面栽过五次）。"""
+    """DB row → InsiderTrade. **Detail and summary share this one derivation path**,
+    so the two views cannot disagree on fields or definitions (this project has come unstuck on that five times)."""
     from datetime import date as _d
 
     def d(v):
@@ -403,22 +403,22 @@ def insider_trades(
     owner: Optional[str] = Query(None),
     group: Optional[str] = Query("open_market",
                                  pattern="^(open_market|compensation|other|all)$",
-                                 description="默认只看公开市场买卖（P/S）；"
-                                             "all=不过滤（薪酬类占七成，会淹没信号）"),
+                                 description="Defaults to open-market trades only (P/S); "
+                                             "all = no filter (compensation is seven tenths of it and drowns the signal)"),
     direction: Optional[str] = Query(None, pattern="^(buy|sell)$"),
-    since: Optional[str] = Query(None, description="交易日下限 YYYY-MM-DD"),
-    min_value: Optional[float] = Query(None, ge=0, description="成交金额下限（美元）"),
+    since: Optional[str] = Query(None, description="Earliest trade date, YYYY-MM-DD"),
+    min_value: Optional[float] = Query(None, ge=0, description="Minimum trade value (dollars)"),
     role: Optional[str] = Query(None, pattern="^(officer|director|ten_pct)$"),
     plan: Optional[str] = Query(None, pattern="^(yes|no|unknown)$",
-                                description="10b5-1 预设计划：yes=是 / no=明确否 / "
-                                            "unknown=申报未标注（2023 年前无此字段）"),
+                                description="10b5-1 plan: yes / no = explicitly not / "
+                                            "unknown = the filing did not mark it (no such field before 2023)"),
     include_amendments: bool = Query(False,
-                                     description="是否包含修订件 4/A。默认否 —— "
-                                                 "修订通常重述原申报的交易，"
-                                                 "与原件同时统计会重复计数"),
+                                     description="Whether to include 4/A amendments. Default no — "
+                                                 "an amendment usually restates the original's transactions, "
+                                                 "so counting both double-counts"),
     limit: int = Query(300, ge=1, le=2000),
 ) -> dict:
-    """内部人交易明细（本地缓存，按交易日倒序）。"""
+    """Insider trade detail (from the local cache, most recent trade date first)."""
     rows = insider_store.query(
         ticker=ticker, owner=owner, group=None if group == "all" else group,
         direction=direction, since=since, min_value=min_value, role=role,
@@ -427,15 +427,15 @@ def insider_trades(
     return {
         "trades": out, "count": len(out), "stats": insider_store.stats(),
         "disclaimer": {
-            "forms": "本页只含 Form 4（及可选的 4/A 修订件）。同一个 SEC 数据集里还有 "
-                     "Form 3（初始持股声明，不是交易）与 Form 5（年度补报，"
-                     "延迟中位 274 天、三成超一年）—— 都已排除，"
-                     "否则会把「内部人申报延迟」整体拉高。",
-            "classification": "Form 4 里**公开市场主动买卖只占约 1/4**，"
-                              "其余是授予/行权/代扣税等薪酬类。"
-                              "按 SEC 的「取得/处置」标志笼统统计，会把内部人买入夸大数倍。",
-            "plan": "10b5-1 为预先制定的交易计划，卖出往往是几个月前排好的。",
-            "disclaimer": "只呈现已公开申报的事实，不构成任何投资建议。",
+            "forms": "This page holds Form 4 only (plus 4/A amendments if asked for). The same SEC dataset also "
+                     "carries Form 3 (an initial statement of holdings, not a transaction) and Form 5 (the annual "
+                     "catch-up filing, median delay 274 days with three in ten over a year) — both excluded, "
+                     "or they would inflate insider filing delay across the board.",
+            "classification": "**Active open-market trading is only about a quarter of Form 4**, "
+                              "the rest being grants, exercises, tax withholding and the like. "
+                              "Counting bluntly by the SEC's acquired/disposed flag overstates insider buying several times over.",
+            "plan": "A 10b5-1 is a pre-arranged trading plan, and a sale under one was often scheduled months earlier.",
+            "disclaimer": "This presents facts already publicly filed and is not investment advice.",
         },
     }
 
@@ -454,13 +454,13 @@ def insider_summary(
     include_amendments: bool = Query(False),
     top: int = Query(20, ge=1, le=100),
 ) -> dict:
-    """按标的 / 内部人聚合，含集群买入榜。
+    """Aggregate by ticker and by insider, with a cluster-buying table.
 
-    ⚠️ 聚合在 **SQL 里对全部命中行**做，不是"取最新 N 行再算" ——
-    后者在命中超过 N 行时会把「最新 N 行的统计」标成「整个时间段的统计」，
-    加个"已截断"提示也救不了数字本身。
+    ⚠️ The aggregation runs **in SQL over every matching row**, not "take the newest N and compute" —
+    the latter labels "statistics over the newest N rows" as "statistics over the whole period" whenever more than N match,
+    and adding a "truncated" hint does not rescue the numbers themselves.
 
-    ⚠️ 筛选参数与 `/api/insider/trades` **必须完全一致**（共用 store._where）。
+    ⚠️ The filter parameters **must match** `/api/insider/trades` exactly (they share store._where).
     """
     import statistics as _st
 
@@ -487,14 +487,14 @@ def insider_summary(
         "cluster_buys": agg["cluster_buys"],
         "by_owner": agg["by_owner"],
         "plan_sells": c["plan_sells"] or 0,
-        # 剔出金额统计 ≠ 隐藏其存在：数量照报，UI 会提示"N 笔已标注为价格存疑"
+        # Dropped from the value totals ≠ hidden: the count is still reported, and the UI says "N flagged with a doubtful price"
         "implausible_price": agg["implausible"],
         "date_anomaly_count": agg["anomalies"],
         "delay": {
             "median_days": round(_st.median(delays), 1) if delays else None,
             "over_2d": sum(1 for d in delays if d > 2),
-            "note": "Section 16(a) 要求交易后两个工作日内申报。此处按自然日计算、"
-                    "未扣周末与节假日，是事实统计而非违规认定。",
+            "note": "Section 16(a) requires filing within two business days of the trade. Counted here in calendar "
+                    "days without deducting weekends and holidays: a statement of fact, not a finding of violation.",
         },
         "notes": insider_parse.summary_notes(lib),
         "stats": lib,
@@ -506,14 +506,14 @@ def insider_summary(
 @app.post("/api/insider/sync")
 def insider_sync_start(
     quarters_back: int = Query(2, ge=0, le=12,
-                               description="补最近几个**已发布**季度（便宜，约 3 秒/季度、"
-                                           "单季 10 万笔）"),
+                               description="Fill the last few **published** quarters (cheap: about 3 seconds a quarter, "
+                                           "100k transactions each)"),
     days: int = Query(5, ge=0, le=120,
-                      description="本次逐日补几个**尚未同步**的工作日（贵，约 90 秒/天）。"
-                                  "从今天往回走、跳过已完成的，所以反复调用可逐段填满"
-                                  "季度数据集与今天之间的缺口（当前约 117 天）"),
+                      description="How many **outstanding** business days to fetch one by one this run (dear, about 90 seconds a day). "
+                                  "It walks back from today skipping those already done, so calling it repeatedly fills "
+                                  "the gap between the quarterly dataset and today a stretch at a time (currently about 117 days)"),
 ) -> dict:
-    """启动同步（后台线程，进度查 GET /api/insider/sync）。"""
+    """Start a sync (a background thread; poll GET /api/insider/sync for progress)."""
     return insider_sync.start(quarters_back=quarters_back, days=days)
 
 
@@ -524,7 +524,7 @@ def insider_sync_status() -> dict:
 
 @app.get("/api/insider/codes")
 def insider_codes() -> dict:
-    """SEC Form 4 交易代码表 —— 摊开给用户看，别让分类逻辑成为黑箱。"""
+    """The SEC's Form 4 transaction codes — laid out for the user, so the classification is not a black box."""
     return {
         "codes": [{"code": c, "label": l, "group": insider_parse.code_group(c)}
                   for c, l in insider_parse.TX_CODES.items()],
@@ -534,49 +534,49 @@ def insider_codes() -> dict:
     }
 
 
-# ═══════════════════════ 机构持仓 13F（S 级数据源）═══════════════════════
-# ⚠️ 「机构持仓」这个说法本身会误导：13F 只报**季末时点、13(f) 证券的多头持仓**，
-#    不含空头（SEC 2023 年另立 Form SHO 就是因为 13F 不覆盖）、现金、债券、
-#    仅境外上市股票、私募持仓。看跌期权按标的列示，必须单独归类 ——
-#    混进"持仓"就是把看空算成看多。
+# ═══════════════════════ Institutional holdings, 13F (tier S source) ═══════════════════════
+# ⚠️ "Institutional holdings" misleads as a phrase: 13F reports **long positions in 13(f) securities as of quarter-end** only,
+#    excluding shorts (the SEC created Form SHO in 2023 precisely because 13F does not cover them), cash, bonds,
+#    stocks listed only outside the US and private holdings. Puts are listed under their underlying and must be classified apart —
+#    folded into "holdings" they count bearish exposure as bullish.
 
 @app.get("/api/institution/holdings")
 def institution_holdings(
-    period: Optional[str] = Query(None, description="报告期 YYYY-MM-DD（季末）"),
-    cusip: Optional[str] = Query(None, description="按 CUSIP 筛（不是 ticker）"),
-    manager: Optional[str] = Query(None, description="机构名（模糊匹配）"),
+    period: Optional[str] = Query(None, description="Reporting period, YYYY-MM-DD (quarter-end)"),
+    cusip: Optional[str] = Query(None, description="Filter by CUSIP (not by ticker)"),
+    manager: Optional[str] = Query(None, description="Manager name (fuzzy match)"),
     kind: str = Query("share", pattern="^(share|call|put|all)$",
-                      description="持仓类型。默认 share —— put 是看空，"
-                                  "混进持仓统计会把看空算成看多"),
+                      description="Position kind. Defaults to share — a put is bearish, "
+                                  "and folded into the holdings totals it counts bearish as bullish"),
     min_value: Optional[float] = Query(None, ge=0),
     include_amendments: bool = Query(False,
-                                     description="是否含修订件。默认否 —— "
-                                                 "13F 修订要求全文重述，与原件同时"
-                                                 "统计会重复计数"),
+                                     description="Whether to include amendments. Default no — "
+                                                 "a 13F amendment must restate the filing whole, so counting it "
+                                                 "alongside the original double-counts"),
     limit: int = Query(200, ge=1, le=2000),
 ) -> dict:
-    """持仓明细（本地缓存，按金额倒序）。"""
+    """Holding detail (from the local cache, largest value first)."""
     rows = institution_store.query(
         period=period, cusip=cusip, manager=manager, kind=kind,
         min_value=min_value, include_amendments=include_amendments, limit=limit)
-    # ⚠️ 必须补 kind_label：UI 的「类型」列读它。缺了的话整列全空，
-    # 而**区分普通持股 / 看涨 / 看跌正是本分栏存在的意义**（看跌是看空）。
+    # ⚠️ kind_label has to be filled in: the UI's "type" column reads it. Without it the whole column is blank,
+    # and **telling shares from calls from puts is the entire point of this section** (a put is bearish).
     for r in rows:
         r["kind_label"] = institution_parse.POSITION_KINDS.get(r["kind"], r["kind"])
     return {
         "holdings": rows, "count": len(rows),
         "stats": institution_store.stats(),
         "disclaimer": {
-            "coverage": "13F 只含**季末时点、13(f) 证券的多头持仓**。"
-                        "不含空头头寸、现金、债券、大宗商品、仅境外上市的股票、"
-                        "私募持仓，以及获保密豁免暂缓披露的持仓。"
-                        "所以「某机构持仓 X 亿」既不是它的全部资产，也不代表净敞口。",
-            "options": "看跌/看涨期权按**标的证券**列示（Form 13F 特别说明第 10 条），"
-                       "本页按 share / call / put 分开统计，默认只看 share。",
-            "lag": "13F 的法定申报期限是季末后 45 天，看到的是**至少一个半月前**的时点持仓，"
-                   "期间机构可能已大幅调仓。",
-            "cusip": "13F 只给 CUSIP 不给股票代码；SEC 不提供 CUSIP→代码映射，"
-                     "所以本页以发行人名称 + CUSIP 为准。",
+            "coverage": "13F holds **long positions in 13(f) securities as of quarter-end** only. "
+                        "It excludes short positions, cash, bonds, commodities, stocks listed only outside the US, "
+                        "private holdings, and holdings granted confidential treatment. "
+                        "So \"this manager holds $X bn\" is neither their total assets nor their net exposure.",
+            "options": "Puts and calls are listed under the **underlying security** (Form 13F Special Instruction 10); "
+                       "this page counts share / call / put separately and shows share by default.",
+            "lag": "13F's statutory deadline is 45 days after quarter-end, so what you see is a position **at least six weeks old**, "
+                   "and the manager may have moved a long way since.",
+            "cusip": "13F gives CUSIPs and no tickers, and the SEC publishes no CUSIP→ticker mapping, "
+                     "so this page keys on issuer name plus CUSIP.",
         },
     }
 
@@ -591,7 +591,7 @@ def institution_summary(
     include_amendments: bool = Query(False),
     top: int = Query(20, ge=1, le=100),
 ) -> dict:
-    """按标的 / 机构聚合（SQL 全量聚合，不是取前 N 行再算）。"""
+    """Aggregate by ticker and by manager (in SQL over everything, not over the first N rows)."""
     agg = institution_store.aggregate(
         top=top, period=period, cusip=cusip, manager=manager, kind=kind,
         min_value=min_value, include_amendments=include_amendments)
@@ -604,23 +604,23 @@ def institution_summary(
 
 @app.get("/api/institution/changes")
 def institution_changes(
-    period: str = Query(..., description="本期报告期 YYYY-MM-DD"),
-    prev_period: str = Query(..., description="上期报告期 YYYY-MM-DD"),
+    period: str = Query(..., description="This reporting period, YYYY-MM-DD"),
+    prev_period: str = Query(..., description="The previous reporting period, YYYY-MM-DD"),
     kind: str = Query("share", pattern="^(share|call|put)$"),
     manager: Optional[str] = Query(None),
     top: int = Query(20, ge=1, le=100),
 ) -> dict:
-    """季度环比：新建仓 / 加仓 / 减仓 / 清仓。
+    """Quarter on quarter: new positions / added / trimmed / exited.
 
-    ⭐ 这才是 13F 的主要价值 —— 单季持仓是静态快照，变动才有信息量。
-    ⚠️ 结果里带 `floor_note`：金额门槛会污染「新建仓/清仓」的判定，必须一起看。
+    ⭐ This is where 13F's value actually is — a single quarter is a static snapshot; the change carries the information.
+    ⚠️ The result carries `floor_note`: the value threshold contaminates the new-position and exit calls, and must be read alongside.
     """
     have = institution_store.known_periods()
     missing = [p for p in (period, prev_period) if p not in have]
     if missing:
         raise HTTPException(
             status_code=400,
-            detail=f"以下报告期尚未导入：{'、'.join(missing)}。已有：{'、'.join(have) or '无'}")
+            detail=f"These reporting periods are not imported: {', '.join(missing)}. Available: {', '.join(have) or 'none'}")
     return institution_store.changes(period=period, prev_period=prev_period,
                                      kind=kind, manager=manager, top=top)
 
@@ -628,17 +628,17 @@ def institution_changes(
 @app.post("/api/institution/sync")
 def institution_sync_start(
     window: Optional[str] = Query(None,
-                                  description="数据集窗口，如 01mar2026-31may2026。"
-                                              "不传=最新"),
+                                  description="The dataset window, e.g. 01mar2026-31may2026. "
+                                              "Omitted = the newest"),
     period: Optional[str] = Query(None,
-                                  description="报告期 YYYY-MM-DD。不传=该窗口内"
-                                              "申报最多的那一期"),
+                                  description="Reporting period, YYYY-MM-DD. Omitted = whichever period "
+                                              "has the most filings in that window"),
     min_value: float = Query(institution_sync.DEFAULT_MIN_VALUE, ge=0,
-                             description="金额门槛（美元）。默认 100 万 —— "
-                                         "实测保留 37.5% 行数、覆盖 99.37% 金额。"
-                                         "设 0 收全量（单季 332 万条、约 580MB）"),
+                             description="Value threshold (dollars). Default $1m — "
+                                         "measured, it keeps 37.5% of rows and covers 99.37% of value. "
+                                         "Set 0 to keep everything (3.32m rows a quarter, about 580MB)"),
 ) -> dict:
-    """导入一个报告期（后台线程，进度查 GET /api/institution/sync）。"""
+    """Import one reporting period (a background thread; poll GET /api/institution/sync for progress)."""
     return institution_sync.start(window=window, period=period, min_value=min_value)
 
 
@@ -648,21 +648,21 @@ def institution_sync_status() -> dict:
             "stats": institution_store.stats()}
 
 
-# ═══════════════════════ 做空数据（S 级 FTD 主源 + B 级 FINRA 可选）═══════════════════════
-# ⚠️ 这个分栏的数据是全项目最容易被读反的：
-#    FTD 是**某时点的累计余额**（不是当日新增），且 SEC 明说它**不是裸卖空的证据**。
-#    FINRA 场外空头成交量 ≠ 空头持仓，且只含场外那部分。
-#    三条官方原文都在 shorts.OFFICIAL_NOTES，UI 必须原样显示。
+# ═══════════════════════ Short-sale data (tier S for FTD, optional tier B FINRA) ═══════════════════════
+# ⚠️ This section's data is the easiest in the project to read backwards:
+#    an FTD is **a cumulative balance at a point in time** (not that day's additions), and the SEC states plainly it is **not evidence of naked shorting**.
+#    FINRA's off-exchange short volume ≠ short interest, and covers only the off-exchange part.
+#    All three official quotations are in shorts.OFFICIAL_NOTES, and the UI must show them verbatim.
 
 @app.get("/api/shorts/ftd")
 def shorts_ftd(
-    symbol: Optional[str] = Query(None, description="股票代码"),
-    settlement_date: Optional[str] = Query(None, description="结算日 YYYY-MM-DD"),
-    since: Optional[str] = Query(None, description="结算日下限 YYYY-MM-DD"),
-    min_quantity: Optional[float] = Query(None, ge=0, description="余额下限（股）"),
+    symbol: Optional[str] = Query(None, description="Ticker"),
+    settlement_date: Optional[str] = Query(None, description="Settlement date, YYYY-MM-DD"),
+    since: Optional[str] = Query(None, description="Earliest settlement date, YYYY-MM-DD"),
+    min_quantity: Optional[float] = Query(None, ge=0, description="Minimum balance (shares)"),
     limit: int = Query(200, ge=1, le=2000),
 ) -> dict:
-    """交割失败明细（SEC，S 级）。"""
+    """Fail-to-deliver detail (SEC, tier S)."""
     rows = shorts_store.query(symbol=symbol, settlement_date=settlement_date,
                               since=since, min_quantity=min_quantity, limit=limit)
     return {"fails": rows, "count": len(rows), "stats": shorts_store.stats(),
@@ -677,10 +677,10 @@ def shorts_summary(
     min_quantity: Optional[float] = Query(None, ge=0),
     top: int = Query(20, ge=1, le=100),
 ) -> dict:
-    """按标的 / 结算日聚合（SQL 全量）。
+    """Aggregate by symbol and by settlement date (in SQL over everything).
 
-    ⚠️ 按标的用的是**各结算日余额的均值**，不是加总 ——
-    FTD 是时点余额，同一笔未交割会在连续多日重复出现，加总没有意义。
+    ⚠️ The per-symbol figure is **the mean of the balances across settlement dates**, never their sum —
+    an FTD is a balance at a point in time, one undelivered trade reappears on consecutive days, and adding them means nothing.
     """
     agg = shorts_store.aggregate(top=top, symbol=symbol,
                                  settlement_date=settlement_date, since=since,
@@ -695,9 +695,9 @@ def shorts_summary(
 @app.post("/api/shorts/sync")
 def shorts_sync_start(
     back: int = Query(2, ge=1, le=12,
-                      description="导入最近几个半月档（每月两档：上半月/下半月）"),
+                      description="How many recent half-month files to import (two a month: first half, second half)"),
 ) -> dict:
-    """导入 SEC FTD（后台线程，进度查 GET /api/shorts/sync）。"""
+    """Import SEC FTD data (a background thread; poll GET /api/shorts/sync for progress)."""
     return shorts_store.start(back=back)
 
 
@@ -708,10 +708,10 @@ def shorts_sync_status() -> dict:
 
 @app.get("/api/shorts/finra-status")
 def shorts_finra_status() -> dict:
-    """FINRA 源的开启状态与**条款原文**。
+    """Whether the FINRA source is on, and **its terms verbatim**.
 
-    ⭐ 单独开一个端点，是因为这条线的合规判断必须由**用户自己**做：
-    我们把 FINRA Terms of Use 的原文和其中的模糊之处摆出来，不替他解释。
+    ⭐ It gets its own endpoint because the compliance judgement on this lane has to be **the user's own**:
+    we lay out FINRA's Terms of Use as written, ambiguities and all, and do not interpret them for them.
     """
     return {
         "enabled": shorts_src.finra_enabled(),
@@ -720,22 +720,22 @@ def shorts_finra_status() -> dict:
     }
 
 
-# ═══════════════════════ 宏观（S 级：Treasury + CFTC）═══════════════════════
-# 全项目最干净的一条线：政府作品、不限商用、可再分发。
-# ⚠️ 两个口径：倒挂要说清是 10Y-2Y 还是 10Y-3M；COT 有三天时滞。
+# ═══════════════════════ Macro (tier S: Treasury + CFTC) ═══════════════════════
+# The cleanest lane in the project: government works, no restriction on commercial use, redistributable.
+# ⚠️ Two definitions: inversion has to say whether it is 10Y-2Y or 10Y-3M; COT runs three days behind.
 
 @app.get("/api/market/curve")
 def market_curve(
-    year: Optional[int] = Query(None, ge=1990, le=2100, description="不传=今年"),
-    years: int = Query(1, ge=1, le=15, description="往前取几年（含 year 本年）"),
-    refresh: bool = Query(False, description="强制重拉（Treasury 会修订历史值）"),
+    year: Optional[int] = Query(None, ge=1990, le=2100, description="Omitted = this year"),
+    years: int = Query(1, ge=1, le=15, description="How many years back to take (including `year` itself)"),
+    refresh: bool = Query(False, description="Force a refetch (Treasury does revise historical values)"),
 ) -> dict:
-    """美债收益率曲线 + 两条利差的时间序列。
+    """The Treasury yield curve plus both spreads as a time series.
 
-    ⚠️ `years` 默认 1，但**看倒挂至少要看几年** —— 一年的窗口里
-    利差常常全程同号，看不出穿越零轴的那一下。
+    ⚠️ `years` defaults to 1, but **seeing an inversion takes several years** — within a one-year window
+    the spreads often keep one sign throughout, and the crossing of zero never shows.
 
-    数据落本地库：往年不再重拉（值不会变），今年按最新一天判新鲜度。
+    The data is stored locally: past years are never refetched (their values cannot change), and the current year's freshness is judged on its newest day.
     """
     from datetime import date as _d
     y = year or _d.today().year
@@ -751,11 +751,11 @@ def market_curve(
             if not n:
                 missing.append(yy)
         except macro_src.DataNotAvailable:
-            # 某一年没有 ≠ 整个请求失败：早年缺数据是常态
+            # One year missing ≠ the whole request failing: gaps in the early years are normal
             missing.append(yy)
         except RuntimeError as e:
-            # ⚠️ 拉失败 ≠ 没有数据。库里若已有旧数据仍然给出去，
-            #    但**必须把失败原样报出来**，不能让用户以为看到的是最新的。
+            # ⚠️ A failed fetch ≠ an absence of data. Older rows already in the database are still served,
+            #    but **the failure has to be reported as it stands**, so the user does not take it for the latest.
             failed[yy] = str(e)
 
     pts = [p for p in (market_parse.parse_curve(r)
@@ -764,9 +764,9 @@ def market_curve(
         if failed:
             raise HTTPException(
                 status_code=502,
-                detail="；".join(f"{k}: {v}" for k, v in failed.items()))
+                detail="; ".join(f"{k}: {v}" for k, v in failed.items()))
         raise HTTPException(status_code=404,
-                            detail=f"{wanted[0]}-{y} 无收益率数据")
+                            detail=f"No yield data for {wanted[0]}-{y}")
     return {"year": y, "years": wanted, "missing_years": missing,
             "fetched": fetched, "failed": failed,
             "cache": market_store.stats(),
@@ -775,12 +775,12 @@ def market_curve(
 
 @app.get("/api/market/cot/markets")
 def market_cot_markets(
-    active_only: bool = Query(True, description="只要仍在更新的合约"),
+    active_only: bool = Query(True, description="Only contracts still being updated"),
 ) -> dict:
-    """TFF 覆盖的市场清单（带各自最后一期日期）。
+    """The markets TFF covers (each with its own most recent report date).
 
-    ⚠️ 默认只给**仍在更新**的：数据集里躺着大量停更多年的旧合约，
-    选中它们看到的空白是"这合约不报了"，不是"取数失败"。
+    ⚠️ The default gives only those **still being updated**: the dataset holds a great many contracts that stopped
+    reporting years ago, and selecting one shows a blank that means "this contract no longer reports", not "the fetch failed".
     """
     try:
         rows = macro_src.cot_markets()
@@ -789,7 +789,7 @@ def market_cot_markets(
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
     latest = max((r["last_date"] or "" for r in rows), default="")
-    # "仍在更新" = 最后一期就是全库最新一期（同一期里各合约日期一致）
+    # "Still being updated" = its last report is the newest in the whole dataset (dates agree across contracts within a report)
     live = [r for r in rows if r["last_date"] == latest] if latest else []
     return {"markets": live if active_only else rows,
             "total": len(rows), "active": len(live),
@@ -799,13 +799,13 @@ def market_cot_markets(
 
 @app.get("/api/market/cot")
 def market_cot(
-    market: Optional[str] = Query(None, description="市场名关键词，如 S&P 500 / TREASURY"),
-    exact: bool = Query(False, description="市场名完全匹配（画时间序列必须开）"),
+    market: Optional[str] = Query(None, description="Market name keyword, e.g. S&P 500 / TREASURY"),
+    exact: bool = Query(False, description="Exact match on market name (required for a time series)"),
     limit: int = Query(200, ge=1, le=1000),
 ) -> dict:
-    """CFTC 金融期货持仓（TFF）。
+    """CFTC financial futures positioning (TFF).
 
-    ⚠️ 有**三天时滞**：报告周二收盘的持仓、周五才发布。
+    ⚠️ It runs **three days behind**: positions as of Tuesday's close, published on Friday.
     """
     try:
         raw = macro_src.cot_rows(limit=limit, market_contains=market, exact=exact)
@@ -821,16 +821,16 @@ def market_cot(
                       "truncated": len(raw) >= limit}}
 
 
-# ═══════════════════════ 期权流（C 级：CBOE 延时，只在本地跑）═══════════════════════
-# ⚠️ 数据是**链快照**不是逐笔成交带 —— sweep / 大单分级 / 主动买卖方向都做不了。
-#    详见 modules/flow.py 的能力边界说明。本分栏不产出任何方向性标签。
+# ═══════════════════════ Options flow (tier C: Cboe delayed, local only) ═══════════════════════
+# ⚠️ The data is a **chain snapshot**, not the print-by-print tape — sweeps, block-size tiering and buy/sell direction are all out of reach.
+#    See modules/flow.py for the limits. This section produces no directional label of any kind.
 
 def _session_of(chain) -> str:
-    """归档键 = 数据自己的交易时段，**不是墙上日期**。
+    """The storage key is the data's own trading session, **not the wall-clock date**.
 
-    ⚠️ 按墙上日期归档，周末打开两次就会把同一份周五收盘数据
-    存成"两天的观测"，OI 差值全是 0 —— 看着像"持仓没变"，
-    其实是根本没有新数据。CBOE 没给 session 时才回退到美东今日。
+    ⚠️ Keyed by wall clock, opening the page twice over a weekend stores one Friday close
+    as "two days of observation", and every OI difference is 0 — which looks like "positions did not change"
+    when in fact there was no new data at all. Only when Cboe gives no session does this fall back to today in US/Eastern.
     """
     return chain.session or cboe.et_today()
 
@@ -838,12 +838,12 @@ def _session_of(chain) -> str:
 @app.get("/api/flow/{ticker}")
 def get_flow(
     ticker: str,
-    expiry: Optional[str] = Query(None, description="指定到期日 YYYY-MM-DD 或 '0DTE'"),
+    expiry: Optional[str] = Query(None, description="A specific expiry, YYYY-MM-DD, or '0DTE'"),
     dte_max: Optional[int] = Query(None, ge=0, le=365),
     top: int = Query(40, ge=1, le=200),
-    record: bool = Query(False, description="把这份快照写进本地 OI 历史"),
+    record: bool = Query(False, description="Write this snapshot into local OI history"),
 ) -> dict:
-    """单只标的的当日期权流画像（基于链快照）。"""
+    """One symbol's options flow profile for the day (from the chain snapshot)."""
     try:
         chain = cboe.cached_option_chain(ticker)
     except cboe.DataNotAvailable as e:
@@ -853,9 +853,9 @@ def get_flow(
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
 
-    # ⚠️ 两份：展示用"有成交的"，持仓量口径用"范围内全部合约"。
-    #    合成一份的话，"沉淀下来的仓位结构"实际会变成
-    #    "今天碰过的那些合约的仓位"，冷门标的上能差一个数量级。
+    # ⚠️ Two sets: "those that traded" for display, "every contract in scope" for the open-interest basis.
+    #    Merged into one, "the structure of settled positions" silently becomes
+    #    "positions in the contracts touched today", which on a thin symbol is an order of magnitude out.
     scope_rows = flow_parse.parse(chain, dte_max=dte_max, expiry=expiry,
                                   traded_only=False)
     rows = [r for r in scope_rows if r.volume > 0]
@@ -864,10 +864,10 @@ def get_flow(
     out["session"] = chain.session
     out["scope"] = {"expiry": expiry, "dte_max": dte_max, "top": top}
     if record:
-        # ⚠️ 沉淀的是**全链且含今日无成交的合约**（`traded_only=False`）。
-        #    ① 换 dte_max 会让存量对不上，差值把"筛选口径变了"记成"持仓变了"；
-        #    ② 更要命的是漏掉今日无成交的合约 —— 它明天不出现在库里，
-        #       差值就把它记成"净平仓全部头寸"，而它一张都没动。
+        # ⚠️ What is accrued is **the whole chain, including contracts that did not trade today** (`traded_only=False`).
+        #    ① Changing dte_max makes the stored set disagree, and the difference records "the filter changed" as "positions changed";
+        #    ② worse, missing the contracts that did not trade today means one vanishes from the store tomorrow,
+        #       and the difference records it as "the whole position closed out" when not one contract moved.
         allrows = flow_parse.parse(chain, traded_only=False)
         out["recorded"] = flow_store.record(
             chain.ticker, _session_of(chain), chain.spot,
@@ -878,7 +878,7 @@ def get_flow(
 
 @app.post("/api/flow/{ticker}/record")
 def record_flow(ticker: str) -> dict:
-    """把当前链快照写进本地 OI 历史（这份历史补不回来，只能逐日攒）。"""
+    """Write the current chain snapshot into local OI history (this history cannot be backfilled; it only accrues)."""
     try:
         chain = cboe.cached_option_chain(ticker)
     except cboe.DataNotAvailable as e:
@@ -903,21 +903,21 @@ def get_oi_change(
     date_from: Optional[str] = Query(None),
     top: int = Query(40, ge=1, le=200),
 ) -> dict:
-    """两个快照日之间的持仓量变化。
+    """The change in open interest between two snapshot days.
 
-    ⚠️ 只攒到一天时返回 `enough=false` —— 那是**还没攒够**，不是"持仓没变"。
+    ⚠️ With only one day accrued it returns `enough=false` — meaning **not enough accrued yet**, not "positions did not change".
     """
     return flow_store.oi_change(ticker.strip().upper(), date_to=date_to,
                                 date_from=date_from, top=top)
 
 
-# ═══════════════════════ 扫描器（C 级：CBOE 延时，只在本地跑）═══════════════════════
-# ⚠️ 没有全市场端点，只能逐只问 → 一轮全市场约 26 分钟，天然是**后台作业**。
-#    IV Rank 按定义需要历史，攒不够就返回空值，**绝不拿短样本硬算**。
+# ═══════════════════════ Scanner (tier C: Cboe delayed, local only) ═══════════════════════
+# ⚠️ There is no market-wide endpoint, only symbol by symbol → one full pass takes about 26 minutes, so it is a **background job** by nature.
+#    IV Rank needs history by definition; without enough it returns null and **never forces a number out of a short sample**.
 
 @app.get("/api/scanner")
 def get_scanner(
-    session: Optional[str] = Query(None, description="看哪个交易时段，不传=最新"),
+    session: Optional[str] = Query(None, description="Which trading session to view; omitted = the newest"),
     sort: str = Query("iv_rank"),
     limit: int = Query(100, ge=1, le=1000),
     min_price: Optional[float] = Query(None),
@@ -929,18 +929,18 @@ def get_scanner(
     min_volume_x: Optional[float] = Query(None),
     security_type: Optional[str] = Query(None),
 ) -> dict:
-    """扫描结果（读的是本地已扫过的快照，不现拉）。"""
+    """Scan results (read from what has already been scanned locally; nothing is fetched live)."""
     sess = session or scanner_store.latest_session()
     st = scanner_store.stats()
     if not sess:
         return {"rows": [], "count": 0, "session": None, "stats": st,
                 "batches": scanner_store.batches(5),
                 "notes": scanner_parse.NOTES,
-                "note": ("本地还没有任何扫描结果 —— 这是**还没扫过**，"
-                         "不是市场上没有符合条件的标的。先跑一轮扫描。")}
+                "note": ("There are no scan results here yet — that means **nothing has been scanned**, "
+                         "not that no symbol in the market matches. Run a scan first.")}
     quotes = scanner_store.quotes_at(sess)
-    # ⚠️ `as_of=sess` 不能省 —— 看历史某天的结果时，把之后的行情算进
-    #    IV Rank 样本就是**前视偏差**（用还没发生的数据判断当天 IV 高低）。
+    # ⚠️ `as_of=sess` cannot be omitted — viewing a past day's results with later quotes counted into
+    #    the IV Rank sample is **lookahead bias** (judging that day's IV with data that had not happened).
     hist = scanner_store.history([q["symbol"] for q in quotes], as_of=sess)
     rows = [scanner_parse.build_row(
                 q, hist.get(q["symbol"], {}).get("iv", []),
@@ -955,7 +955,7 @@ def get_scanner(
         "rows": [scanner_parse.to_dict(r) for r in kept[:limit]],
         "count": len(kept), "scanned": len(rows), "session": sess,
         "truncated": len(kept) > limit,
-        # ⚠️ 「因为算不出而被排除」必须和「不满足条件」分开报
+        # ⚠️ "Excluded because it could not be computed" has to be reported apart from "failed the condition"
         "excluded": excluded,
         "stats": st, "batches": scanner_store.batches(5),
         "sorts": sorted(scanner_parse.SORTS),
@@ -967,29 +967,29 @@ def get_scanner(
 
 @app.get("/api/scanner/scan")
 def get_scan_state() -> dict:
-    """当前扫描进度。"""
+    """Current scan progress."""
     return {**scanner_sync.STATE.snapshot(), "stats": scanner_store.stats()}
 
 
 @app.post("/api/scanner/scan")
 def start_scan(
     symbols: Optional[str] = Query(
-        None, description="逗号分隔的代码；不传=全市场（约 26 分钟）"),
+        None, description="Comma-separated symbols; omitted = the whole market (about 26 minutes)"),
 ) -> dict:
-    """启动一轮扫描。
+    """Start a scan.
 
-    ⚠️ 全市场约 **26 分钟**（6,049 只 × 自律限流 4 次/秒）。
-    只想看自己盯的几十只就传 `symbols`，那是几十秒的事。
+    ⚠️ The whole market takes about **26 minutes** (6,049 symbols at a self-imposed 4 requests/second).
+    To see only the few dozen you follow, pass `symbols`; that is a matter of seconds.
     """
     syms = None
-    # ⚠️ `symbols` 传了空串要当成**参数错误**，不能落到"不传=全市场"那条路 ——
-    #    用户清空输入框点"扫这几只"，会意外启动 26 分钟的全市场作业。
+    # ⚠️ An empty `symbols` string is a **parameter error** and must not fall through to "omitted = the whole market" —
+    #    a user who clears the box and presses "scan these" would accidentally start a 26-minute market-wide job.
     if symbols is not None and not symbols.strip():
         raise HTTPException(
             status_code=400,
-            detail="symbols 为空。想扫全市场请**不要传**这个参数（约 26 分钟）。")
+            detail="symbols is empty. To scan the whole market, **omit** the parameter (about 26 minutes).")
     if symbols:
-        # 去重但保持顺序：重复代码只是白白多打几次上游、还把进度分母灌大
+        # Deduplicate but keep the order: repeated symbols only hit upstream again for nothing and inflate the progress denominator
         seen: set = set()
         syms = []
         for raw in symbols.split(","):
@@ -998,7 +998,7 @@ def start_scan(
                 seen.add(t)
                 syms.append(t)
         if not syms:
-            raise HTTPException(status_code=400, detail="symbols 解析后为空")
+            raise HTTPException(status_code=400, detail="symbols parsed to nothing")
     return scanner_sync.start(syms)
 
 
@@ -1009,7 +1009,7 @@ def cancel_scan() -> dict:
 
 @app.get("/api/scanner/universe")
 def get_universe() -> dict:
-    """CBOE 官方的有期权标的全集。"""
+    """Cboe's official universe of symbols with options."""
     try:
         roots = cboe.option_roots()
     except cboe.DataNotAvailable as e:
@@ -1020,14 +1020,14 @@ def get_universe() -> dict:
             "note": scanner_parse.NOTES["universe"]}
 
 
-# ═══════════════════════ 暗池 / 场外（B 级 FINRA，**默认关闭**）═══════════════════════
-# ⚠️ 铁律：任何分栏都不得把 FINRA 作为唯一数据源。
-#    这里 FINRA 出**分子**（ATS / 非 ATS 场外成交量），
-#    CBOE 的本地行情沉淀出**分母**（同期总成交量）—— 占比真的需要两边。
-#    关掉 FINRA 时本栏只剩条款说明，这是**刻意的**，不拿别的数凑一个像的答案。
+# ═══════════════════════ Dark pools / off-exchange (tier B FINRA, **off by default**) ═══════════════════════
+# ⚠️ A project rule: no section may use FINRA as its only source.
+#    Here FINRA provides the **numerator** (ATS / non-ATS off-exchange volume),
+#    and locally accrued Cboe quotes provide the **denominator** (total volume over the same period) — the share genuinely needs both.
+#    With FINRA off, this section holds only the terms, and that is **deliberate**: no plausible-looking answer is assembled from other figures.
 
 def _week_days(week: str) -> list[str]:
-    """周起始日 → 该周的五个自然工作日（FINRA 的周从周一算）。"""
+    """Week start → that week's five calendar weekdays (FINRA's week starts on Monday)."""
     from datetime import date, timedelta
     try:
         y, m, d = (int(x) for x in week.split("-"))
@@ -1038,16 +1038,16 @@ def _week_days(week: str) -> list[str]:
 
 
 def _trading_days(days: list[str]) -> list[str]:
-    """这几天里**哪些是真的开市日**。
+    """Which of those days the market was actually **open**.
 
-    ⚠️ 不能拿"周一到周五"当交易日历：美股一年十来个假日，
-    把休市日当成"本地缺数据"，含假日的那些周就**永远**算不出占比。
-    我们没有假日表，但有个更硬的判据 —— **本地行情沉淀里有没有那一天**：
-    只要**任何一只**标的在那天有快照，市场就是开着的。
-    这是用数据反推日历，不需要额外依赖、也不会随年份过期。
+    ⚠️ Monday-to-Friday cannot serve as a trading calendar: US markets close a dozen or so days a year,
+    and taking a holiday for "missing locally" means the weeks containing one **never** get a share computed.
+    We have no holiday table, but there is a harder test — **whether the locally accrued quotes hold that day**:
+    if **any** symbol has a snapshot that day, the market was open.
+    That infers the calendar from the data, needs no extra dependency, and cannot go stale with the years.
 
-    代价：本地那周一只票都没扫过时，检测出 0 个交易日 → 占比算不出。
-    那是正确结果（确实没有分母），不是误判。
+    The cost: with no symbol scanned locally that week, 0 trading days are detected → no share is computed.
+    Which is the right answer (there genuinely is no denominator), not a misjudgement.
     """
     if not days:
         return []
@@ -1062,34 +1062,34 @@ def _trading_days(days: list[str]) -> list[str]:
 
 
 def _calendar_note(days: list[str], observed: list[str]) -> Optional[str]:
-    """本地观测不到整周时的说明。
+    """The explanation for a week that could not be observed in full locally.
 
-    ⚠️ **两级不确定性，别把第二级当成没有：**
-    ① 本地有那天的快照 → 那天肯定开市；
-    ② 本地**没有**那天的快照 → **分不清**是"那天休市"还是"我们没扫"。
-    没有交易日历就没法区分，所以只要五个工作日没凑齐，就不给占比 ——
-    含假日的那些周也一样不给。这是宁可不答，不答错。
+    ⚠️ **Two levels of uncertainty, and the second must not be read as absence:**
+    ① a local snapshot exists for that day → the market was certainly open;
+    ② **no** local snapshot for that day → **it cannot be told** whether the market was shut or we simply never scanned.
+    Without a trading calendar there is no way to separate them, so unless all five weekdays are accounted for, no share is given —
+    including for the weeks that contain a holiday. Better to leave it unanswered than to answer wrongly.
     """
     if len(observed) >= len(days):
         return None
     miss = [d for d in days if d not in observed]
-    return (f"本地那周只观测到 {len(observed)}/{len(days)} 个工作日"
-            f"（缺 {'、'.join(miss)}）。**没有交易日历**，"
-            f"分不清这几天是休市还是我们没扫过 —— 所以不给占比。"
-            f"（含美股假日的那些周会一直这样，这是刻意的取舍。）")
+    return (f"Only {len(observed)}/{len(days)} weekdays of that week were observed locally"
+            f" (missing {', '.join(miss)}). **With no trading calendar**, "
+            f"there is no telling whether those days were holidays or simply never scanned — so no share is given. "
+            f"(Weeks containing a US market holiday will always read this way; that is a deliberate trade-off.)")
 
 
 @app.get("/api/darkpool/{ticker}")
 def get_darkpool(
     ticker: str,
-    week: Optional[str] = Query(None, description="周起始日 YYYY-MM-DD，不传=最新"),
+    week: Optional[str] = Query(None, description="Week start, YYYY-MM-DD; omitted = the newest"),
 ) -> dict:
-    """单只标的的场外成交（ATS 与非 ATS **分开**）。"""
+    """One symbol's off-exchange volume (ATS and non-ATS kept **apart**)."""
     tk = ticker.strip().upper()
     try:
         raw = darkpool_src.weekly(tk)
     except darkpool_src.FinraDisabled as e:
-        # ⚠️ 这是**配置状态**，不是「没有数据」—— 用 409 而不是 404
+        # ⚠️ This is a **configuration state**, not an absence of data — 409, not 404
         raise HTTPException(status_code=409, detail=str(e)) from e
     except darkpool_src.DataNotAvailable as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
@@ -1100,23 +1100,23 @@ def get_darkpool(
     weeks = darkpool_parse.weeks_of(parsed)
     if not weeks:
         if parsed["unknown_types"]:
-            # ⚠️ 认得的类型一行都没有、却出现了未知类型 = **解析已不兼容**，
-            #    不是"这只票没有场外成交"。502 让它冒泡，别报成 404。
+            # ⚠️ Not one row of a known type, yet unknown types present = **the parser is no longer compatible**,
+            #    not "this symbol has no off-exchange volume". Let a 502 propagate; do not report it as a 404.
             raise HTTPException(
                 status_code=502,
-                detail=(f"FINRA 返回了本程序不认识的记录类型 "
-                        f"{parsed['unknown_types']} —— 解析规则可能已过时。"
-                        f"这是**解析不兼容**，不是「{tk} 没有场外成交」。"))
-        raise HTTPException(status_code=404, detail=f"{tk} 无场外成交记录")
+                detail=(f"FINRA returned record types this program does not recognise "
+                        f"{parsed['unknown_types']} — the parsing rules may be out of date. "
+                        f"This is a **parser incompatibility**, not \"{tk} has no off-exchange volume\"."))
+        raise HTTPException(status_code=404, detail=f"No off-exchange records for {tk}")
     wk = week or weeks[-1]
     if wk not in weeks:
         raise HTTPException(
             status_code=404,
-            detail=f"没有 {wk} 这一周（可选：{'、'.join(weeks[-8:])}）")
+            detail=f"No such week as {wk} (available: {', '.join(weeks[-8:])})")
 
-    # 分母：那一周本地已沉淀的 CBOE 日成交量之和。
-    # ⚠️ 逐日精确取，**不插值也不外推** —— 少哪天就少哪天，列出来给用户看。
-    #    分母偏小会让占比偏高，这种偏差必须让人知道方向。
+    # The denominator: the sum of Cboe daily volume accrued locally for that week.
+    # ⚠️ Taken day by day, exactly, with **no interpolation and no extrapolation** — a missing day stays missing, and is listed for the user.
+    #    A small denominator makes the share too high, and the direction of that bias has to be known.
     out = _consolidated(tk, wk, parsed)
     out["ticker"] = tk
     out["weeks"] = weeks[-52:]
@@ -1129,9 +1129,9 @@ def get_darkpool(
 
 
 def _sessions_for(symbol: str, days: list[str]) -> list[tuple]:
-    """本地沉淀里这几天各自的成交量（没有的就没有，**不插值不外推**）。
+    """Each of those days' volume from local accrual (absent is absent; **nothing is interpolated or extrapolated**).
 
-    表主键是 (symbol, session)，所以同一天不可能有两行、分母不会被重复累加。
+    The table's key is (symbol, session), so one day cannot have two rows and the denominator cannot double-count.
     """
     if not days:
         return []
@@ -1145,13 +1145,13 @@ def _sessions_for(symbol: str, days: list[str]) -> list[tuple]:
 
 
 def _consolidated(tk: str, wk: str, parsed: dict) -> dict:
-    """算出该周汇总（含分母）。**REST 与 MCP 共用这一个函数**。
+    """Compute that week's summary, denominator included. **REST and MCP share this one function**.
 
-    ⚠️ 抽出来是因为上一版 MCP 根本没读本地分母 —— 同一只票同一周，
-    网页端能给出占比而工具端永远是 null，正是"同一份数据两个视图口径不一致"。
+    ⚠️ It was extracted because the previous MCP version never read the local denominator — for one symbol in one week,
+    the web page could give a share while the tool layer always returned null: two views of one dataset, disagreeing.
     """
     weekdays = _week_days(wk)
-    observed = _trading_days(weekdays)          # 本地确认开市的日子
+    observed = _trading_days(weekdays)          # the days locally confirmed open
     cal_note = _calendar_note(weekdays, observed)
     covered, total = [], 0.0
     for d, v in _sessions_for(tk, observed):
@@ -1159,8 +1159,8 @@ def _consolidated(tk: str, wk: str, parsed: dict) -> dict:
             covered.append(d)
             total += v
     missing = [d for d in observed if d not in covered]
-    # ⚠️ 整周五天都观测到、且这只票五天都有量，才给占比。
-    #    少一天就系统性偏高，而偏多少看不出来。
+    # ⚠️ A share is given only when all five days of the week were observed and this symbol has volume on all five.
+    #    One day short and it is systematically too high, by an amount nothing on screen reveals.
     full = cal_note is None and not missing
     out = darkpool_parse.week_summary(
         parsed, wk,
@@ -1177,41 +1177,41 @@ def _consolidated(tk: str, wk: str, parsed: dict) -> dict:
 
 @app.get("/api/darkpool-status")
 def darkpool_status() -> dict:
-    """这一栏当前是开是关，以及为什么。"""
+    """Whether this section is currently on or off, and why."""
     return {
         "enabled": darkpool_src.finra_enabled(),
         "env_var": "FZ_ENABLE_FINRA",
         "terms": darkpool_src.FINRA_TERMS,
         "notes": darkpool_parse.NOTES,
         "why_gated": (
-            "本栏的核心数据（ATS 与非 ATS 场外成交量）**只有 FINRA 一家发布**，"
-            "没有第二个公开来源。而 FINRA 的条款限「非商业的个人或专业用途」、"
-            "并明文禁止「用本站数据建立数据库」—— 本项目正是下载→落 SQLite。"
-            "所以它默认关闭，条款原文原样摆在这里，**判断权在你**。"
-            "开启后 FINRA 只出分子；分母（同期总成交量）来自 CBOE 的本地行情沉淀。"),
+            "This section's core data (ATS and non-ATS off-exchange volume) is **published by FINRA alone**, "
+            "with no second public source. And FINRA's terms limit it to non-commercial personal or professional "
+            "use and explicitly forbid using the site's data to build a database — which is exactly what this project does, downloading into SQLite. "
+            "So it is off by default, its terms are reproduced here as written, and **the judgement is yours**. "
+            "Switched on, FINRA supplies the numerator only; the denominator (total volume over the same period) comes from locally accrued Cboe quotes."),
     }
 
 
-# ═══════════════════════ 个股页（九条线汇合）═══════════════════════
-# ⚠️ 难点不是聚合，是**时间轴对不齐**：期权链是昨天收盘，13F 是三个月前的季末。
-#    每一块必须带自己的时点与滞后，⛔ 不做任何跨源综合评分。
+# ═══════════════════════ The stock page (nine lanes converging) ═══════════════════════
+# ⚠️ The hard part is not aggregation but that **the timelines do not line up**: the option chain is yesterday's close, the 13F a quarter-end three months back.
+#    Every block carries its own instant and lag, and ⛔ no cross-source score is produced.
 
 @app.get("/api/stock/{ticker}")
 def get_stock(ticker: str) -> dict:
-    """一只票在九条线上的全部画像。
+    """One symbol's full profile across the nine lanes.
 
-    ⚠️ **每条线各自兜异常，而且兜的是"任何异常"**：本页的立意就是
-    一条线挂掉不带倒整页。只捕获 `RuntimeError` 是不够的 ——
-    上游结构变了会抛 `KeyError` / `IndexError` / `AttributeError`，
-    那些同样只该让**那一块**变成"取数失败"，不该让整页 500。
+    ⚠️ **Each lane guards itself, and guards against *any* exception**: the whole point of this page is
+    that one lane failing does not take the page down with it. Catching `RuntimeError` alone is not enough —
+    a change in an upstream structure raises `KeyError` / `IndexError` / `AttributeError`,
+    and those should equally turn **that one block** into "could not fetch" rather than 500 the whole page.
     """
     tk = ticker.strip().upper()
     L = stock_parse.lane
     lanes: list = []
 
-    # ⚠️ 代码不合法要**在入口就判**。不然 CBOE 那三条报 bad_symbol、
-    #    其余各条却各自去查、各报各的 no_data —— 同一个非法代码
-    #    在同一页上得到互相矛盾的解释。
+    # ⚠️ An invalid symbol has to be caught **at the entrance**. Otherwise the three Cboe lanes report bad_symbol
+    #    while the rest each go and look and each report no_data — one invalid symbol
+    #    receiving mutually contradictory explanations on one page.
     try:
         tk = cboe.assert_us_ticker(tk)
     except ValueError as e:
@@ -1220,27 +1220,27 @@ def get_stock(ticker: str) -> dict:
             "ticker": tk}
 
     def run(key: str, fn, *, as_of_on_error: Optional[str] = None) -> None:
-        """跑一条线；**任何**异常都只影响这一条。
+        """Run one lane; **any** exception affects only this lane.
 
-        `as_of_on_error`：失败时若**已经知道**这块数据的时点（比如期权链
-        已经拿到了、只是后续计算炸了），就把它带上 —— 丢掉已知信息
-        会让这块沉到时间轴末尾，看起来像"从来没有过数据"。
+        `as_of_on_error`: when the instant of this block's data is **already known** at failure time (the chain
+        was fetched and only the computation afterwards blew up), carry it along — discarding what is known
+        sinks the block to the end of the timeline and makes it look as though there was never any data.
         """
         try:
             lanes.append(fn())
         except cboe.DataNotAvailable as e:
             lanes.append(L(key, as_of=as_of_on_error, reason="no_data", detail=str(e)))
         except ValueError as e:
-            # ⚠️ 代码合法性**入口已经验过**，所以走到这里的 ValueError
-            #    是下游脏数据，不是"代码不合法" —— 标成 bad_symbol 会让用户
-            #    去改一个本来没问题的代码。
+            # ⚠️ Symbol validity **was already checked at the entrance**, so a ValueError reaching here
+            #    is dirty data downstream, not "invalid symbol" — labelling it bad_symbol sends the user
+            #    off to fix a symbol that was fine.
             lanes.append(L(key, as_of=as_of_on_error, reason="fetch_failed",
                            detail=f"ValueError: {e}"))
-        except Exception as e:                       # noqa: BLE001 —— 刻意兜全部
+        except Exception as e:                       # noqa: BLE001 — deliberately catching everything
             lanes.append(L(key, as_of=as_of_on_error, reason="fetch_failed",
                            detail=f"{type(e).__name__}: {e}"))
 
-    # ── 1. 行情 / GEX / 期权流（同一份快照，只拉一次）──
+    # ── 1. Quote / GEX / options flow (one snapshot, fetched once) ──
     chain = None
     try:
         chain = cboe.cached_option_chain(tk)
@@ -1252,8 +1252,8 @@ def get_stock(ticker: str) -> dict:
             lanes.append(L(k, reason="fetch_failed", detail=f"{type(e).__name__}: {e}"))
 
     if chain is not None:
-        # ⚠️ 连读 `chain.session` 都要兜：快照结构漂移时这里抛 AttributeError，
-        #    它在 run() **外面**，会直接把整页打成 500。
+        # ⚠️ Even reading `chain.session` needs a guard: a drift in the snapshot structure raises AttributeError here,
+        #    and it sits **outside** run(), so it would 500 the whole page outright.
         try:
             sess = chain.session
         except Exception:                            # noqa: BLE001
@@ -1275,90 +1275,90 @@ def get_stock(ticker: str) -> dict:
                 "unusual_rows": f["unusual_rows"], "limits": f["limits"]})
         run("flow", _flow, as_of_on_error=sess)
 
-    # ── 2. IV 排名（本地沉淀）──
+    # ── 2. IV ranking (locally accrued) ──
     def _scanner():
         sess2 = scanner_store.latest_session()
         if not sess2:
             return L("scanner", reason="not_enough",
-                     detail="本地还没扫过任何标的 —— 去扫描器跑一轮。")
+                     detail="Nothing has been scanned locally yet — run a pass in the scanner.")
         q = [x for x in scanner_store.quotes_at(sess2) if x.get("symbol") == tk]
         if not q:
-            # ⚠️ 已知本地最新时段，失败时也把它带上 —— 这块不是"从来没有数据"，
-            #    而是"我们扫过别的票、没扫这只"。
+            # ⚠️ The newest local session is known, so carry it even on failure — this block is not "never had data",
+            #    it is "we scanned other symbols and not this one".
             return L("scanner", as_of=sess2, reason="not_synced",
-                     detail=f"{tk} 不在本地已扫过的标的里（最新时段 {sess2}）。")
+                     detail=f"{tk} is not among the symbols scanned locally (newest session {sess2}).")
         h = scanner_store.history([tk], as_of=sess2).get(tk, {})
         row = scanner_parse.build_row(q[0], h.get("iv", []), h.get("volume", []))
         return L("scanner", as_of=q[0].get("session") or sess2,
                  data=scanner_parse.to_dict(row))
-    # 已知本地最新时段时，失败也把它带上 —— 这块不是"从来没有过数据"
+    # The newest local session is known, so carry it even on failure — this block is not "never had any data"
     try:
         _sess2 = scanner_store.latest_session()
     except Exception:                                # noqa: BLE001
         _sess2 = None
     run("scanner", _scanner, as_of_on_error=_sess2)
 
-    # ── 3. 内部人 Form 4（本地缓存）──
+    # ── 3. Insider Form 4 (local cache) ──
     def _insider():
         st = insider_store.stats()
         if not st.get("trades"):
-            return L("insider", reason="not_synced", detail="本地还没同步 Form 4。")
+            return L("insider", reason="not_synced", detail="Form 4 has not been synced locally yet.")
         agg = insider_store.aggregate(ticker=tk, top=8)
         if not (agg.get("counts") or {}).get("n"):
             return L("insider", reason="no_data",
-                     detail=f"已同步的 Form 4 里没有 {tk} 的公开市场交易。")
-        # 用**这只票最近一笔**交易日做时点，不是全库最新日 ——
-        # 后者会把一只三个月没动静的票显示成"昨天的数据"。
+                     detail=f"The Form 4 data synced so far holds no open-market trades for {tk}.")
+        # Use **this symbol's own most recent** trade date as the instant, not the newest date in the database —
+        # the latter shows a symbol that has not moved in three months as "yesterday's data".
         recent = insider_store.query(ticker=tk, limit=1) or []
         latest = (recent[0].get("tx_date") if recent else None) or None
         return L("insider", as_of=latest, data=agg)
     run("insider", _insider)
 
-    # ── 4. 交割失败 FTD（本地缓存）──
+    # ── 4. Fails to deliver (local cache) ──
     def _shorts():
         st = shorts_store.stats()
         if not st.get("rows"):
-            return L("shorts", reason="not_synced", detail="本地还没导入 FTD 数据。")
+            return L("shorts", reason="not_synced", detail="FTD data has not been imported locally yet.")
         agg = shorts_store.aggregate(top=8, symbol=tk)
         c = agg.get("counts") or {}
         if not c.get("n"):
-            return L("shorts", reason="no_data", detail=f"已导入的 FTD 里没有 {tk}。")
+            return L("shorts", reason="no_data", detail=f"The imported FTD data holds no {tk}.")
         return L("shorts", as_of=c.get("hi"), data=agg)
     run("shorts", _shorts)
 
-    # ── 5. 国会议员申报（本地缓存）──
+    # ── 5. Congressional filings (local cache) ──
     def _congress():
         st = congress_store.stats()
         if not st.get("trades"):
-            return L("congress", reason="not_synced", detail="本地还没同步国会申报。")
+            return L("congress", reason="not_synced", detail="Congressional filings have not been synced locally yet.")
         tr = congress_store.query_trades(ticker=tk, limit=12)
         if not tr:
-            return L("congress", reason="no_data", detail=f"已同步的申报里没有 {tk}。")
+            return L("congress", reason="no_data", detail=f"The filings synced so far hold no {tk}.")
         return L("congress", as_of=tr[0].get("tx_date"),
                  data={"trades": tr, "count": len(tr)})
     run("congress", _congress)
 
-    # ── 6. 机构 13F（本地缓存；按 CUSIP，不是代码）──
+    # ── 6. Institutional 13F (local cache; keyed on CUSIP, not on ticker) ──
     def _institution():
         st = institution_store.stats()
         if not st.get("holdings"):
-            return L("institution", reason="not_synced", detail="本地还没导入 13F。")
-        # ⚠️ **本页刻意不做代码 → CUSIP 的映射。**
-        #    13F 只给 CUSIP，SEC 不提供映射表（那是商业数据）；
-        #    按发行人名称匹配实测命中率仅 42.8%，而拿股票代码（"NVDA"）
-        #    去匹配发行人名（"NVIDIA CORP"）几乎必然落空 ——
-        #    那样这一栏会对绝大多数票显示"没有机构持有"，
-        #    把「我们做不到映射」伪装成「没有机构持有」。
+            return L("institution", reason="not_synced", detail="13F has not been imported locally yet.")
+        # ⚠️ **This page deliberately does not map ticker → CUSIP.**
+        #    13F gives CUSIPs only and the SEC publishes no mapping (that is commercial data);
+        #    matching on issuer name was measured hitting just 42.8%, and matching a ticker ("NVDA")
+        #    against an issuer name ("NVIDIA CORP") is near certain to miss —
+        #    which would make this lane read "no institution holds it" for the vast majority of symbols,
+        #    dressing "we cannot do the mapping" up as "no institution holds it".
         return L("institution", reason="no_mapping", detail=(
-            f"本地已导入 {st.get('holdings', 0):,} 条 13F 持仓"
-            f"（{st.get('cusips', 0):,} 个 CUSIP、{st.get('managers', 0):,} 家机构）。"
-            f"但 13F **只给 CUSIP**，SEC 不提供代码→CUSIP 映射，"
-            f"所以无法从 {tk} 这个代码可靠地定位到持仓 —— "
-            f"这是**我们做不到这个映射**，不是「没有机构持有它」。"
-            f"去「机构持仓」分栏按**发行人名称**检索。"))
+            f"{st.get('holdings', 0):,} 13F holdings have been imported locally"
+            f" ({st.get('cusips', 0):,} CUSIPs, {st.get('managers', 0):,} managers). "
+            f"But 13F **gives CUSIPs only**, the SEC publishes no ticker→CUSIP mapping, "
+            f"and so a holding cannot be located reliably from the symbol {tk} — "
+            f"which is **a mapping we cannot do**, not \"no institution holds it\". "
+            f"Search the Institutions section by **issuer name** instead."))
     run("institution", _institution)
 
-    # ── 7. 场外 / 暗池（默认关闭）──
+    # ── 7. Off-exchange / dark pools (off by default) ──
     def _darkpool():
         raw = darkpool_src.weekly(tk)
         parsed = darkpool_parse.parse(raw)
@@ -1366,10 +1366,10 @@ def get_stock(ticker: str) -> dict:
         if not weeks:
             if parsed["unknown_types"]:
                 return L("darkpool", reason="fetch_failed", detail=(
-                    f"FINRA 返回了不认识的记录类型 {parsed['unknown_types']} —— "
-                    f"解析规则可能已过时，这是**解析不兼容**不是没有数据。"))
+                    f"FINRA returned record types not recognised here, {parsed['unknown_types']} — "
+                    f"the parsing rules may be out of date. This is a **parser incompatibility**, not an absence of data."))
             return L("darkpool", reason="no_data",
-                     detail=f"FINRA 没有 {tk} 的场外记录。")
+                     detail=f"FINRA holds no off-exchange records for {tk}.")
         out = _consolidated(tk, weeks[-1], parsed)
         return L("darkpool", as_of=weeks[-1], data={
             "week": out["week"], "ats": out["ats"], "otc": out["otc"],
