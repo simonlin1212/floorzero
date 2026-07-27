@@ -1,10 +1,10 @@
-"""铁律一：**算不出来的东西，不能渲染成 0。**
+"""Rule one: **what cannot be computed must not be rendered as 0.**
 
-这是全项目被 codex 抓得最多的一类缺陷（十个分栏累计九次）。形状各不相同 ——
-累加器从 0 起步、`or 0.0`、`if v` 把 `None` 和 `False` 合并、空 `catch` ——
-但后果一样：一个"我们不知道"被写成了一个具体的数，而读者没法从数字本身看出来。
+This is the defect codex caught most often across the project — nine times over ten sections. The shapes vary:
+an accumulator starting at 0, an `or 0.0`, an `if v` folding `None` in with `False`, an empty `catch` —
+but the consequence is one: an "we do not know" written out as a definite number, with nothing in the number to show it.
 
-这些用例就是把每一次踩过的坑钉在原地。
+These cases pin every one of those traps in place.
 """
 from __future__ import annotations
 
@@ -16,10 +16,10 @@ from modules import market as mkt
 from modules import scanner as sc
 
 
-# ─────────────────────── 期权流 ───────────────────────
+# ─────────────────────── Options flow ───────────────────────
 
 def _contract(**kw):
-    """造一个 CBOE 合约（字段名与 sources.cboe.Contract 一致）。"""
+    """Build a Cboe contract (field names matching sources.cboe.Contract)."""
     from sources.cboe import Contract
     base = dict(symbol="X260130C00100000", expiry="2260-01-30", type="call",
                 strike=100.0, bid=1.0, ask=1.2, volume=100.0,
@@ -35,18 +35,18 @@ def _chain(contracts, spot=100.0):
                  session="2260-01-01", contracts=tuple(contracts))
 
 
-def test_vol_oi_零持仓时不是无穷也不是零():
-    """OI=0 → 比值**算不出**。塞 999 会伪装成"比值极高"，塞 0 会把它埋掉。"""
+def test_vol_oi_with_zero_open_interest_is_neither_infinity_nor_zero():
+    """OI=0 → the ratio is **not computable**. A 999 disguises it as an extreme ratio; a 0 buries it."""
     rows = flow.parse(_chain([_contract(open_interest=0.0, volume=100.0)]))
     assert rows[0].vol_oi is None
     assert rows[0].zero_prior_oi is True
 
 
-def test_delta_敞口某一边全缺时给空值而不是零():
-    """认沽有 delta、认购全缺 → 认购侧必须是 None。
+def test_delta_exposure_is_null_not_zero_when_one_side_is_wholly_missing():
+    """Puts have deltas, calls have none → the call side must be None.
 
-    只看"总共有几个 delta"是不够的：那样认购侧照样显示 0，
-    把"这边算不出"说成了"这边没有敞口"。
+    Counting "how many deltas there are in total" is not enough: the call side would still show 0,
+    turning "this side cannot be computed" into "this side has no exposure".
     """
     ch = _chain([
         _contract(type="call", delta=None),
@@ -54,14 +54,14 @@ def test_delta_敞口某一边全缺时给空值而不是零():
                   symbol="X260130P00090000"),
     ])
     exp = flow.exposure(flow.parse(ch), spot=100.0)
-    assert exp["call_delta_shares"] is None, "认购侧应为 None"
+    assert exp["call_delta_shares"] is None, "the call side should be None"
     assert exp["put_delta_shares"] is not None
-    # 一边缺了，总额只是半张图 —— 也必须是 None
+    # With one side missing, the total is half a picture — it too must be None
     assert exp["total_delta_shares"] is None
     assert exp["counted_delta_call"] == 0 and exp["missing_delta_call"] == 1
 
 
-def test_权利金某一边全缺报价时给空值而不是零():
+def test_premium_is_null_not_zero_when_one_side_has_no_quotes():
     ch = _chain([
         _contract(type="call", bid=None, ask=None),
         _contract(type="put", strike=90.0, bid=2.0, ask=2.2,
@@ -69,30 +69,30 @@ def test_权利金某一边全缺报价时给空值而不是零():
     ])
     rows = flow.parse(ch)
     r = flow.ratios(rows, rows)
-    assert r["by_notional"]["call"] is None, "认购侧算不出，不能是 0"
+    assert r["by_notional"]["call"] is None, "the call side is not computable and must not be 0"
     assert r["by_notional"]["put"] is not None
-    assert r["by_notional"]["pc"] is None, "一边算不出，比值也算不出"
+    assert r["by_notional"]["pc"] is None, "with one side incomputable, the ratio is too"
 
 
-def test_认沽认购比分母为零时给空值():
-    """"没有认购成交"和"认沽/认购 = 0"是完全相反的两件事。"""
+def test_put_call_ratio_is_null_when_the_denominator_is_zero():
+    """"No call volume" and "put/call = 0" are opposite statements."""
     ch = _chain([_contract(type="put", strike=90.0, symbol="X260130P00090000")])
     rows = flow.parse(ch)
     assert flow.ratios(rows, rows)["by_volume"]["pc"] is None
 
 
-def test_中间价缺一边报价时不回退到最后成交价():
-    """`last` 可能是几天前的价，用它乘今天的成交量会错得看不出来。"""
+def test_mid_does_not_fall_back_to_last_when_one_side_of_the_quote_is_missing():
+    """`last` may be days old, and multiplying it by today's volume goes wrong invisibly."""
     rows = flow.parse(_chain([_contract(bid=None, ask=None, last=99.0)]))
     assert rows[0].mid is None
-    assert rows[0].notional is None, "不能拿 last 顶替中间价"
+    assert rows[0].notional is None, "last must not stand in for the mid"
 
 
-def test_持仓量口径必须覆盖今日无成交的合约():
-    """今天没成交 ≠ 持仓是 0。
+def test_open_interest_basis_must_cover_contracts_that_did_not_trade_today():
+    """Not trading today ≠ holding zero open interest.
 
-    第一版把三个口径都算在"有成交子集"上，于是"沉淀下来的仓位结构"
-    实际是"今天碰过的那些合约的仓位" —— 冷门标的上差一个数量级。
+    The first version computed all three bases on the traded subset, so "the structure of settled positions"
+    was really "positions in the contracts touched today" — an order of magnitude out on a thin symbol.
     """
     ch = _chain([
         _contract(volume=100.0, open_interest=10.0),
@@ -102,15 +102,15 @@ def test_持仓量口径必须覆盖今日无成交的合约():
     scope = flow.parse(ch, traded_only=False)
     traded = [r for r in scope if r.volume > 0]
     r = flow.ratios(traded, scope)
-    assert r["by_oi"]["call"] == 1009.0, "持仓量要算上今天没成交的那 999"
-    assert r["by_volume"]["call"] == 100.0, "成交量只算有成交的"
+    assert r["by_oi"]["call"] == 1009.0, "open interest must include the 999 that did not trade today"
+    assert r["by_volume"]["call"] == 100.0, "volume counts only what traded"
 
 
-# ─────────────────────── 扫描器 ───────────────────────
+# ─────────────────────── Scanner ───────────────────────
 
-def test_iv_rank_三种空值原因必须分得开():
-    """`None` 有三种成因，一律说成"还差 N 天"会在后两种上撒谎 ——
-    尤其"当前 IV 缺失"时会显示"还差 **0** 天"，自相矛盾。"""
+def test_the_three_causes_of_a_null_iv_rank_stay_distinguishable():
+    """`None` has three causes, and calling them all "N days to go" lies about the last two —
+    a missing current IV would read "**0** days to go", contradicting itself."""
     cases = [
         ({"symbol": "A", "iv30": 30.0}, [20.0] * 70, "flat_history"),
         ({"symbol": "B", "iv30": None}, [20.0, 25.0] * 40, "no_current_iv"),
@@ -119,26 +119,26 @@ def test_iv_rank_三种空值原因必须分得开():
     for q, hist, want in cases:
         row = sc.build_row(q, hist, [100.0] * 10)
         assert row.iv_rank is None
-        assert row.iv_reason == want, f"{q['symbol']} 应为 {want}"
+        assert row.iv_reason == want, f"{q['symbol']} should be {want}"
 
 
-def test_中位数偶数样本取中间两个的平均():
-    """`srt[n//2]` 取的是**上**中位数：[10,20,30,40] 会得到 30 而非 25，
-    差 20%，量比筛选的结果会跟着变。"""
+def test_median_of_an_even_sample_averages_the_middle_two():
+    """`srt[n//2]` takes the **upper** median: [10,20,30,40] gives 30 rather than 25,
+    20% out, and the volume-multiple screen shifts with it."""
     assert sc._median([10, 20, 30, 40]) == 25.0
     assert sc._median([10, 20, 30]) == 20.0
     assert sc._median([]) is None
 
 
-def test_量比中位数为零时算不出而不是零或无穷():
+def test_volume_multiple_with_a_zero_median_is_incomputable_not_zero_or_infinity():
     row = sc.build_row({"symbol": "Z", "iv30": 30.0, "volume": 100.0},
                        [], [0.0] * 10)
     assert row.volume_x_median is None
-    assert row.volume_x_reason == "zero_median", "这和'历史不够'是两码事"
+    assert row.volume_x_reason == "zero_median", "a different thing from 'not enough history'"
 
 
-def test_算不出的行排序时沉底而不是当成最低值():
-    """`or 0` 会让"没有"和"真的 0"排在一起，读者分不出哪个是哪个。"""
+def test_incomputable_rows_sink_to_the_bottom_rather_than_counting_as_the_lowest():
+    """`or 0` sorts "absent" alongside "genuinely 0", with no way for the reader to tell which is which."""
     def mk(sym, rank):
         return sc.ScanRow(symbol=sym, session="2260-01-01", price=1.0,
                           change_pct=0.0, volume=1.0, iv30=1.0, iv30_change=0.0,
@@ -151,8 +151,8 @@ def test_算不出的行排序时沉底而不是当成最低值():
     assert [r.symbol for r in out] == ["HIGH", "ZERO", "NONE"]
 
 
-def test_筛选要把算不出与不满足条件分开报():
-    """`min_iv_rank=80` 滤掉的行里，"还没攒够历史"不是"排名低于 80"。"""
+def test_filtering_reports_incomputable_apart_from_failing_the_condition():
+    """Among the rows `min_iv_rank=80` filters out, "not enough history accrued" is not "a rank below 80"."""
     rows = [sc.build_row({"symbol": "A", "iv30": 30.0}, [20.0] * 5, [])]
     kept, exc = sc.apply_filters(rows, min_iv_rank=80)
     assert kept == []
@@ -160,19 +160,19 @@ def test_筛选要把算不出与不满足条件分开报():
     assert exc["iv_reasons"] == {"insufficient_history": 1}
 
 
-# ─────────────────────── 宏观 ───────────────────────
+# ─────────────────────── Macro ───────────────────────
 
-def test_倒挂是三态不是两态():
-    """某个期限缺值 → 那条利差**算不出**，不能混进"均为正"。"""
+def test_inversion_has_three_states_not_two():
+    """A missing tenor → that spread is **not computable**, and must not be folded into "all positive"."""
     p = mkt.parse_curve({"date": "2260-01-01", "BC_3MONTH": 3.9,
                          "BC_2YEAR": 4.3, "BC_10YEAR": 4.7, "BC_30YEAR": None})
     inv = p.is_inverted
     assert inv["10Y-2Y"] is False
-    assert inv["30Y-10Y"] is None, "30Y 缺值 → 算不出，不是「未倒挂」"
+    assert inv["30Y-10Y"] is None, "30Y is missing → not computable, which is not 'not inverted'"
     assert p.spread("30Y-10Y") is None
 
 
-# ─────────────────────── 暗池 ───────────────────────
+# ─────────────────────── Dark pools ───────────────────────
 
 def _dp_row(**kw):
     base = dict(summaryTypeCode="ATS_W_SMBL_FIRM", weekStartDate="2260-01-05",
@@ -184,20 +184,20 @@ def _dp_row(**kw):
     return base
 
 
-def test_成交量为空的记录被排除而不是当成零():
+def test_records_with_a_null_volume_are_excluded_rather_than_counted_as_zero():
     parsed = dp.parse([_dp_row(MPID="AAA", totalWeeklyShareQuantity=""),
                        _dp_row(MPID="BBB")])
     w = dp.week_summary(parsed, "2260-01-05")
-    assert w["ats"]["shares"] == 1000.0, "只算有值的那条"
+    assert w["ats"]["shares"] == 1000.0, "only the row that has a value counts"
     assert w["ats"]["null_share_records"] == 1
-    assert w["share"] is None, "分子偏小 → 占比也不给"
+    assert w["share"] is None, "a numerator that is too small → no share either"
 
 
-def test_行数不等于机构数():
-    """非 ATS 场外的 MPID 全为空 —— 32 条记录点不出一家。"""
+def test_a_row_count_is_not_a_firm_count():
+    """Non-ATS off-exchange has a blank MPID throughout — 32 records name not one firm."""
     parsed = dp.parse([_dp_row(summaryTypeCode="OTC_W_SMBL_FIRM", MPID=""),
                        _dp_row(summaryTypeCode="OTC_W_SMBL_FIRM", MPID="")])
     w = dp.week_summary(parsed, "2260-01-05")
     assert w["otc"]["records"] == 2
-    assert w["otc"]["firms"] == 0, "一家都点不出来，不能说成 2 家"
+    assert w["otc"]["firms"] == 0, "not one can be named, so it must not read as 2"
     assert w["otc"]["anonymous_records"] == 2

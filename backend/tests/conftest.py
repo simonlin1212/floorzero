@@ -1,15 +1,16 @@
-"""测试底座。
+"""The test harness.
 
-━━━ 两条约定 ━━━
+━━━ Two conventions ━━━
 
-1. **不打网络。** 这里测的是加工层的算术与语义，不是上游接口还活着没有。
-   上游是否可达属于运行时的事，写进单元测试只会让测试随行情变红。
-   （数据源层的实况以及"哪年哪月实测到什么"记在各模块的文档字符串里。）
+1. **No network.** What is tested here is the arithmetic and semantics of the processing layer,
+   not whether an upstream endpoint is alive. Reachability is a runtime matter, and putting it in
+   unit tests only makes them go red with the market. (What each source actually does, and what was
+   measured when, lives in that module's own docstring.)
 
-2. **不碰用户的真实数据库。** `modules/db.py` 默认落 `~/.floorzero/history.db`，
-   跑一次测试就把人家攒了几个月的持仓量历史写脏了 —— 而那份历史**补不回来**。
-   所以每个用到落库的测试都走 `tmp_db`，指向一次性目录，
-   并且**在放行之前先自证隔离生效**（见下）。
+2. **Never touch the user's real database.** `modules/db.py` defaults to `~/.floorzero/history.db`,
+   and one test run would dirty months of accrued open-interest history — history that **cannot be backfilled**.
+   So every test that stores anything goes through `tmp_db`, pointed at a throwaway directory,
+   and **proves the isolation works before letting anything through** (see below).
 """
 from __future__ import annotations
 
@@ -19,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-# 让 `from modules import ...` 能直接用（测试从仓库任意位置都跑得起来）
+# So `from modules import ...` works directly (tests run from anywhere in the repo)
 BACKEND = Path(__file__).resolve().parent.parent
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
@@ -27,27 +28,27 @@ if str(BACKEND) not in sys.path:
 
 @pytest.fixture
 def tmp_db(tmp_path, monkeypatch):
-    """把 SQLite 指到一次性目录，并**先证明这件事真的生效了**。
+    """Point SQLite at a throwaway directory, and **prove that actually took effect first**.
 
-    ⚠️ `db.py` 在**导入时**就读环境变量算出 `DB_PATH`，所以只设环境变量
-    是不够的 —— 必须连模块一起重载，否则测试照样写进用户的真实库。
-    这个坑不显眼：测试会全部通过，只是顺手污染了别人的数据。
+    ⚠️ `db.py` computes `DB_PATH` from the environment **at import time**, so setting the variable
+    is not enough — the modules have to be reloaded with it, or the tests write into the user's real
+    database regardless. The trap is quiet: every test passes, having polluted someone's data on the way.
 
-    ⚠️ 更要命的是**光重载也不够**。如果哪天 `db.py` 把变量名拼错、
-    或改回写死 `~/.floorzero`，这个 fixture 会一声不响地放行，
-    第一次 `record()` 就污染真实历史 —— 而那份历史补不回来。
-    所以这里 **fail-closed**：放行前先断言 `DB_PATH` 确实落在临时目录里，
-    不满足就当场终止，绝不"先跑了再说"。
+    ⚠️ Worse, **reloading alone is not enough either**. Should `db.py` one day misspell the variable
+    or go back to a hardcoded `~/.floorzero`, this fixture would wave it through without a word,
+    and the first `record()` would pollute real history — which cannot be backfilled.
+    So it is **fail-closed**: before letting anything through it asserts that `DB_PATH` really does
+    land inside the temporary directory, and aborts on the spot rather than running anyway.
     """
     monkeypatch.setenv("FZ_DATA_DIR", str(tmp_path))
     db = _reload_db_stack()
 
-    # ⭐ 隔离自证。这一句是整个 fixture 存在的理由。
+    # ⭐ The isolation proves itself. This one line is why the fixture exists.
     resolved = Path(db.DB_PATH).resolve()
     assert resolved.is_relative_to(tmp_path.resolve()), (
-        f"隔离失效：DB_PATH 落在 {resolved}，不在临时目录 {tmp_path} 里。\n"
-        f"在写任何东西之前中止 —— 用户 ~/.floorzero 里的历史补不回来。\n"
-        f"多半是 db.py 不再认 FZ_DATA_DIR 了。")
+        f"Isolation failed: DB_PATH is at {resolved}, not inside the temporary directory {tmp_path}.\n"
+        f"Aborting before anything is written — the history in the user's ~/.floorzero cannot be backfilled.\n"
+        f"Most likely db.py no longer honours FZ_DATA_DIR.")
 
     yield tmp_path
     monkeypatch.delenv("FZ_DATA_DIR", raising=False)
@@ -55,11 +56,11 @@ def tmp_db(tmp_path, monkeypatch):
 
 
 def _reload_db_stack():
-    """重载 `db` 以及**所有已导入的、依赖它的模块**。
+    """Reload `db` **and every already-imported module that depends on it**.
 
-    ⚠️ 不写死名单：以后新增一个 `*_store`，手工名单会漏掉它，
-    而漏掉的那个模块仍指向真实库 —— 又是一次"测试全绿、数据被写脏"。
-    这里按"模块里有没有 `db` 这个引用"来判断，让它自己发现。
+    ⚠️ No hardcoded list: add a `*_store` later and a hand-written list misses it,
+    while the missed module still points at the real database — "all tests green, data dirtied" all over again.
+    This decides by whether a module holds a reference named `db`, so it discovers them itself.
     """
     from modules import db
     importlib.reload(db)
@@ -74,9 +75,9 @@ def _reload_db_stack():
 
 @pytest.fixture(autouse=True)
 def _contact(monkeypatch):
-    """给个占位联系方式。
+    """Supply a placeholder contact.
 
-    真实运行时 `FZ_CONTACT` 未配会 fail-fast（那是刻意的）；
-    测试里不需要每个用例都去演一遍那件事，另有专门的用例测它。
+    At runtime an unset `FZ_CONTACT` fails fast, which is deliberate;
+    the tests need not act that out in every case, and a dedicated case covers it.
     """
     monkeypatch.setenv("FZ_CONTACT", "Test Runner test@example.invalid")

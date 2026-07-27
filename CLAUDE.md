@@ -83,7 +83,7 @@ These recur throughout and are worth internalising before editing:
 cd backend && pip install -r requirements-dev.txt && python -m pytest
 ```
 
-`backend/tests/` — 49 cases, no network. They exist to pin the seven rules above rather
+`backend/tests/` — 51 cases, no network. They exist to pin the seven rules above rather
 than to chase coverage, so when you add a rule, add the case that would catch its
 violation. Two conventions:
 

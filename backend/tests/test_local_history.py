@@ -1,13 +1,13 @@
-"""铁律二：本地沉淀的语义。
+"""Rule two: the semantics of locally accrued history.
 
-这两份历史（逐合约持仓量、逐标的 iv30）**补不回来** —— CBOE 只给当下。
-所以它们出错的代价和别处不一样：别的线错了重拉一次就好，这里错了就是永久的。
+These two histories (open interest per contract, iv30 per symbol) **cannot be backfilled** — Cboe gives only the present.
+So getting them wrong costs differently from everywhere else: other lanes can be refetched, and a mistake here is permanent.
 
-四个具体的坑，每个都真踩过：
-1. 按**墙上日期**归档 → 周末连开两天，同一份周五数据存成"两天的观测"
-2. 算 IV Rank 时不按目标时段截断 → **前视偏差**（用还没发生的行情判断当天）
-3. 到期合约从链里消失 → 被当成"净平仓全部头寸"
-4. 同时段重录用裸 `INSERT OR REPLACE` → 上游这次少给一个字段就把已攒的值清成 NULL
+Four specific traps, every one of them hit for real:
+1. Keying on the **wall-clock date** → open the page twice over a weekend and one Friday's data is stored as "two days of observation"
+2. Not truncating history to the target session when computing IV Rank → **lookahead bias** (judging a day with quotes that had not happened)
+3. An expiring contract leaving the chain → read as "the whole position closed out"
+4. A bare `INSERT OR REPLACE` on re-recording a session → one field missing upstream wipes an already-accrued value to NULL
 """
 from __future__ import annotations
 
@@ -25,47 +25,47 @@ def _oi(expiry, typ, strike, oi, vol=0.0):
             "open_interest": oi, "volume": vol}
 
 
-# ─────────────────── 归档键 = 交易时段，不是墙上日期 ───────────────────
+# ─────────────────── The key is the trading session, not the wall-clock date ───────────────────
 
-def test_归档键用的是传入的交易时段而不是墙上日期(tmp_db):
-    """周末连开两次页面，拿到的是同一份周五收盘数据。
+def test_the_key_is_the_session_passed_in_not_the_wall_clock_date(tmp_db):
+    """Open the page twice over a weekend and both times you get the same Friday close.
 
-    按墙上日期存 → 库里出现"两天"，OI 差值全是 0 ——
-    看着像"持仓没变"，其实是**根本没有新数据**。
+    Stored by wall clock, the database shows "two days" and every OI difference is 0 —
+    which looks like "positions did not change" when there was **no new data at all**.
 
-    ⚠️ 只断言"只有一天"是**假阳性**：两次调用发生在同一个墙上日期，
-    哪怕实现完全忽略传入的 session 改用 `date.today()`，结果照样是一天。
-    所以这里直接断言**归档键等于传进去的那个值**。
+    ⚠️ Asserting only "there is one day" is a **false positive**: both calls happen on the same wall-clock
+    date, so even an implementation that ignored the session entirely and used `date.today()` would pass.
+    So this asserts that **the key equals the value passed in**.
     """
     from modules import flow_store as fs
     rows = [_oi("2260-02-20", "call", 100.0, 500.0, 10.0)]
     fs.record("X", "2260-01-05", 100.0, rows)
-    fs.record("X", "2260-01-05", 100.0, rows)      # 同一时段再来一次
+    fs.record("X", "2260-01-05", 100.0, rows)      # the same session again
     got = [d["snapshot_date"] for d in fs.dates("X")]
-    assert got == ["2260-01-05"], "归档键必须是传入的时段，不是今天"
+    assert got == ["2260-01-05"], "the key must be the session passed in, not today"
 
 
-def test_同一时段重录是整段替换而不是逐行合并(tmp_db):
-    """只用 `INSERT OR REPLACE`，本次没带的旧行会留着 ——
-    于是同一时段下混着两次不同口径的抓取，差值算的是拼接结果。"""
+def test_re_recording_a_session_replaces_it_whole_rather_than_merging_rows(tmp_db):
+    """With `INSERT OR REPLACE` alone, old rows not included this time stay —
+    so one session holds two pulls of different scope, and the difference is computed across the stitch."""
     from modules import flow_store as fs
     from modules import db
     fs.record("X", "2260-01-05", 100.0,
               [_oi("2260-02-20", "call", 100.0, 500.0),
                _oi("2260-02-20", "call", 110.0, 300.0)])
     fs.record("X", "2260-01-05", 100.0,
-              [_oi("2260-02-20", "call", 100.0, 500.0)])   # 这次只给一行
-    # ⚠️ 直接查明细行，不看 `dates()` 的汇总字段 ——
-    #    否则是"被测的写入逻辑"与"被测的汇总逻辑"互相作证。
+              [_oi("2260-02-20", "call", 100.0, 500.0)])   # only one row this time
+    # ⚠️ Query the detail rows directly rather than reading `dates()`'s summary fields —
+    #    otherwise the write logic under test and the summary logic under test vouch for each other.
     with db.connect() as conn:
         strikes = [r["strike"] for r in conn.execute(
             "SELECT strike FROM oi_snapshot WHERE ticker='X' "
             "AND snapshot_date='2260-01-05'")]
-    assert strikes == [100.0], "110 那行不该留着"
+    assert strikes == [100.0], "the 110 row should not have stayed"
 
 
-def test_持仓量为空时当场报错而不是记个零(tmp_db):
-    """上游真给了 None，那是"取不到" —— 落库成 0 会在明天变成一笔凭空的变化。"""
+def test_a_null_open_interest_raises_on_the_spot_rather_than_storing_a_zero(tmp_db):
+    """Upstream really did give None, which means "could not fetch" — stored as 0 it becomes a phantom change tomorrow."""
     from modules import flow_store as fs
     with pytest.raises(ValueError, match="failed fetch"):
         fs.record("X", "2260-01-05", 100.0,
@@ -73,13 +73,13 @@ def test_持仓量为空时当场报错而不是记个零(tmp_db):
                     "open_interest": None, "volume": 1.0}])
 
 
-def test_缺交易时段的行情真的没进库(tmp_db):
-    """归档键错了 IV 样本就串了，而串掉之后从数据里看不出来。
-    所以宁可丢，但**必须报出来丢了几条**。
+def test_a_quote_with_no_session_really_does_not_reach_the_database(tmp_db):
+    """Get the key wrong and the IV samples are scrambled, in a way the data itself will not show.
+    So dropping is preferable — but **how many were dropped has to be reported**.
 
-    ⚠️ 只看返回的计数是**假阳性**：实现完全可以一边返回 `dropped=1`、
-    一边把 B 用墙上日期或 NULL 写进去 —— 计数对了，历史已经脏了。
-    所以这里**直接查库**。
+    ⚠️ Checking only the returned count is a **false positive**: an implementation could return `dropped=1`
+    and still write B in under a wall-clock date or a NULL — the count right, the history already dirty.
+    So this **queries the database directly**.
     """
     from modules import db, scanner_store as ss
     rec = ss.record_quotes([_q("A", "2260-01-05"), _q("B", None)])
@@ -87,54 +87,54 @@ def test_缺交易时段的行情真的没进库(tmp_db):
     with db.connect() as conn:
         syms = [r["symbol"] for r in conn.execute(
             "SELECT symbol FROM quote_snapshot")]
-    assert syms == ["A"], "B 不该以任何形式落库"
+    assert syms == ["A"], "B should not have been stored in any form"
 
 
-# ─────────────────── 前视偏差 ───────────────────
+# ─────────────────── Lookahead bias ───────────────────
 
-def test_按目标时段截断历史避免前视偏差(tmp_db):
-    """查 01-10 的扫描结果时，样本里混进 01-28 的数据 ——
-    等于用还没发生的行情判断当天 IV 是高是低。"""
+def test_history_is_truncated_at_the_target_session_to_avoid_lookahead_bias(tmp_db):
+    """Viewing the 01-10 scan results with 01-28 data in the sample
+    is judging that day's IV with quotes that had not happened yet."""
     from modules import scanner_store as ss
     ss.record_quotes([_q("X", f"2260-01-{d:02d}", iv30=float(d))
                       for d in range(1, 29)])
     full = ss.history(["X"])["X"]["iv"]
     cut = ss.history(["X"], as_of="2260-01-10")["X"]["iv"]
     assert max(full) == 28.0
-    assert max(cut) == 10.0, "as_of 之后的数据不该进样本"
+    assert max(cut) == 10.0, "data after as_of must not enter the sample"
     assert len(cut) == 10
 
 
-def test_取数按每只各自最新一条而不是只取全库最新时段(tmp_db):
-    """一轮扫描里各标的的 `last_trade_time` 未必相同（停牌、上游延迟）。
-    只取等于最新时段的那批，会把另一批**成功入库的**标的整个隐掉。"""
+def test_each_symbol_takes_its_own_newest_row_not_only_the_newest_session(tmp_db):
+    """Symbols within one scan need not share a `last_trade_time` (a halt, a delayed upstream update).
+    Taking only those equal to the newest session hides another set of **successfully stored** symbols entirely."""
     from modules import scanner_store as ss
     ss.record_quotes([_q("A", "2260-01-28"), _q("B", "2260-01-27")])
     got = {r["symbol"] for r in ss.quotes_at("2260-01-28")}
-    assert got == {"A", "B"}, "B 只是时段旧一天，不该被隐掉"
+    assert got == {"A", "B"}, "B is merely a session older and should not be hidden"
 
 
-def test_重扫时上游缺字段不会清掉已攒的值(tmp_db):
-    """裸 `INSERT OR REPLACE` 会把已经攒到的 iv30 覆盖成 NULL ——
-    样本数不增反减，而这份历史补不回来。"""
+def test_a_rescan_missing_a_field_upstream_does_not_wipe_an_accrued_value(tmp_db):
+    """A bare `INSERT OR REPLACE` overwrites an already-accrued iv30 with NULL —
+    the sample count falls instead of rising, and this history cannot be backfilled."""
     from modules import scanner_store as ss
     ss.record_quotes([_q("A", "2260-01-05", iv30=42.0)])
     ss.record_quotes([{"symbol": "A", "session": "2260-01-05", "price": 9.0,
                        "change_pct": 0.0, "volume": None, "iv30": None,
                        "security_type": "stock"}])
     row = ss.quotes_at("2260-01-05")[0]
-    assert row["iv30"] == 42.0, "已有的 iv30 要保住"
-    assert row["price"] == 9.0, "有新值的字段照常更新"
+    assert row["iv30"] == 42.0, "the existing iv30 has to survive"
+    assert row["price"] == 9.0, "fields that do have a new value update as normal"
 
 
-# ─────────────────── 持仓量差值 ───────────────────
+# ─────────────────── Open interest differences ───────────────────
 
 def _seed_oi(fs):
     fs.record("T", "2260-01-05", 100.0, [
-        _oi("2260-01-06", "call", 100.0, 1000.0, 50.0),   # 期间到期
-        _oi("2260-03-19", "put", 90.0, 500.0, 0.0),       # 无成交、持仓不变
+        _oi("2260-01-06", "call", 100.0, 1000.0, 50.0),   # expires during the period
+        _oi("2260-03-19", "put", 90.0, 500.0, 0.0),       # no volume, open interest unchanged
         _oi("2260-03-19", "call", 110.0, 200.0, 10.0),
-        _oi("2260-06-18", "call", 120.0, 777.0, 5.0),     # 结束快照里会缺席
+        _oi("2260-06-18", "call", 120.0, 777.0, 5.0),     # will be absent from the end snapshot
     ])
     fs.record("T", "2260-01-07", 100.0, [
         _oi("2260-03-19", "put", 90.0, 500.0, 0.0),
@@ -142,29 +142,29 @@ def _seed_oi(fs):
     ])
 
 
-def test_到期合约消失不算净平仓(tmp_db):
+def test_an_expiring_contract_leaving_the_chain_is_not_a_close_out(tmp_db):
     from modules import flow_store as fs
     _seed_oi(fs)
     r = fs.oi_change("T")
     assert r["expired_excluded"] == 1
     assert r["expired_oi"] == 1000.0
     assert all(x["expiry"] != "2260-01-06" for x in r["lost"]), \
-        "到期只是到期，不是有人平仓"
+        "expiring is expiring, and not anyone closing out"
 
 
-def test_未到期却缺席是抓取不完整不是持仓归零(tmp_db):
-    """CBOE 会把合约挂到到期为止、归零也照列 ——
-    所以"未到期 + 缺席"只能说明那次抓取漏了它。"""
+def test_unexpired_but_absent_means_an_incomplete_pull_not_a_zeroed_position(tmp_db):
+    """Cboe lists contracts through to expiry and keeps listing them at zero —
+    so "not expired and absent" can only mean that pull missed it."""
     from modules import flow_store as fs
     _seed_oi(fs)
     r = fs.oi_change("T")
     assert r["incomplete_excluded"] == 1
     assert r["incomplete_oi"] == 777.0
     assert all(x["expiry"] != "2260-06-18" for x in r["lost"]), \
-        "不该伪造出 -777 的净减持"
+        "a -777 net reduction must not be fabricated"
 
 
-def test_无成交但持仓未变的合约不进增减榜(tmp_db):
+def test_contracts_with_no_volume_and_unchanged_open_interest_stay_out_of_both_tables(tmp_db):
     from modules import flow_store as fs
     _seed_oi(fs)
     r = fs.oi_change("T")
@@ -172,7 +172,7 @@ def test_无成交但持仓未变的合约不进增减榜(tmp_db):
     assert ("2260-03-19", "put") not in moved
 
 
-def test_只攒到一天时说的是还没攒够而不是没有变化(tmp_db):
+def test_one_day_accrued_says_not_enough_yet_rather_than_no_change(tmp_db):
     from modules import flow_store as fs
     fs.record("T", "2260-01-05", 100.0, [_oi("2260-03-19", "call", 100.0, 1.0)])
     r = fs.oi_change("T")
@@ -180,9 +180,9 @@ def test_只攒到一天时说的是还没攒够而不是没有变化(tmp_db):
     assert "at least two" in r["note"]
 
 
-def test_伪造或反向的日期被拒绝(tmp_db):
-    """`_load()` 查不到只会返回空字典 —— 差值就把"这天没存过"
-    算成"这天持仓全是 0"，输出一份"全量清仓"的假报告。"""
+def test_invented_or_reversed_dates_are_rejected(tmp_db):
+    """`_load()` returns an empty dict when it finds nothing — and the difference then reads
+    "this day was never stored" as "open interest was zero that day", producing a fake wholesale-exit report."""
     from modules import flow_store as fs
     _seed_oi(fs)
     for kw in ({"date_to": "1999-01-01"},
@@ -191,9 +191,9 @@ def test_伪造或反向的日期被拒绝(tmp_db):
         assert fs.oi_change("T", **kw)["enough"] is False, kw
 
 
-def test_相邻判定看快照顺序不看自然日差(tmp_db):
-    """周二→周五也是 3 天但中间漏了两次观测；
-    周五→周一虽然也是 3 天，却确实相邻。库里的顺序才是真相。"""
+def test_adjacency_follows_snapshot_order_not_the_calendar_gap(tmp_db):
+    """Tuesday→Friday is also 3 days but misses two observations;
+    Friday→Monday is 3 days too and genuinely adjacent. The order in the database is the truth."""
     from modules import flow_store as fs
     _seed_oi(fs)
     fs.record("T", "2260-01-09", 100.0, [_oi("2260-03-19", "call", 110.0, 500.0)])
