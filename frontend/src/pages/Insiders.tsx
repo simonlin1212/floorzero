@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactECharts from "echarts-for-react";
 import { Card, PageHead, Td, Th, esc } from "../components/Shell";
 
-/* ── 类型（与后端 modules/insider.py 对齐）── */
+/* ── Types (aligned with the backend's modules/insider.py) ── */
 type Trade = {
   ticker: string | null;
   company: string;
@@ -95,33 +95,33 @@ type SyncState = {
 };
 
 const GROUPS = [
-  { v: "open_market", label: "公开市场", hint: "代码 P/S — 唯一含主动买卖意图的部分" },
-  { v: "compensation", label: "薪酬类", hint: "授予/行权/代扣税，不代表买卖决策" },
-  { v: "all", label: "全部", hint: "含薪酬类，会淹没真实买卖信号" },
+  { v: "open_market", label: "Open market", hint: "Codes P/S — the only part carrying an intent to trade" },
+  { v: "compensation", label: "Compensation", hint: "Grants, exercises, tax withholding; no decision to trade" },
+  { v: "all", label: "All", hint: "Includes compensation, which drowns the real trading signal" },
 ];
 const SIDES = [
-  { v: null as string | null, label: "全部" },
-  { v: "buy", label: "买入" },
-  { v: "sell", label: "卖出" },
+  { v: null as string | null, label: "All" },
+  { v: "buy", label: "Buy" },
+  { v: "sell", label: "Sell" },
 ];
 const ROLES = [
-  { v: null as string | null, label: "不限身份" },
-  { v: "officer", label: "高管" },
-  { v: "director", label: "董事" },
-  { v: "ten_pct", label: "10%股东" },
+  { v: null as string | null, label: "Any role" },
+  { v: "officer", label: "Officer" },
+  { v: "director", label: "Director" },
+  { v: "ten_pct", label: "10% holder" },
 ];
 const PLANS = [
-  { v: null as string | null, label: "不限计划" },
-  { v: "yes", label: "10b5-1 计划内" },
-  { v: "no", label: "非计划内" },
-  // 三态分开：NULL 是「申报未标注」（2023 年前无此字段），不是「确认非计划内」
-  { v: "unknown", label: "未标注" },
+  { v: null as string | null, label: "Any plan status" },
+  { v: "yes", label: "Under a 10b5-1 plan" },
+  { v: "no", label: "Not under a plan" },
+  // The three states are kept apart: NULL is "the filing did not mark it" (no such field before 2023), not "confirmed not under a plan"
+  { v: "unknown", label: "Not marked" },
 ];
 const RANGES = [
-  { d: 30, label: "近 30 天" },
-  { d: 90, label: "近 90 天" },
-  { d: 365, label: "近 1 年" },
-  { d: 0, label: "全部" },
+  { d: 30, label: "Last 30 days" },
+  { d: 90, label: "Last 90 days" },
+  { d: 365, label: "Last year" },
+  { d: 0, label: "All" },
 ];
 
 function daysAgo(n: number): string | undefined {
@@ -163,7 +163,7 @@ export default function Insiders() {
     const seq = ++reqRef.current;
     setLoading(true);
     setErr(null);
-    // ⚠️ 明细与汇总**共用同一份查询串** —— 拆成两份迟早会画岔口径
+    // ⚠️ Detail and summary **share one query string** — split into two and they will draw different scopes sooner or later
     const q = new URLSearchParams({ group });
     if (side) q.set("direction", side);
     if (role) q.set("role", role);
@@ -186,14 +186,14 @@ export default function Insiders() {
       const nextTrades = ((await t.value.json()) as { trades: Trade[] }).trades;
       const nextSummary =
         s.status === "fulfilled" && s.value.ok ? ((await s.value.json()) as Summary) : null;
-      if (seq !== reqRef.current) return; // 已被更新的筛选取代
+      if (seq !== reqRef.current) return; // superseded by a newer filter
       setTrades(nextTrades);
       setSummary(nextSummary);
     } catch (e) {
       if (seq !== reqRef.current) return;
       setErr(e instanceof Error ? e.message : String(e));
-      // ⚠️ 失败时必须清掉旧结果：否则「全市场」的表格和图会顶着
-      // 「NVDA」的筛选标签继续显示，用户看到的范围与标注的完全不符。
+      // ⚠️ Old results must be cleared on failure: otherwise the market-wide table and charts carry on
+      // displaying under an "NVDA" filter label, and what the user sees does not match what it says.
       setTrades([]);
       setSummary(null);
     } finally {
@@ -219,7 +219,7 @@ export default function Insiders() {
           void load();
         }
       } catch {
-        /* 轮询失败不打断页面 */
+        /* a failed poll should not interrupt the page */
       }
     }, 3000);
   }, [load]);
@@ -234,7 +234,7 @@ export default function Insiders() {
       })
       .catch(() => {});
     return () => {
-      // 清定时器后必须把 ref 置空，否则新的 pollSync() 会直接 return、进度从此不动
+      // The ref has to be nulled after clearing the timer, or a new pollSync() returns immediately and progress freezes for good
       if (pollRef.current) {
         window.clearInterval(pollRef.current);
         pollRef.current = null;
@@ -252,11 +252,11 @@ export default function Insiders() {
       setSync((await r.json()) as SyncState);
       pollSync();
     } catch (e) {
-      setErr(`同步启动失败：${e instanceof Error ? e.message : String(e)}`);
+      setErr(`Could not start the sync: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
-  /* ── 集群买入：多少个不同内部人在买同一只 ── */
+  /* ── Cluster buying: how many distinct insiders are buying the same name ── */
   const clusterOption = useMemo(() => {
     const rows = (summary?.cluster_buys ?? []).slice(0, 14).reverse();
     if (!rows.length) return {};
@@ -274,15 +274,15 @@ export default function Insiders() {
           const r = rows[ps[0].dataIndex];
           return (
             `<b>${esc(r.ticker)}</b> ${esc(r.company.slice(0, 30))}<br/>` +
-            `<b>${r.insider_count}</b> 位内部人买入 · 共 ${r.buys} 笔<br/>` +
-            `买入 ${money(r.buy_value)}　卖出 ${money(r.sell_value)}<br/>` +
-            `<span style="color:#8e8a83">${esc(r.insiders.slice(0, 4).join("、"))}</span>`
+            `<b>${r.insider_count}</b> insiders bought · ${r.buys} trades<br/>` +
+            `Bought ${money(r.buy_value)} · Sold ${money(r.sell_value)}<br/>` +
+            `<span style="color:#8e8a83">${esc(r.insiders.slice(0, 4).join(", "))}</span>`
           );
         },
       },
       xAxis: {
         type: "value",
-        name: "买入人数",
+        name: "Insiders buying",
         nameTextStyle: { color: "#8e8a83", fontSize: 10 },
         splitLine: { lineStyle: { color: "#1e1e24" } },
         axisLabel: { color: "#8e8a83", fontSize: 10, fontFamily: "JetBrains Mono" },
@@ -312,7 +312,7 @@ export default function Insiders() {
     };
   }, [summary]);
 
-  /* ── 净买卖金额 ── */
+  /* ── Net buy and sell value ── */
   const netOption = useMemo(() => {
     const rows = (summary?.by_ticker ?? []).slice(0, 14).reverse();
     if (!rows.length) return {};
@@ -329,8 +329,8 @@ export default function Insiders() {
         formatter: (ps: any[]) => {
           const r = rows[ps[0].dataIndex];
           return (
-            `<b>${esc(r.ticker)}</b><br/>买入 ${money(r.buy_value)}（${r.buys} 笔）<br/>` +
-            `卖出 ${money(r.sell_value)}（${r.sells} 笔）<br/>净额 ${money(r.net_value)}`
+            `<b>${esc(r.ticker)}</b><br/>Bought ${money(r.buy_value)} (${r.buys} trades)<br/>` +
+            `Sold ${money(r.sell_value)} (${r.sells} trades)<br/>Net ${money(r.net_value)}`
           );
         },
       },
@@ -368,43 +368,43 @@ export default function Insiders() {
 
   return (
     <>
-      <PageHead kicker="Insider Trading · SEC Form 4" title="内部人交易">
-        上市公司高管、董事与 10% 以上股东买卖自家股票，须依 Section 16(a) 在
-        <b className="text-ink"> 两个工作日内 </b>向 SEC 申报 Form 4。数据直取
-        <b className="text-ink"> SEC EDGAR </b>官方源 —— 美国政府公开记录，
-        <b className="text-ink">允许自由再分发</b>。
+      <PageHead kicker="Insider Trading · SEC Form 4" title="Insider trading">
+        Officers, directors and holders of more than 10% who trade their own company's stock must file
+        Form 4 with the SEC<b className="text-ink"> within two business days </b>under Section 16(a).
+        The data comes straight from<b className="text-ink"> SEC EDGAR </b>— US government public record,
+        and <b className="text-ink">freely redistributable</b>.
       </PageHead>
 
-      {/* ⭐ 这个分栏最该讲清楚的一件事 */}
+      {/* ⭐ The one thing this section most needs to make clear */}
       <div className="mb-5 rounded-2xl border border-brand/30 bg-brand/[0.06] p-5">
         <div className="mb-2 font-mono text-[11px] uppercase tracking-wider text-brand">
-          先看懂这一点，否则数据会读反
+          Understand this first, or the data reads backwards
         </div>
         <p className="text-sm leading-relaxed text-dim">
-          <b className="text-ink">Form 4 里绝大多数记录不是「内部人看好所以买入」。</b>
-          实测 2026Q1 全市场 103,733 笔非衍生品交易中，代扣税 27,019 / 授予 24,690 /
-          卖出 22,822 / 期权行权 16,300，而
-          <b className="text-ink"> 真正的公开市场买入只有 5,935 笔（5.6%）</b>。
-          若按 SEC 的「取得/处置」标志笼统统计，「取得」有 48,849 笔 ——
-          <b className="text-ink">是真实买入的 8 倍</b>。
+          <b className="text-ink">Most records in a Form 4 are not "an insider likes the stock, so they bought".</b>{" "}
+          Across 103,733 non-derivative transactions market-wide in 2026Q1: tax withheld 27,019 / grants 24,690 /
+          sales 22,822 / option exercises 16,300, while
+          <b className="text-ink"> real open-market buying came to just 5,935 (5.6%)</b>.
+          Counted bluntly by the SEC's acquired/disposed flag, "acquired" runs to 48,849 —{" "}
+          <b className="text-ink">eight times the real buying</b>.
           <br />
           <span className="mt-1.5 inline-block">
-            典型形态：同日「期权行权 + 立即卖出」。行权那笔被标为「取得」，
-            但内部人<b className="text-ink">在公开市场一股没买、拿到手全卖了</b> ——
-            是薪酬变现，不是看多。所以本页默认<b className="text-ink">只看公开市场（P/S）</b>。
+            The classic shape: an option exercise and an immediate sale on the same day. The exercise is flagged "acquired",
+            but the insider <b className="text-ink">bought not one share on the open market and sold all they received</b> —
+            pay being cashed out, not conviction. So this page shows <b className="text-ink">open market (P/S) only</b> by default.
           </span>
         </p>
       </div>
 
-      {/* 同步 */}
+      {/* Sync */}
       <Card
-        title="本地数据"
+        title="Local data"
         sub={
           st
-            ? `${st.trades.toLocaleString()} 笔 · ${st.tickers.toLocaleString()} 标的 · ` +
-              `${st.owners.toLocaleString()} 位内部人 · 公开市场占 ${st.open_market_pct}%` +
-              (st.last_sync ? ` · 上次同步 ${st.last_sync.replace("T", " ")}` : "")
-            : "尚未同步"
+            ? `${st.trades.toLocaleString()} trades · ${st.tickers.toLocaleString()} tickers · ` +
+              `${st.owners.toLocaleString()} insiders · ${st.open_market_pct}% open market` +
+              (st.last_sync ? ` · last synced ${st.last_sync.replace("T", " ")}` : "")
+            : "Not synced yet"
         }
         right={
           <div className="flex shrink-0 items-center gap-2">
@@ -417,7 +417,7 @@ export default function Insiders() {
             >
               {[0, 1, 2, 4, 8].map((n) => (
                 <option key={n} value={n}>
-                  {n === 0 ? "不补季度" : `补 ${n} 季度`}
+                  {n === 0 ? "No quarters" : `${n} quarter${n > 1 ? "s" : ""}`}
                 </option>
               ))}
             </select>
@@ -430,7 +430,7 @@ export default function Insiders() {
             >
               {[0, 1, 5, 10, 20].map((n) => (
                 <option key={n} value={n}>
-                  {n === 0 ? "不补日" : `补 ${n} 天`}
+                  {n === 0 ? "No days" : `${n} day${n > 1 ? "s" : ""}`}
                 </option>
               ))}
             </select>
@@ -440,7 +440,7 @@ export default function Insiders() {
               className="rounded-lg border border-brand/40 bg-brand/10 px-3.5 py-1.5 font-mono
                          text-xs text-brand transition hover:bg-brand/20 disabled:opacity-40"
             >
-              {sync?.running ? "同步中…" : "同步"}
+              {sync?.running ? "Syncing…" : "Sync"}
             </button>
           </div>
         }
@@ -450,7 +450,7 @@ export default function Insiders() {
             <div className="mb-1.5 flex justify-between font-mono text-[11px] text-dim">
               <span>{sync.stage}</span>
               <span>
-                {sync.done}/{sync.total || "?"} · 已入库 {sync.rows.toLocaleString()} 笔
+                {sync.done}/{sync.total || "?"} · {sync.rows.toLocaleString()} stored
               </span>
             </div>
             <div className="h-1.5 overflow-hidden rounded-full bg-card2">
@@ -462,21 +462,21 @@ export default function Insiders() {
           </div>
         )}
 
-        {/* ⚠️ 覆盖边界必须说清：季度数据集滞后，近期只能靠逐日抓 */}
+        {/* ⚠️ The coverage boundary has to be spelled out: the quarterly dataset lags, and the recent stretch comes only from daily fetching */}
         {(sync?.coverage || st) && (
           <div className="space-y-1 text-[11px] leading-relaxed text-dim">
             {sync?.coverage && <div>ℹ️ {sync.coverage}</div>}
             <div>
-              两条来源成本差两个数量级：
-              <b className="text-ink">季度数据集</b>约 3 秒拿一整季（~10 万笔），
-              <b className="text-ink">逐日抓取</b>约 90 秒/天（单日 600-700 份申报，
-              每份都要单独请求）。所以季度用来补历史、逐日只补最近几天。
+              The two sources differ in cost by two orders of magnitude:
+              the <b className="text-ink">quarterly dataset</b> takes about 3 seconds for a whole quarter (~100k trades),
+              while <b className="text-ink">fetching day by day</b> takes about 90 seconds a day (600-700 filings,
+              each its own request). So quarters fill in history and the daily fetch covers only the last few days.
             </div>
             {st && st.quarters.length > 0 && (
               <div>
-                已导入季度：{st.quarters.join("、")}
-                {st.days.length > 0 && ` · 已抓取 ${st.days.length} 个交易日`}
-                {st.earliest && ` · 覆盖 ${st.earliest} ~ ${st.latest}`}
+                Quarters imported: {st.quarters.join(", ")}
+                {st.days.length > 0 && ` · ${st.days.length} trading days fetched`}
+                {st.earliest && ` · covering ${st.earliest} to ${st.latest}`}
               </div>
             )}
           </div>
@@ -484,7 +484,7 @@ export default function Insiders() {
 
         {sync && sync.error_count > 0 && (
           <details className="mt-2 text-xs text-dim">
-            <summary className="cursor-pointer">同步中有 {sync.error_count} 条提示</summary>
+            <summary className="cursor-pointer">{sync.error_count} notices during the sync</summary>
             <ul className="mt-1.5 space-y-0.5 font-mono text-[10px]">
               {sync.errors.map((e, i) => (
                 <li key={i}>{e}</li>
@@ -494,15 +494,15 @@ export default function Insiders() {
         )}
       </Card>
 
-      {/* 筛选 */}
+      {/* Filters */}
       <div className="mb-5 flex flex-wrap items-center gap-2">
         {GROUPS.map((g) => (
           <button
             key={g.v}
             onClick={() => {
               setGroup(g.v);
-              // ⚠️ 离开「公开市场」必须清掉方向：薪酬类的 direction 是 NULL，
-              // 留着 direction=buy 会让页面空成一片，而按钮已被禁用、用户根本清不掉。
+              // ⚠️ Leaving "open market" must clear the direction: compensation rows have a NULL direction,
+              // so leaving direction=buy empties the page while the button is disabled and the user cannot clear it.
               if (g.v !== "open_market") setSide(null);
             }}
             title={g.hint}
@@ -521,7 +521,7 @@ export default function Insiders() {
             key={s.label}
             onClick={() => setSide(s.v)}
             disabled={group !== "open_market"}
-            title={group !== "open_market" ? "买卖方向只对公开市场交易有意义" : undefined}
+            title={group !== "open_market" ? "Direction is only meaningful for open-market transactions" : undefined}
             className={`rounded-lg border px-3 py-1.5 font-mono text-xs transition disabled:opacity-30 ${
               side === s.v
                 ? "border-brand/50 bg-brand/12 text-brand"
@@ -583,7 +583,7 @@ export default function Insiders() {
           <input
             value={tickerInput}
             onChange={(e) => setTickerInput(e.target.value)}
-            placeholder="按标的筛选"
+            placeholder="Filter by ticker"
             className="w-32 rounded-lg border border-line bg-card px-3 py-1.5 font-mono
                        text-xs uppercase outline-none focus:border-brand/50"
           />
@@ -596,7 +596,7 @@ export default function Insiders() {
               }}
               className="rounded-lg border border-line bg-card px-3 py-1.5 font-mono text-xs text-dim"
             >
-              清除
+              Clear
             </button>
           )}
         </form>
@@ -609,98 +609,98 @@ export default function Insiders() {
       )}
 
       {cacheEmpty && !err && (
-        <Card title="本地还没有数据" sub="先同步：季度数据集几秒就能拿到十万笔">
+        <Card title="No local data yet" sub="Sync first: the quarterly dataset gives a hundred thousand trades in seconds">
           <div className="text-sm leading-relaxed text-dim">
-            点右上角「同步」。建议先补 2 个季度（约 6 秒、20 万笔）建立历史，
-            再补最近几天补上最新申报 —— SEC 的季度数据集滞后一到两个月，
-            最近这段只能逐日抓。
+            Press Sync at the top right. Start with 2 quarters (about 6 seconds, 200k trades) to build history,
+            then add the last few days for the newest filings — the SEC's quarterly dataset lags by a month or two,
+            and that recent stretch can only be fetched day by day.
           </div>
         </Card>
       )}
 
       {filterEmpty && !err && (
         <Card
-          title="当前筛选没有命中"
-          sub={`本地共 ${(st?.trades ?? 0).toLocaleString()} 笔 —— 数据是有的，只是这个条件下没有`}
+          title="Nothing matches the current filter"
+          sub={`${(st?.trades ?? 0).toLocaleString()} trades are held locally — the data is there, just not under these conditions`}
         >
           <div className="text-sm leading-relaxed text-dim">
-            试试放宽时间范围、切到「全部」交易类型，或清除标的筛选。
+            Try widening the date range, switching the transaction type to "All", or clearing the ticker filter.
           </div>
         </Card>
       )}
 
-      {/* ⚠️ 汇总卡与图表依赖 summary；**明细表不依赖** ——
-          汇总请求失败时把已经取到的明细一起藏掉，等于白费了 allSettled 的隔离。 */}
+      {/* ⚠️ The summary cards and charts depend on summary; **the detail table does not** —
+          hiding detail that already arrived just because the summary request failed wastes the allSettled isolation. */}
       {!cacheEmpty && !filterEmpty && summary && (
         <>
           <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
-            <Stat label="公开市场买入" value={money(summary.open_market.buy_value)} tone="up"
-                  hint={`${summary.open_market.buys} 笔`} />
-            <Stat label="公开市场卖出" value={money(summary.open_market.sell_value)} tone="down"
-                  hint={`${summary.open_market.sells} 笔`} />
+            <Stat label="Open-market buying" value={money(summary.open_market.buy_value)} tone="up"
+                  hint={`${summary.open_market.buys} trades`} />
+            <Stat label="Open-market selling" value={money(summary.open_market.sell_value)} tone="down"
+                  hint={`${summary.open_market.sells} trades`} />
             <Stat
-              label="净额"
+              label="Net"
               value={money(summary.open_market.buy_value - summary.open_market.sell_value)}
               tone={summary.open_market.buy_value >= summary.open_market.sell_value ? "up" : "down"}
             />
             <Stat
-              label="10b5-1 计划卖出"
-              value={`${summary.plan_sells} 笔`}
-              hint="预先排定，非临时决定"
+              label="10b5-1 plan sales"
+              value={`${summary.plan_sells} trades`}
+              hint="Arranged in advance, not decided on the day"
             />
           </div>
 
           <Card
-            title="集群买入"
-            sub="按「有多少位不同内部人买入同一只」排序 · 条上标注买入金额"
+            title="Cluster buying"
+            sub="Ordered by how many distinct insiders bought the same name · bars labelled with the amount bought"
           >
             {summary.cluster_buys.length ? (
               <>
                 <ReactECharts option={clusterOption} style={{ height: 360 }} notMerge />
                 <div className="mt-2 text-[11px] leading-relaxed text-dim">
-                  单人一笔大额可能只是个人理财；多位内部人在同一时期买入同一只，
-                  更难用巧合解释 —— 这是内部人数据里最常被关注的形态。
-                  <b className="text-ink">但这只是形态描述，不构成任何建议。</b>
+                  One large trade by one person may be personal finance; several insiders buying the same name
+                  in the same period is harder to put down to coincidence — the shape this data is most watched for.{" "}
+                  <b className="text-ink">But it is a description of a shape, and no recommendation whatsoever.</b>
                 </div>
               </>
             ) : (
-              <div className="py-8 text-center text-sm text-dim">该筛选下没有公开市场买入</div>
+              <div className="py-8 text-center text-sm text-dim">No open-market buying under this filter</div>
             )}
           </Card>
 
-          <Card title="净买卖金额" sub="绿=净买入 红=净卖出 · 仅公开市场交易">
+          <Card title="Net buy and sell value" sub="Green = net buying, red = net selling · open-market transactions only">
             {summary.by_ticker.length ? (
               <ReactECharts option={netOption} style={{ height: 360 }} notMerge />
             ) : (
-              <div className="py-8 text-center text-sm text-dim">无数据</div>
+              <div className="py-8 text-center text-sm text-dim">No data</div>
             )}
           </Card>
 
         </>
       )}
 
-      {/* ⚠️ 明细表**不依赖 summary**：汇总请求失败时把已取到的明细一起藏掉，
-          等于白费了 allSettled 的隔离。上面的卡片与图表才依赖 summary。 */}
+      {/* ⚠️ The detail table **does not depend on summary**: hiding detail that already arrived because the
+          summary request failed wastes the allSettled isolation. Only the cards and charts above depend on it. */}
       {!cacheEmpty && !filterEmpty && (
         <Card
-          title="交易明细"
-          sub={`最新 ${trades.length} 笔${summary?.scope.truncated ? "（已达返回上限，非全量）" : ""}`}
+          title="Transaction detail"
+          sub={`Newest ${trades.length} trades${summary?.scope.truncated ? " (the return limit was reached; this is not everything)" : ""}`}
         >
           <div className="-mx-1 overflow-x-auto">
             <table className="w-full min-w-[980px] text-left text-xs">
               <thead className="text-dim">
                 <tr className="border-b border-line">
-                  <Th>交易日</Th>
-                  <Th>标的</Th>
-                  <Th>内部人</Th>
-                  <Th>身份</Th>
-                  <Th>类型</Th>
-                  <Th>股数</Th>
-                  <Th>单价</Th>
-                  <Th>金额</Th>
+                  <Th>Trade date</Th>
+                  <Th>Ticker</Th>
+                  <Th>Insider</Th>
+                  <Th>Role</Th>
+                  <Th>Type</Th>
+                  <Th>Shares</Th>
+                  <Th>Price</Th>
+                  <Th>Value</Th>
                   <Th>10b5-1</Th>
-                  <Th>申报延迟</Th>
-                  <Th>原件</Th>
+                  <Th>Filing delay</Th>
+                  <Th>Original</Th>
                 </tr>
               </thead>
               <tbody className="font-mono">
@@ -717,9 +717,9 @@ export default function Insiders() {
                     <Td className="font-sans text-ink">{t.owner.slice(0, 26)}</Td>
                     <Td className="font-sans text-dim">
                       {[
-                        t.is_officer && (t.officer_title || "高管"),
-                        t.is_director && "董事",
-                        t.is_ten_pct && "10%股东",
+                        t.is_officer && (t.officer_title || "Officer"),
+                        t.is_director && "Director",
+                        t.is_ten_pct && "10% holder",
                       ]
                         .filter(Boolean)
                         .join(" · ")
@@ -750,16 +750,16 @@ export default function Insiders() {
                       }
                       title={
                         t.price_implausible
-                          ? "申报的每股价格不合理（疑为把总金额填进了价格字段），已剔出金额统计"
+                          ? "The filed price per share is implausible (the total value was probably entered in the price field), so it is excluded from the value totals"
                           : undefined
                       }
                     >
-                      {t.price_implausible ? "⚠ 价格存疑" : t.value != null ? money(t.value) : "—"}
+                      {t.price_implausible ? "⚠ price doubtful" : t.value != null ? money(t.value) : "—"}
                     </Td>
                     <Td className={t.is_10b5_1 ? "text-brand" : "text-dim"}>
-                      {t.is_10b5_1 === null ? "—" : t.is_10b5_1 ? "是" : "否"}
+                      {t.is_10b5_1 === null ? "—" : t.is_10b5_1 ? "Yes" : "No"}
                     </Td>
-                    <Td>{t.delay_days != null ? `${t.delay_days}天` : "—"}</Td>
+                    <Td>{t.delay_days != null ? `${t.delay_days}d` : "—"}</Td>
                     <Td>
                       <a
                         href={t.source_url}
@@ -767,7 +767,7 @@ export default function Insiders() {
                         rel="noreferrer noopener"
                         className="text-dim underline decoration-dotted hover:text-brand"
                       >
-                        查看
+                        View
                       </a>
                     </Td>
                   </tr>
@@ -779,72 +779,72 @@ export default function Insiders() {
       )}
 
 
-      {/* 口径与免责 */}
+      {/* Definitions and disclaimer */}
       <div className="mb-5 rounded-2xl border border-brand/25 bg-brand/5 p-5">
         <div className="mb-2 font-mono text-[11px] uppercase tracking-wider text-brand">
-          口径与边界
+          Definitions and limits
         </div>
         <ul className="space-y-1.5 text-xs leading-relaxed text-dim">
           <li>
-            · <b className="text-ink">分类按交易代码，不按「取得/处置」标志</b>：
-            只有 P（公开市场买入）与 S（公开市场卖出）含主动买卖意图；
-            A 授予 / M 行权 / F 代扣税 / D 向公司处置属薪酬类，不代表买卖决策。
+            · <b className="text-ink">Classified by transaction code, not by the acquired/disposed flag</b>:
+            only P (open-market purchase) and S (open-market sale) carry an intent to trade;
+            A grants / M exercises / F tax withholding / D dispositions to the issuer are compensation and represent no decision to trade.
             {summary && (
               <>
-                {" "}当前样本共 {summary.total_rows.toLocaleString()} 行，其中公开市场{" "}
-                {summary.open_market.count.toLocaleString()} 行（{summary.open_market_pct}%）。
+                {" "}The current sample holds {summary.total_rows.toLocaleString()} rows, of which{" "}
+                {summary.open_market.count.toLocaleString()} are open market ({summary.open_market_pct}%).
               </>
             )}
           </li>
           <li>
-            · <b className="text-ink">只含 Form 4</b>：同一个 SEC 数据集里还有
-            Form 3（初始持股声明，不是交易）与 Form 5（年度补报，实测延迟中位
-            <b className="text-ink"> 274 天</b>、三成超一年）—— 都已排除，
-            否则会把申报延迟整体拉高。修订件 4/A 也默认排除
-            （通常重述原申报的交易，与原件同时统计会重复计数；
-            <b className="text-ink">本项目未做原件↔修订的配对替换</b>）。
-            分离后 Form 4 的延迟中位是 2 天，与法定要求一致。
+            · <b className="text-ink">Form 4 only</b>: the same SEC dataset also carries
+            Form 3 (an initial statement of holdings, not a transaction) and Form 5 (the annual catch-up filing, median delay
+            <b className="text-ink"> 274 days</b>, three in ten over a year) — both excluded,
+            or they would inflate the filing delay across the board. 4/A amendments are excluded by default too
+            (they usually restate the original's transactions, so counting both double-counts;
+            <b className="text-ink">this project does not pair originals with amendments and substitute</b>).
+            Separated out, Form 4's median delay is 2 days, matching the statute.
           </li>
           <li>
-            · <b className="text-ink">10b5-1 计划交易另作区分</b>：
-            按该规则预先制定的卖出计划，通常几个月前就已排定，与临时决定卖出含义不同。
-            SEC 自 2023 年起要求在申报中勾选，更早的申报无此字段（显示为「—」）。
-            筛选里<b className="text-ink">「未标注」与「非计划内」是两回事</b> ——
-            前者是不知道，后者是申报人明确勾了否，不能混为一谈。
+            · <b className="text-ink">10b5-1 plan trades are distinguished</b>:
+            a sale plan adopted in advance under that rule was usually arranged months earlier, which means something different from a sale decided on the day.
+            The SEC has required the box to be ticked since 2023; earlier filings have no such field and show "—".
+            In the filter, <b className="text-ink">"Not marked" and "Not under a plan" are different things</b> —
+            the first means we do not know, the second that the filer explicitly said no. They must not be conflated.
           </li>
           <li>
-            · <b className="text-ink">金额是近似值</b>：部分申报把「总金额」误填进
-            「每股价格」字段（实测有报到 <span className="font-mono">$2,400 万/股</span> 的，
-            一行就能把全市场买入总额顶到千万亿量级）。已剔除可确证的错填
-            （每股价 &gt; $100 万，或单笔金额 &gt; $2,000 亿 —— 前者超过 BRK.A 的历史最高价、
-            后者超过任何美国个人的持股规模）。
-            <b className="text-ink">但更隐蔽的错填识别不出来</b>：
-            同样是错填，某只真实股价约 $2 的股票报 $14,561/股，没有外部行情就无从判断。
-            所以金额汇总只应作量级参考。
+            · <b className="text-ink">Values are approximate</b>: some filings put the total value into
+            the price-per-share field (one reads <span className="font-mono">$24m per share</span>,
+            and a single row like that pushes market-wide buying into the quadrillions). Provably wrong entries are excluded
+            (over $1m per share, or over $200bn for a single trade — the first exceeds BRK.A's all-time high,
+            the second any US individual's holding).
+            <b className="text-ink">But subtler mis-entries cannot be caught</b>:
+            one stock actually trading around $2 filed $14,561 per share, and without an external quote there is no way to tell.
+            So value totals should be read as an indication of magnitude only.
             {summary && summary.implausible_price > 0 && (
-              <> 当前样本中有 {summary.implausible_price} 笔已标注为「价格存疑」。</>
+              <> The current sample has {summary.implausible_price} flagged with a doubtful price.</>
             )}
           </li>
           <li>
-            · <b className="text-ink">数据覆盖有两段</b>：SEC 季度数据集完整但滞后
-            （实测 7~49 天不等），最近这段只能逐日抓取补齐。已导入范围见上方「本地数据」。
+            · <b className="text-ink">Coverage comes in two parts</b>: the SEC's quarterly dataset is complete but lags
+            (measured at anywhere from 7 to 49 days), and the recent stretch is filled in day by day. What has been imported is shown under "Local data" above.
           </li>
           <li>
-            · <b className="text-ink">申报延迟</b>：Section 16(a) 要求交易后两个工作日内申报。
-            此处按自然日计算、未扣周末与节假日，是事实统计而非违规认定。
-            交易日由申报人手填、存在年份笔误（实测有报成 2028 年的），
-            <b className="text-ink">「交易日晚于申报日」这种物理不可能的已标注</b>；
-            但「晚报整一年」在法律上并非不可能，无法逐笔确证，
-            所以延迟统计里仍混有少量笔误。上方「覆盖」区间用的是
-            <b className="text-ink">申报日</b>（由 EDGAR 系统赋予，不受手填笔误影响）。
+            · <b className="text-ink">Filing delay</b>: Section 16(a) requires filing within two business days of the trade.
+            Counted here in calendar days without deducting weekends and holidays: a statement of fact, not a finding of violation.
+            Trade dates are typed by the filer and contain year typos (one was filed as 2028),
+            and <b className="text-ink">the physically impossible ones — a trade date after the filing date — are flagged</b>;
+            but "filed a whole year late" is not legally impossible and cannot be confirmed row by row,
+            so a few typos remain inside the delay statistics. The coverage range above uses the
+            <b className="text-ink"> filing date</b> (assigned by EDGAR, and so free of typing errors).
             {summary && summary.date_anomaly_count > 0 && (
-              <> 当前样本中 {summary.date_anomaly_count} 笔已标注。</>
+              <> {summary.date_anomaly_count} in the current sample are flagged.</>
             )}
           </li>
           <li>
-            · 本页只呈现已公开申报的事实，
-            <b className="text-ink">不打「看涨/看跌」标签、不做评分、不构成任何投资建议</b>。
-            数据源 SEC EDGAR（美国政府公开记录）。
+            · This page presents facts already publicly filed, and
+            <b className="text-ink"> attaches no bullish or bearish label, produces no score, and is not investment advice</b>.
+            Source: SEC EDGAR (US government public record).
           </li>
         </ul>
       </div>

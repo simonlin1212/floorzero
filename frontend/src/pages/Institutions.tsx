@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactECharts from "echarts-for-react";
 import { Card, PageHead, Td, Th, esc } from "../components/Shell";
 
-/* ── 类型（与后端 modules/institution.py 对齐）── */
+/* ── Types (aligned with the backend's modules/institution.py) ── */
 type Holding = {
   manager: string;
   manager_cik: string;
@@ -84,8 +84,8 @@ type SyncState = {
   errors: string[];
   error_count: number;
   windows: string[];
-  // ⚠️ 后端返回的是数据集里的原始写法（如 31-MAR-2026），
-  // 而 /sync 的 period 参数要 YYYY-MM-DD —— 送出前必须转换
+  // ⚠️ The backend returns the dataset's own spelling (such as 31-MAR-2026),
+  // while /sync's period parameter takes YYYY-MM-DD — it has to be converted before sending
   periods: [string, number][];
   stats: Stats;
 };
@@ -95,7 +95,7 @@ const MONTHS: Record<string, string> = {
   JUL: "07", AUG: "08", SEP: "09", OCT: "10", NOV: "11", DEC: "12",
 };
 
-/** `31-MAR-2026` → `2026-03-31`；已是 ISO 就原样返回。 */
+/** `31-MAR-2026` → `2026-03-31`; already ISO, it comes back unchanged. */
 function isoPeriod(raw: string): string {
   const m = /^(\d{2})-([A-Z]{3})-(\d{4})$/.exec(raw.trim().toUpperCase());
   if (!m) return raw;
@@ -104,17 +104,17 @@ function isoPeriod(raw: string): string {
 }
 
 const KINDS = [
-  { v: "share", label: "普通持股", hint: "13(f) 证券的多头持仓" },
-  { v: "call", label: "看涨期权", hint: "按标的列示" },
-  { v: "put", label: "看跌期权", hint: "看空 —— 混进持仓统计会把看空算成看多" },
-  { v: "all", label: "全部", hint: "含 put，会把看空混进来" },
+  { v: "share", label: "Shares", hint: "Long positions in 13(f) securities" },
+  { v: "call", label: "Calls", hint: "Listed under the underlying" },
+  { v: "put", label: "Puts", hint: "Bearish — folded into the holdings totals they count bearish as bullish" },
+  { v: "all", label: "All", hint: "Includes puts, mixing bearish exposure in" },
 ];
 
-/** 发行人 + 股份类别。同一发行人常有多个类别（Alphabet CL A / CL C 是两只不同证券），
- *  只显示名字会让榜单出现两行一模一样的字，看着像重复数据。 */
+/** Issuer plus share class. One issuer often has several classes (Alphabet CL A and CL C are two distinct securities),
+ *  and showing the name alone puts two identical-looking rows in the table, which reads as duplicated data. */
 function label(r: { issuer: string; class?: string | null }): string {
   const c = (r.class || "").trim();
-  // COM = 普通股，是默认情况，拼上去只会变长
+  // COM = common stock, which is the default case; appending it only makes the label longer
   if (!c || c.toUpperCase() === "COM") return r.issuer;
   return `${r.issuer} · ${c}`;
 }
@@ -144,8 +144,8 @@ export default function Institutions() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [minValue, setMinValue] = useState(1_000_000);
-  // ⚠️ 必须能选报告期：页面写着"至少导入两个季度才能看环比"，
-  // 但同步按钮若永远导同一期，UI 就做不到它自己写的事。
+  // ⚠️ The reporting period has to be selectable: the page says "import at least two quarters to see the change",
+  // but if the sync button always imports the same period, the UI cannot do what it says.
   const [syncWindow, setSyncWindow] = useState("");
   const [syncPeriod, setSyncPeriod] = useState("");
   const pollRef = useRef<number | null>(null);
@@ -160,7 +160,7 @@ export default function Institutions() {
     const seq = ++reqRef.current;
     setLoading(true);
     setErr(null);
-    // ⚠️ 明细与汇总共用同一份查询串
+    // ⚠️ Detail and summary share one query string
     const q = new URLSearchParams({ kind });
     if (active) q.set("period", active);
     if (manager) q.set("manager", manager);
@@ -220,7 +220,7 @@ export default function Institutions() {
           void load();
         }
       } catch {
-        /* 轮询失败不打断页面 */
+        /* a failed poll should not interrupt the page */
       }
     }, 4000);
   }, [load]);
@@ -235,7 +235,7 @@ export default function Institutions() {
       })
       .catch(() => {});
     return () => {
-      // 清定时器后必须把 ref 置空，否则新的 pollSync() 会直接 return
+      // The ref has to be nulled after clearing the timer, or a new pollSync() returns immediately
       if (pollRef.current) {
         window.clearInterval(pollRef.current);
         pollRef.current = null;
@@ -253,11 +253,11 @@ export default function Institutions() {
       setSync((await r.json()) as SyncState);
       pollSync();
     } catch (e) {
-      setErr(`同步启动失败：${e instanceof Error ? e.message : String(e)}`);
+      setErr(`Could not start the sync: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
-  /* ── 持仓最大的标的 ── */
+  /* ── Largest holdings by security ── */
   const issuerOption = useMemo(() => {
     const rows = (summary?.by_issuer ?? []).slice(0, 14).reverse();
     if (!rows.length) return {};
@@ -275,7 +275,7 @@ export default function Institutions() {
           const r = rows[ps[0].dataIndex];
           return (
             `<b>${esc(label(r))}</b><br/>CUSIP ${esc(r.cusip)}<br/>` +
-            `持仓市值 ${money(r.value)}<br/>${r.holders.toLocaleString()} 家机构持有`
+            `Position value ${money(r.value)}<br/>held by ${r.holders.toLocaleString()} managers`
           );
         },
       },
@@ -306,14 +306,14 @@ export default function Institutions() {
             color: "#8e8a83",
             fontSize: 10,
             fontFamily: "JetBrains Mono",
-            formatter: (p: any) => `${rows[p.dataIndex].holders} 家`,
+            formatter: (p: any) => `${rows[p.dataIndex].holders} managers`,
           },
         },
       ],
     };
   }, [summary, kind]);
 
-  /* ── 环比变动 ── */
+  /* ── Quarter-on-quarter change ── */
   const changeOption = useMemo(() => {
     if (!changes) return {};
     const inc = changes.increased.slice(0, 8);
@@ -335,7 +335,7 @@ export default function Institutions() {
           return (
             `<b>${esc(label(r))}</b><br/>` +
             `${changes.prev_period} ${money(r.prev_value)} → ${changes.period} ${money(r.value)}<br/>` +
-            `变动 ${money(r.delta_value)}`
+            `Change ${money(r.delta_value)}`
           );
         },
       },
@@ -373,68 +373,68 @@ export default function Institutions() {
 
   return (
     <>
-      <PageHead kicker="Institutional Holdings · SEC 13F" title="机构持仓">
-        管理 1 亿美元以上的机构投资经理，须依 Section 13(f) 每季度申报其持仓。数据取自
-        <b className="text-ink"> SEC 官方结构化数据集 </b>——
-        美国政府公开记录，<b className="text-ink">不限商用</b>。
+      <PageHead kicker="Institutional Holdings · SEC 13F" title="Institutional holdings">
+        Investment managers running over $100m must report their holdings quarterly under Section 13(f). The data comes from
+        <b className="text-ink"> the SEC's official structured dataset </b>—
+        US government public record, with <b className="text-ink">no restriction on commercial use</b>.
       </PageHead>
 
-      {/* ⭐ 这个分栏最该先讲清楚的事 */}
+      {/* ⭐ The thing this section most needs to say first */}
       <div className="mb-5 rounded-2xl border border-brand/30 bg-brand/[0.06] p-5">
         <div className="mb-2 font-mono text-[11px] uppercase tracking-wider text-brand">
-          「机构持仓」这个说法本身就会误导
+          "Institutional holdings" misleads as a phrase
         </div>
         <p className="text-sm leading-relaxed text-dim">
-          13F 报的是<b className="text-ink">季末那一个时点、13(f) 证券的多头持仓</b>。它
-          <b className="text-ink">不含</b>：空头头寸、现金、债券、大宗商品、仅在境外上市的股票、
-          私募持仓，以及获保密豁免暂缓披露的部分。所以「某机构持仓 X 亿」既不是它的全部资产，
-          <b className="text-ink">也不代表净敞口</b>。
+          A 13F reports <b className="text-ink">long positions in 13(f) securities at one instant, quarter-end</b>. It
+          <b className="text-ink"> excludes</b>: short positions, cash, bonds, commodities, stocks listed only outside the US,
+          private holdings, and anything granted confidential treatment. So "this manager holds $X bn" is neither their total assets
+          <b className="text-ink"> nor their net exposure</b>.
           <br />
           <span className="mt-1.5 inline-block">
-            空头不在这里 ——{" "}
+            Shorts are not in here —{" "}
             <b className="text-ink">
-              SEC 2023 年专门另立 Rule 13f-2 / Form SHO 报空头
+              the SEC created Rule 13f-2 / Form SHO in 2023 specifically to report shorts
             </b>
-            ，正因为 13F 不覆盖。
+            , precisely because 13F does not cover them.
           </span>
           <br />
           <span className="mt-1.5 inline-block">
-            ⚠️ <b className="text-ink">期权按「标的证券」列示</b>（Form 13F 特别说明第 10 条）：
-            一笔<b className="text-ink">看跌期权（看空）</b>会以「持有标的」的形态出现。
-            实测该季 put 规模{" "}
+            ⚠️ <b className="text-ink">Options are listed under the underlying security</b> (Form 13F Special Instruction 10):
+            a <b className="text-ink">put — a bearish position</b> — appears shaped exactly like holding the stock.
+            Puts that quarter came to{" "}
             <b className="text-ink">
               {summary?.by_kind?.put ? money(summary.by_kind.put.value) : "$2.6T"}
             </b>{" "}
-            —— 直接加总当「机构在买」，就是把这么大的看空头寸算成看多。
-            所以本页默认<b className="text-ink">只看普通持股</b>。
+            — sum it in as "institutions are buying" and that much bearish exposure is counted as bullish.
+            So this page shows <b className="text-ink">ordinary holdings only</b> by default.
           </span>
         </p>
       </div>
 
-      {/* 同步 */}
+      {/* Sync */}
       <Card
-        title="本地数据"
+        title="Local data"
         sub={
           stats && stats.holdings
-            ? `${stats.holdings.toLocaleString()} 条持仓 · ${stats.managers.toLocaleString()} 家机构 · ` +
-              `${stats.cusips.toLocaleString()} 个 CUSIP · 合计 ${money(stats.total_value)}` +
-              (stats.last_sync ? ` · 上次同步 ${stats.last_sync.replace("T", " ")}` : "")
-            : "尚未导入"
+            ? `${stats.holdings.toLocaleString()} holdings · ${stats.managers.toLocaleString()} managers · ` +
+              `${stats.cusips.toLocaleString()} CUSIPs · totalling ${money(stats.total_value)}` +
+              (stats.last_sync ? ` · last synced ${stats.last_sync.replace("T", " ")}` : "")
+            : "Not imported yet"
         }
         right={
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-            {/* 数据集窗口：不选=最新。窗口里含哪些报告期由 sync 返回 */}
+            {/* The dataset window: unselected = the newest. Which reporting periods it holds comes back from sync */}
             <select
               value={syncWindow}
               onChange={(e) => {
                 setSyncWindow(e.target.value);
-                setSyncPeriod("");     // 换窗口后旧的报告期不再适用
+                setSyncPeriod("");     // after changing window, the old reporting period no longer applies
               }}
               disabled={sync?.running}
               className="rounded-lg border border-line bg-card2 px-2 py-1.5 font-mono text-xs
                          text-dim outline-none focus:border-brand/50 disabled:opacity-40"
             >
-              <option value="">最新窗口</option>
+              <option value="">Newest window</option>
               {(sync?.windows ?? []).map((w) => (
                 <option key={w} value={w}>
                   {w}
@@ -447,16 +447,16 @@ export default function Institutions() {
               disabled={sync?.running || !(sync?.periods ?? []).length}
               title={
                 (sync?.periods ?? []).length
-                  ? "该窗口内的报告期（括号内为申报份数）"
-                  : "先点一次同步，才知道窗口里有哪些报告期"
+                  ? "Reporting periods inside that window (filing counts in brackets)"
+                  : "Sync once to find out which reporting periods the window holds"
               }
               className="rounded-lg border border-line bg-card2 px-2 py-1.5 font-mono text-xs
                          text-dim outline-none focus:border-brand/50 disabled:opacity-40"
             >
-              <option value="">主体报告期</option>
+              <option value="">Main reporting period</option>
               {(sync?.periods ?? []).map(([p, n]) => (
                 <option key={p} value={p}>
-                  {isoPeriod(p)}（{n}）
+                  {isoPeriod(p)} ({n})
                 </option>
               ))}
             </select>
@@ -467,10 +467,10 @@ export default function Institutions() {
               className="rounded-lg border border-line bg-card2 px-2 py-1.5 font-mono text-xs
                          text-dim outline-none focus:border-brand/50 disabled:opacity-40"
             >
-              <option value={1_000_000}>门槛 $1M（推荐）</option>
-              <option value={10_000_000}>门槛 $10M</option>
-              <option value={100_000}>门槛 $100K</option>
-              <option value={0}>全量（约 580MB/季）</option>
+              <option value={1_000_000}>Threshold $1M (recommended)</option>
+              <option value={10_000_000}>Threshold $10M</option>
+              <option value={100_000}>Threshold $100K</option>
+              <option value={0}>Everything (about 580MB a quarter)</option>
             </select>
             <button
               onClick={startSync}
@@ -478,7 +478,7 @@ export default function Institutions() {
               className="rounded-lg border border-brand/40 bg-brand/10 px-3.5 py-1.5 font-mono
                          text-xs text-brand transition hover:bg-brand/20 disabled:opacity-40"
             >
-              {sync?.running ? "导入中…" : "导入最新季度"}
+              {sync?.running ? "Importing…" : "Import newest quarter"}
             </button>
           </div>
         }
@@ -487,7 +487,7 @@ export default function Institutions() {
           <div className="mb-3">
             <div className="font-mono text-[11px] text-dim">
               {sync.stage}
-              {sync.rows > 0 && ` · 已入库 ${sync.rows.toLocaleString()} 条`}
+              {sync.rows > 0 && ` · ${sync.rows.toLocaleString()} stored`}
             </div>
             <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-card2">
               <div className="h-full w-1/3 animate-pulse bg-brand" />
@@ -497,33 +497,33 @@ export default function Institutions() {
 
         <div className="space-y-1 text-[11px] leading-relaxed text-dim">
           <div>
-            单季数据集 95MB 压缩、约 <b className="text-ink">332 万条</b>持仓。
-            默认金额门槛 <b className="text-ink">$100 万</b> ——
-            实测保留 37.5% 的行数、覆盖 <b className="text-ink">99.37%</b> 的金额，
-            是很划算的交换；要精确到小持仓可选「全量」。
+            One quarter's dataset is 95MB compressed and about <b className="text-ink">3.32m</b> holdings.
+            The default value threshold is <b className="text-ink">$1m</b> —
+            measured, it keeps 37.5% of the rows and covers <b className="text-ink">99.37%</b> of the value,
+            which is a good trade. For precision down to small positions, choose "Everything".
           </div>
           {batch && (
             <div>
-              当前 {batch.period}（窗口 {batch.window}）：解析{" "}
-              {batch.parsed_rows.toLocaleString()} 条 → 入库{" "}
-              <b className="text-ink">{batch.rows.toLocaleString()}</b> 条；门槛 $
-              {batch.min_value.toLocaleString()} 滤掉 {batch.dropped_rows.toLocaleString()}{" "}
-              条 / {money(batch.dropped_value)}
-              （占该季总额{" "}
+              Current {batch.period} (window {batch.window}): parsed{" "}
+              {batch.parsed_rows.toLocaleString()} rows → stored{" "}
+              <b className="text-ink">{batch.rows.toLocaleString()}</b>; the $
+              {batch.min_value.toLocaleString()} threshold dropped {batch.dropped_rows.toLocaleString()}{" "}
+              rows / {money(batch.dropped_value)}
+              {" ("}
               {(
                 (batch.dropped_value / (batch.dropped_value + (stats?.total_value ?? 1))) *
                 100
               ).toFixed(2)}
-              %）。
+              % of the quarter's total).
             </div>
           )}
           {stats && stats.periods.length > 0 && (
             <div>
-              已导入报告期：{stats.periods.join("、")}
+              Reporting periods imported: {stats.periods.join(", ")}
               {stats.periods.length < 2 && (
                 <b className="text-brand">
                   {" "}
-                  —— 再导一个季度才能看环比变动（13F 的主要价值在变动，不在静态快照）
+                  — import one more quarter to see the change (13F's value is in the change, not the static snapshot)
                 </b>
               )}
             </div>
@@ -532,7 +532,7 @@ export default function Institutions() {
 
         {sync && sync.error_count > 0 && (
           <details className="mt-2 text-xs text-dim">
-            <summary className="cursor-pointer">同步中有 {sync.error_count} 条提示</summary>
+            <summary className="cursor-pointer">{sync.error_count} notices during the sync</summary>
             <ul className="mt-1.5 space-y-0.5 font-mono text-[10px]">
               {sync.errors.map((e, i) => (
                 <li key={i}>{e}</li>
@@ -542,7 +542,7 @@ export default function Institutions() {
         )}
       </Card>
 
-      {/* 筛选 */}
+      {/* Filters */}
       <div className="mb-5 flex flex-wrap items-center gap-2">
         {periods.map((p) => (
           <button
@@ -583,7 +583,7 @@ export default function Institutions() {
           <input
             value={managerInput}
             onChange={(e) => setManagerInput(e.target.value)}
-            placeholder="机构名"
+            placeholder="Manager name"
             className="w-32 rounded-lg border border-line bg-card px-3 py-1.5 text-xs
                        outline-none focus:border-brand/50"
           />
@@ -599,7 +599,7 @@ export default function Institutions() {
             className="rounded-lg border border-line bg-card px-3 py-1.5 font-mono text-xs text-dim
                        hover:text-ink"
           >
-            筛选
+            Filter
           </button>
           {(manager || cusip) && (
             <button
@@ -612,7 +612,7 @@ export default function Institutions() {
               }}
               className="rounded-lg border border-line bg-card px-3 py-1.5 font-mono text-xs text-dim"
             >
-              清除
+              Clear
             </button>
           )}
         </form>
@@ -625,24 +625,24 @@ export default function Institutions() {
       )}
 
       {cacheEmpty && !err && (
-        <Card title="本地还没有数据" sub="导入一个季度约需 1-2 分钟">
+        <Card title="No local data yet" sub="Importing one quarter takes 1-2 minutes">
           <div className="text-sm leading-relaxed text-dim">
-            点右上角「导入最新季度」。13F 每季申报一次、法定期限为季末后 45 天，
-            所以最新可得的通常是<b className="text-ink">上一个季度</b>的时点持仓。
+            Press "Import newest quarter" at the top right. 13F is filed quarterly with a statutory deadline 45 days after quarter-end,
+            so the newest available is usually <b className="text-ink">the previous quarter's</b> positions.
             <br />
-            建议至少导入<b className="text-ink">两个季度</b> ——
-            单季持仓只是静态快照，<b className="text-ink">环比变动才有信息量</b>。
+            Import at least <b className="text-ink">two quarters</b> —
+            a single quarter is only a static snapshot, and <b className="text-ink">the change is what carries the information</b>.
           </div>
         </Card>
       )}
 
       {filterEmpty && !err && (
         <Card
-          title="当前筛选没有命中"
-          sub={`本地共 ${(stats?.holdings ?? 0).toLocaleString()} 条持仓`}
+          title="Nothing matches the current filter"
+          sub={`${(stats?.holdings ?? 0).toLocaleString()} holdings are held locally`}
         >
           <div className="text-sm leading-relaxed text-dim">
-            试试换个报告期、换持仓类型，或清除机构/CUSIP 筛选。
+            Try a different reporting period or position kind, or clear the manager and CUSIP filters.
           </div>
         </Card>
       )}
@@ -650,40 +650,40 @@ export default function Institutions() {
       {!cacheEmpty && !filterEmpty && summary && (
         <>
           <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
-            <Stat label="持仓市值" value={money(summary.counts.val ?? 0)} />
-            <Stat label="申报机构" value={(summary.counts.mgrs ?? 0).toLocaleString()} />
-            <Stat label="标的数" value={(summary.counts.cusips ?? 0).toLocaleString()} />
+            <Stat label="Position value" value={money(summary.counts.val ?? 0)} />
+            <Stat label="Managers filing" value={(summary.counts.mgrs ?? 0).toLocaleString()} />
+            <Stat label="Securities" value={(summary.counts.cusips ?? 0).toLocaleString()} />
             <Stat
-              label="看跌期权规模"
+              label="Puts outstanding"
               value={money(summary.by_kind?.put?.value ?? 0)}
-              hint="已单独归类，不计入持仓"
+              hint="Classified separately and excluded from holdings"
               tone="warn"
             />
           </div>
 
           <Card
-            title={`持仓最大的标的 · ${KINDS.find((k) => k.v === kind)?.label}`}
-            sub={`条上标注持有该标的的机构家数 · ${active}`}
+            title={`Largest holdings · ${KINDS.find((k) => k.v === kind)?.label}`}
+            sub={`Bars labelled with the number of managers holding it · ${active}`}
           >
             {summary.by_issuer.length ? (
               <ReactECharts option={issuerOption} style={{ height: 400 }} notMerge />
             ) : (
-              <div className="py-8 text-center text-sm text-dim">无数据</div>
+              <div className="py-8 text-center text-sm text-dim">No data</div>
             )}
           </Card>
 
           {changes && (
             <Card
-              title="季度环比变动"
-              sub={`${changes.prev_period} → ${changes.period} · 绿=加仓 红=减仓 · 按 CUSIP 比对`}
+              title="Quarter-on-quarter change"
+              sub={`${changes.prev_period} → ${changes.period} · green = added, red = trimmed · compared on CUSIP`}
             >
               <div className="mb-3 flex flex-wrap gap-3">
-                <MiniStat label="新建仓" value={String(changes.counts.new)} tone="up" />
-                <MiniStat label="加仓" value={String(changes.counts.increased)} tone="up" />
-                <MiniStat label="减仓" value={String(changes.counts.decreased)} tone="down" />
-                <MiniStat label="清仓" value={String(changes.counts.exited)} tone="down" />
-                {/* 未变动单列：早前它们被算进「减仓」，把"没动"显示成"在减" */}
-                <MiniStat label="未变动" value={String(changes.counts.unchanged ?? 0)} />
+                <MiniStat label="New" value={String(changes.counts.new)} tone="up" />
+                <MiniStat label="Added" value={String(changes.counts.increased)} tone="up" />
+                <MiniStat label="Trimmed" value={String(changes.counts.decreased)} tone="down" />
+                <MiniStat label="Exited" value={String(changes.counts.exited)} tone="down" />
+                {/* Unchanged stands alone: these were once counted as trimmed, showing "did not move" as "is selling" */}
+                <MiniStat label="Unchanged" value={String(changes.counts.unchanged ?? 0)} />
               </div>
               <ReactECharts option={changeOption} style={{ height: 420 }} notMerge />
               <div className="mt-2 space-y-1 text-[11px] leading-relaxed text-dim">
@@ -693,14 +693,14 @@ export default function Institutions() {
             </Card>
           )}
 
-          <Card title="持仓最大的机构" sub={`${active} · 仅统计当前持仓类型`}>
+          <Card title="Largest managers" sub={`${active} · counting the current position kind only`}>
             <div className="-mx-1 overflow-x-auto">
               <table className="w-full min-w-[560px] text-left text-xs">
                 <thead className="text-dim">
                   <tr className="border-b border-line">
-                    <Th>机构</Th>
-                    <Th>持仓标的数</Th>
-                    <Th>持仓市值</Th>
+                    <Th>Manager</Th>
+                    <Th>Securities held</Th>
+                    <Th>Position value</Th>
                   </tr>
                 </thead>
                 <tbody className="font-mono">
@@ -719,19 +719,19 @@ export default function Institutions() {
       )}
 
       {!cacheEmpty && !filterEmpty && (
-        <Card title="持仓明细" sub={`最大 ${holdings.length} 条 · 按市值倒序`}>
+        <Card title="Holding detail" sub={`Largest ${holdings.length} · by value, descending`}>
           <div className="-mx-1 overflow-x-auto">
             <table className="w-full min-w-[900px] text-left text-xs">
               <thead className="text-dim">
                 <tr className="border-b border-line">
-                  <Th>机构</Th>
-                  <Th>标的</Th>
+                  <Th>Manager</Th>
+                  <Th>Security</Th>
                   <Th>CUSIP</Th>
-                  <Th>类型</Th>
-                  <Th>市值</Th>
-                  <Th>数量</Th>
-                  <Th>裁量权</Th>
-                  <Th>原件</Th>
+                  <Th>Kind</Th>
+                  <Th>Value</Th>
+                  <Th>Quantity</Th>
+                  <Th>Discretion</Th>
+                  <Th>Original</Th>
                 </tr>
               </thead>
               <tbody className="font-mono">
@@ -766,7 +766,7 @@ export default function Institutions() {
                         rel="noreferrer noopener"
                         className="text-dim underline decoration-dotted hover:text-brand"
                       >
-                        查看
+                        View
                       </a>
                     </Td>
                   </tr>
@@ -777,46 +777,46 @@ export default function Institutions() {
         </Card>
       )}
 
-      {/* 口径与边界 */}
+      {/* Definitions and limits */}
       <div className="mb-5 rounded-2xl border border-brand/25 bg-brand/5 p-5">
         <div className="mb-2 font-mono text-[11px] uppercase tracking-wider text-brand">
-          口径与边界
+          Definitions and limits
         </div>
         <ul className="space-y-1.5 text-xs leading-relaxed text-dim">
           <li>
-            · <b className="text-ink">只有多头，且只有 13(f) 证券</b>：不含空头（另见 Form SHO）、
-            现金、债券、大宗商品、仅境外上市的股票、私募持仓与获保密豁免的部分。
+            · <b className="text-ink">Long positions only, and 13(f) securities only</b>: no shorts (see Form SHO),
+            cash, bonds, commodities, stocks listed only outside the US, private holdings, or anything granted confidential treatment.
           </li>
           <li>
-            · <b className="text-ink">期权按标的列示</b>，看跌期权是<b className="text-ink">看空</b>。
-            本页按普通持股 / 看涨 / 看跌分开统计，默认只看普通持股。
+            · <b className="text-ink">Options are listed under the underlying</b>, and a put is <b className="text-ink">bearish</b>.
+            This page counts shares / calls / puts separately, and shows ordinary holdings by default.
           </li>
           <li>
-            · <b className="text-ink">至少滞后 45 天</b>：13F 的法定申报期限是季末后 45 天，
-            看到的是<b className="text-ink">一个半月前的时点</b>持仓，期间机构可能已大幅调仓。
+            · <b className="text-ink">At least 45 days behind</b>: 13F's statutory deadline is 45 days after quarter-end,
+            so what you see is a position <b className="text-ink">six weeks old</b>, and the manager may have moved a long way since.
           </li>
           <li>
-            · <b className="text-ink">用 CUSIP 不用股票代码</b>：13F 只给 CUSIP，
-            SEC 不提供 CUSIP→代码映射（那是商业数据）。按发行人名称去匹配 SEC 的
-            company_tickers.json 实测命中率仅 <b className="text-ink">42.8%</b>
-            （未命中的多为 ETF 与基金），所以本页以发行人名称 + CUSIP 为准。
+            · <b className="text-ink">Keyed on CUSIP, not on ticker</b>: 13F gives CUSIPs only, and
+            the SEC publishes no CUSIP→ticker mapping (that is commercial data). Matching issuer names against the SEC's
+            company_tickers.json was measured hitting only <b className="text-ink">42.8%</b>{" "}
+            (most misses being ETFs and funds), so this page keys on issuer name plus CUSIP.
             <br />
-            发行人名称取自 <b className="text-ink">SEC 官方 13(f) 证券清单</b> ——
-            申报里的名称是填报人自由填写的，实测苹果那个 CUSIP 有{" "}
-            <b className="text-ink">61 种写法</b>，其中还有别家公司的名字。
+            Issuer names come from the <b className="text-ink">SEC's official 13(f) securities list</b> —
+            names in the filings are typed freely by the filer, and Apple's CUSIP was measured carrying{" "}
+            <b className="text-ink">61 spellings</b>, some of them other companies' names.
           </li>
           <li>
-            · <b className="text-ink">「清仓」不等于看空</b>：只代表该 CUSIP 不再出现在 13(f)
-            多头持仓里 —— 可能转成了期权、移到无需申报的账户，或该证券已退出 13(f) 清单。
+            · <b className="text-ink">An exit is not bearishness</b>: it means only that this CUSIP no longer appears among 13(f)
+            long holdings — it may have moved into options, into an account that need not be reported, or the security may have left the 13(f) list.
           </li>
           <li>
-            · <b className="text-ink">修订件默认排除</b>：13F 修订要求全文重述整份申报，
-            与原件同时统计会重复计数。
+            · <b className="text-ink">Amendments are excluded by default</b>: a 13F amendment must restate the filing whole,
+            so counting it alongside the original double-counts.
           </li>
           <li>
-            · 本页只呈现已申报的事实，
-            <b className="text-ink">不打「看涨/看跌」标签、不做评分、不构成任何投资建议</b>。
-            数据源 SEC EDGAR 结构化数据集（美国政府公开记录，不限商用）。
+            · This page presents facts already filed, and
+            <b className="text-ink"> attaches no bullish or bearish label, produces no score, and is not investment advice</b>.
+            Source: the SEC EDGAR structured dataset (US government public record, no restriction on commercial use).
           </li>
         </ul>
       </div>

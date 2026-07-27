@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Card, Emph, PageHead, Td, Th } from "../components/Shell";
 
-/* ── 类型（与后端 modules/scanner.py 对齐）── */
+/* ── Types (aligned with the backend's modules/scanner.py) ── */
 type Notes = { why_slow: string; iv_rank: string; universe: string; snapshot: string };
 type Row = {
   symbol: string;
@@ -13,25 +13,25 @@ type Row = {
   iv30_change: number | null;
   security_type: string | null;
   iv_samples: number;
-  // 攒不够历史时为 null —— **「算不出」不是「排名为 0」**
+  // null when not enough history has accrued — **"not computable" is not "a rank of 0"**
   iv_rank: number | null;
   iv_percentile: number | null;
   iv_ready: boolean;
   iv_days_needed: number;
-  // ⚠️ 排名为空的**原因**：只有 insufficient_history 才是"再等几天就有了"
+  // ⚠️ **Why** a ranking is null: only insufficient_history means "a few more days and it will be there"
   iv_reason: string | null;
   volume_x_median: number | null;
   volume_samples: number;
   volume_x_reason: string | null;
 };
 
-/** 空值理由的人话（与后端 REASON_LABEL 同义，缺省回退到原始码）。 */
+/** Null reasons in plain words (the same wording as the backend's REASON_LABEL, falling back to the raw code). */
 const REASON: Record<string, string> = {
-  insufficient_history: "本机还没攒够历史",
-  no_current_iv: "本次快照没有 IV30（上游没给）",
-  no_current_volume: "本次快照没有成交量（上游没给）",
-  flat_history: "历史区间为 0（最高=最低），位置无从谈起",
-  zero_median: "历史成交量中位数为 0，倍数算不出",
+  insufficient_history: "not enough history accrued on this machine yet",
+  no_current_iv: "this snapshot carries no IV30 (upstream did not provide one)",
+  no_current_volume: "this snapshot carries no volume (upstream did not provide one)",
+  flat_history: "the history has a zero range (high = low), so a position within it is undefined",
+  zero_median: "the median historical volume is 0, so no multiple can be computed",
 };
 type Batch = {
   id: number;
@@ -88,12 +88,12 @@ type ScanState = {
 
 const SORT_LABEL: Record<string, string> = {
   iv_rank: "IV Rank",
-  iv_percentile: "IV 百分位",
+  iv_percentile: "IV percentile",
   iv30: "IV30",
-  volume: "成交量",
-  volume_x: "量/中位数",
-  change_pct: "涨跌幅",
-  symbol: "代码",
+  volume: "Volume",
+  volume_x: "Volume / median",
+  change_pct: "Change",
+  symbol: "Ticker",
 };
 
 function num(n: number | null | undefined): string {
@@ -152,22 +152,22 @@ export default function Scanner() {
     void load();
   }, [load]);
 
-  // ⚠️ 轮询也要序号 + 防重叠：请求 A 慢、B 后发先至返回 running=false 并停表，
-  //    随后 A 的旧响应把状态写回 running=true —— 页面会永远显示"扫描中"，
-  //    而定时器已经停了，再也不会自己纠正。
+  // ⚠️ Polling needs a sequence number and overlap guard too: request A is slow, B overtakes it, returns running=false and stops the timer,
+  //    then A's stale response writes running=true back — the page shows "scanning" forever
+  //    with the timer already stopped, and never corrects itself.
   const pollSeq = useRef(0);
   const inFlight = useRef(false);
   const poll = useCallback(() => {
     if (pollRef.current) return;
     pollRef.current = window.setInterval(async () => {
-      if (inFlight.current) return;        // 上一次还没回来，跳过这一拍
+      if (inFlight.current) return;        // the last one has not returned; skip this tick
       inFlight.current = true;
       const n = ++pollSeq.current;
       try {
         const r = await fetch("/api/scanner/scan");
         if (!r.ok) return;
         const s = (await r.json()) as ScanState;
-        if (n !== pollSeq.current) return;  // 过期响应，丢弃
+        if (n !== pollSeq.current) return;  // a stale response; discard
         setScan(s);
         if (!s.running && pollRef.current) {
           window.clearInterval(pollRef.current);
@@ -175,7 +175,7 @@ export default function Scanner() {
           void load();
         }
       } catch {
-        /* 轮询失败不打断页面 */
+        /* a failed poll should not interrupt the page */
       } finally {
         inFlight.current = false;
       }
@@ -192,7 +192,7 @@ export default function Scanner() {
       })
       .catch(() => {});
     return () => {
-      // 清定时器后必须置空 ref，否则重新进页面 poll() 会直接 return
+      // The ref has to be nulled after clearing the timer, or poll() returns immediately on re-entering the page
       if (pollRef.current) {
         window.clearInterval(pollRef.current);
         pollRef.current = null;
@@ -200,8 +200,8 @@ export default function Scanner() {
     };
   }, [poll]);
 
-  // ⚠️ 取消也要看结果：接口 500 或断网时静默失败，
-  //    用户以为已经取消了，后台其实还在跑 26 分钟。
+  // ⚠️ Cancelling has to check its result too: a 500 or a dropped connection fails silently,
+  //    and the user believes they cancelled while the job runs on in the background for 26 minutes.
   const cancelScan = useCallback(async () => {
     try {
       const r = await fetch("/api/scanner/scan/cancel", { method: "POST" });
@@ -209,8 +209,8 @@ export default function Scanner() {
       setScan((await r.json()) as ScanState);
     } catch (e) {
       setErr(
-        `取消失败：${e instanceof Error ? e.message : String(e)} —— ` +
-          "后台扫描仍在继续。",
+        `Cancelling failed: ${e instanceof Error ? e.message : String(e)} — ` +
+          "the background scan is still running.",
       );
     }
   }, []);
@@ -232,26 +232,26 @@ export default function Scanner() {
 
   const st = data?.stats ?? scan?.stats;
   const N = data?.notes;
-  // 用实测速率外推剩余时间，不用固定值猜
+  // Extrapolate the time remaining from the rate actually measured, rather than guessing a fixed value
   const eta = (() => {
     if (!scan?.running || !scan.started_at || scan.done < 5) return null;
     const elapsed = (Date.now() - new Date(scan.started_at).getTime()) / 1000;
     const per = elapsed / scan.done;
     const left = (scan.total - scan.done) * per;
-    return left > 90 ? `约 ${Math.round(left / 60)} 分钟` : `约 ${Math.round(left)} 秒`;
+    return left > 90 ? `about ${Math.round(left / 60)} min` : `about ${Math.round(left)} s`;
   })();
 
   return (
     <>
-      <PageHead kicker="Scanner · 扫描器" title="全市场筛选">
-        CBOE 官方延时行情。<b className="text-ink">只在你自己机器上跑</b> ——
-        C 级源，任何对外展示都会触发 OPRA redistributor 认定。
+      <PageHead kicker="Scanner" title="Market-wide screening">
+        Cboe's official delayed quotes. <b className="text-ink">It runs on your own machine only</b> —
+        a tier C source, and showing it externally in any form triggers OPRA redistributor status.
       </PageHead>
 
-      {/* ⭐ 两条能力边界摆在最前 */}
+      {/* ⭐ Two limits, stated up front */}
       <div className="mb-5 rounded-2xl border border-brand/30 bg-brand/5 p-4 text-xs leading-relaxed text-dim">
         <div className="mb-1.5 font-mono text-[10px] uppercase tracking-widest text-brand">
-          先说清楚这一栏的两个限制
+          Two limits of this section, said plainly first
         </div>
         <p className="mb-1.5">
           <Emph>{N?.why_slow}</Emph>
@@ -261,14 +261,14 @@ export default function Scanner() {
         </p>
       </div>
 
-      {/* 扫描控制 */}
+      {/* Scan controls */}
       <Card
-        title="扫描"
+        title="Scan"
         sub={
           st
-            ? `本地已攒 ${num(st.rows)} 行 / ${num(st.symbols)} 只 / ${st.sessions} 个交易时段` +
-              (st.earliest ? ` （${st.earliest} ~ ${st.latest}）` : "")
-            : "还没扫过"
+            ? `${num(st.rows)} rows / ${num(st.symbols)} symbols / ${st.sessions} trading sessions accrued locally` +
+              (st.earliest ? ` (${st.earliest} to ${st.latest})` : "")
+            : "Nothing scanned yet"
         }
       >
         <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -285,16 +285,16 @@ export default function Scanner() {
             className="rounded-lg border border-line bg-card2 px-3 py-1.5 text-xs text-ink
                        transition hover:border-brand disabled:opacity-40"
           >
-            扫这几只
+            Scan these
           </button>
           <button
             onClick={() => void startScan(true)}
             disabled={scan?.running}
-            title="6,049 只 × 自律限流 4 次/秒 ≈ 26 分钟"
+            title="6,049 symbols at a self-imposed 4 requests/second ≈ 26 minutes"
             className="rounded-lg border border-brand/50 bg-brand/10 px-3 py-1.5 text-xs
                        text-brand transition hover:bg-brand/20 disabled:opacity-40"
           >
-            扫全市场（约 26 分钟）
+            Scan the whole market (about 26 min)
           </button>
           {scan?.running && (
             <button
@@ -302,7 +302,7 @@ export default function Scanner() {
               className="rounded-lg border border-line px-3 py-1.5 text-xs text-dim
                          hover:border-brand hover:text-ink"
             >
-              取消
+              Cancel
             </button>
           )}
         </div>
@@ -312,7 +312,7 @@ export default function Scanner() {
             <div className="mb-1 flex items-center justify-between text-xs">
               <span className="text-ink">
                 {scan.stage} · {scan.done}/{scan.total}
-                {eta && <span className="text-dim"> · 剩余 {eta}</span>}
+                {eta && <span className="text-dim"> · {eta} remaining</span>}
               </span>
               <span className="font-mono text-dim">{scan.percent}%</span>
             </div>
@@ -325,21 +325,21 @@ export default function Scanner() {
           </div>
         )}
 
-        {/* ⚠️ 失败数必须显示：一轮里若有几百只取不到，
-            结果表看上去只是"少了些票"，不说就永远发现不了。 */}
+        {/* ⚠️ The failure count has to be shown: if several hundred could not be fetched in a round,
+            the results table merely looks like "a few symbols missing", and unsaid it is never noticed. */}
         {scan && !scan.running && scan.error_count > 0 && (
           <div className="mb-3 rounded-lg border border-brand/40 bg-brand/8 px-3 py-2 text-xs">
-            {/* ⚠️ `error_count` 是**消息条数**，缺 session 的几十只会被聚成一条。
-                真正受影响的标的数要用 failed 报，否则 20 只被丢弃却显示"1 项异常"。 */}
+            {/* ⚠️ `error_count` counts **messages**, and dozens missing a session collapse into one.
+                The symbols actually affected must be reported through failed, or 20 dropped shows as "1 issue". */}
             <b className="text-brand">
-              上一轮 {scan.failed} 只未能入库（{scan.error_count} 类原因）
+              {scan.failed} symbols did not reach the store last round ({scan.error_count} kinds of reason)
               {(scan.dropped_no_session ?? 0) > 0 &&
-                `，其中 ${scan.dropped_no_session} 只有行情但上游没给交易时段`}
+                `, of which ${scan.dropped_no_session} had quotes but no trading session from upstream`}
             </b>
             <span className="text-dim">
               {" "}
-              —— 它们不会出现在结果里，但那是<b className="text-ink">取不到</b>，
-              不是"这些票没有数据"。
+              — they do not appear in the results, but that is <b className="text-ink">could not fetch</b>,
+              not "these symbols have no data".
             </span>
             <ul className="mt-1 space-y-0.5 font-mono text-[10px] text-dim">
               {scan.errors.slice(0, 4).map((e, i) => (
@@ -349,19 +349,19 @@ export default function Scanner() {
           </div>
         )}
 
-        {/* IV Rank 就绪度 —— 这一栏"现在有多可用"的直接答案 */}
+        {/* IV Rank readiness — the direct answer to "how usable is this section right now" */}
         {st && (
           <div className="rounded-lg border border-line bg-card2/40 px-3 py-2.5 text-xs leading-relaxed text-dim">
-            IV Rank 已攒够历史的标的：
+            Symbols with enough history for IV Rank:
             <b className="font-mono text-ink"> {num(st.iv_ready_symbols)}</b> /{" "}
             {num(st.symbols)}
             {st.iv_ready_symbols === 0 && (
               <span>
                 {" "}
-                —— 一只都还没到{data?.thresholds?.iv_min_sample ?? 60} 个交易日。
-                在此之前 IV Rank 一栏显示<b className="text-ink">空值</b>，
-                这是<b className="text-ink">还没攒够</b>，不是"排名很低"。
-                每个交易日打开跑一次就会攒起来。
+                — not one has reached {data?.thresholds?.iv_min_sample ?? 60} trading days.
+                Until then the IV Rank column shows a <b className="text-ink">null</b>,
+                which means <b className="text-ink">not enough accrued yet</b>, not "a low rank".
+                Open and run it once each trading day and it accrues.
               </span>
             )}
           </div>
@@ -372,13 +372,13 @@ export default function Scanner() {
             <table className="w-full text-left text-[11px]">
               <thead className="border-b border-line text-dim">
                 <tr>
-                  <Th>开始</Th>
-                  <Th>全集</Th>
-                  <Th>扫到</Th>
-                  <Th>入库</Th>
-                  <Th>失败</Th>
-                  <Th>时段</Th>
-                  <Th>备注</Th>
+                  <Th>Started</Th>
+                  <Th>Universe</Th>
+                  <Th>Scanned</Th>
+                  <Th>Stored</Th>
+                  <Th>Failed</Th>
+                  <Th>Session</Th>
+                  <Th>Note</Th>
                 </tr>
               </thead>
               <tbody>
@@ -392,7 +392,7 @@ export default function Scanner() {
                       {b.failed}
                     </Td>
                     <Td className="font-mono text-dim">{b.session ?? "—"}</Td>
-                    <Td className="text-dim">{b.note || (b.finished_at ? "" : "进行中")}</Td>
+                    <Td className="text-dim">{b.note || (b.finished_at ? "" : "running")}</Td>
                   </tr>
                 ))}
               </tbody>
@@ -401,13 +401,13 @@ export default function Scanner() {
         )}
       </Card>
 
-      {/* 结果 */}
+      {/* Results */}
       <Card
-        title="筛选结果"
+        title="Screening results"
         sub={
           data?.session
-            ? `交易时段 ${data.session} · ${data.count} 只符合（共扫到 ${num(data.scanned ?? 0)} 只）`
-            : "还没有数据"
+            ? `Trading session ${data.session} · ${data.count} matching (${num(data.scanned ?? 0)} scanned)`
+            : "No data yet"
         }
         right={
           <div className="flex items-center gap-2">
@@ -418,7 +418,7 @@ export default function Scanner() {
             >
               {(data?.sorts ?? Object.keys(SORT_LABEL)).map((s) => (
                 <option key={s} value={s}>
-                  按 {SORT_LABEL[s] ?? s}
+                  By {SORT_LABEL[s] ?? s}
                 </option>
               ))}
             </select>
@@ -428,7 +428,7 @@ export default function Scanner() {
               className="rounded-lg border border-line bg-card2 px-3 py-1.5 text-xs text-ink
                          transition hover:border-brand disabled:opacity-40"
             >
-              {loading ? "加载中…" : "刷新"}
+              {loading ? "Loading…" : "Refresh"}
             </button>
           </div>
         }
@@ -442,9 +442,9 @@ export default function Scanner() {
         <div className="mb-3 flex flex-wrap items-center gap-2">
           {(
             [
-              [minPrice, setMinPrice, "最低价", "10"],
-              [minVolume, setMinVolume, "最低成交量", "1000000"],
-              [minVolumeX, setMinVolumeX, "量 ≥ N× 中位数", "2"],
+              [minPrice, setMinPrice, "Min price", "10"],
+              [minVolume, setMinVolume, "Min volume", "1000000"],
+              [minVolumeX, setMinVolumeX, "Volume ≥ N× median", "2"],
               [minIvRank, setMinIvRank, "IV Rank ≥", "80"],
             ] as const
           ).map(([v, set, label, ph]) => (
@@ -461,35 +461,35 @@ export default function Scanner() {
           ))}
         </div>
 
-        {/* ⚠️ 「因为算不出而被排除」和「不满足条件」必须分开说 */}
+        {/* ⚠️ "Excluded because it could not be computed" and "failed the condition" must be said apart */}
         {data?.excluded &&
           (data.excluded.excluded_no_iv_rank > 0 ||
             data.excluded.excluded_no_volume_x > 0) && (
             <div className="mb-3 rounded-lg border border-line bg-card2/40 px-3 py-2 text-[11px] leading-relaxed text-dim">
-              另有
-              {/* ⚠️ 不写死"还没攒够历史" —— 真实原因可能是当前 IV 缺失、
-                  历史区间为 0、中位数为 0，写死会和下面的明细自相矛盾。 */}
+              A further
+              {/* ⚠️ Do not hardcode "not enough history" — the real reason may be a missing current IV,
+                  a zero-range history or a zero median, and hardcoding contradicts the breakdown below. */}
               {data.excluded.excluded_no_iv_rank > 0 && (
                 <>
                   {" "}
-                  <b className="text-ink">{data.excluded.excluded_no_iv_rank}</b> 只因
-                  <b className="text-ink"> IV Rank 算不出</b>而被该条件滤掉
+                  <b className="text-ink">{data.excluded.excluded_no_iv_rank}</b> filtered out by that condition because
+                  <b className="text-ink"> IV Rank could not be computed</b>
                 </>
               )}
               {data.excluded.excluded_no_volume_x > 0 && (
                 <>
-                  {data.excluded.excluded_no_iv_rank > 0 && "、"}
-                  <b className="text-ink">{data.excluded.excluded_no_volume_x}</b> 只因
-                  <b className="text-ink">量比算不出</b>而被该条件滤掉
+                  {data.excluded.excluded_no_iv_rank > 0 && ", "}
+                  <b className="text-ink">{data.excluded.excluded_no_volume_x}</b> filtered out because
+                  <b className="text-ink"> the volume multiple could not be computed</b>
                 </>
               )}
-              。它们是<b className="text-ink">算不出</b>，不是"不满足条件"。
+              . They are <b className="text-ink">not computable</b>, not "failing the condition".
               {(data.excluded.iv_reasons || data.excluded.volume_reasons) && (
                 <span>
                   {" "}
-                  具体原因：
-                  {/* ⚠️ 两组理由要**相加**，不能用对象展开 ——
-                      同名键（insufficient_history）会被后者覆盖，10+30 变成 30。 */}
+                  Reasons:
+                  {/* ⚠️ The two sets of reasons must be **added**, never merged by object spread —
+                      a shared key (insufficient_history) would be overwritten and 10+30 become 30. */}
                   {Object.entries(
                     [data.excluded.iv_reasons, data.excluded.volume_reasons].reduce<
                       Record<string, number>
@@ -499,9 +499,9 @@ export default function Scanner() {
                       return acc;
                     }, {}),
                   )
-                    .map(([k, v]) => `${REASON[k] ?? k} ${v} 只`)
-                    .join("、")}
-                  。
+                    .map(([k, v]) => `${REASON[k] ?? k}: ${v}`)
+                    .join("; ")}
+                  .
                 </span>
               )}
             </div>
@@ -518,16 +518,16 @@ export default function Scanner() {
             <table className="w-full text-left text-xs">
               <thead className="border-b border-line text-dim">
                 <tr>
-                  <Th>代码</Th>
-                  <Th>类型</Th>
-                  <Th>现价</Th>
-                  <Th>涨跌</Th>
-                  <Th>成交量</Th>
-                  <Th>量/中位数</Th>
+                  <Th>Ticker</Th>
+                  <Th>Type</Th>
+                  <Th>Price</Th>
+                  <Th>Change</Th>
+                  <Th>Volume</Th>
+                  <Th>Volume / median</Th>
                   <Th>IV30</Th>
                   <Th>IV Rank</Th>
-                  <Th>IV 百分位</Th>
-                  <Th>样本</Th>
+                  <Th>IV percentile</Th>
+                  <Th>Samples</Th>
                 </tr>
               </thead>
               <tbody>
@@ -550,13 +550,13 @@ export default function Scanner() {
                       className="font-mono"
                       title={
                         r.volume_x_median === null
-                          ? REASON[r.volume_x_reason ?? ""] ?? "算不出"
-                          : `${r.volume_samples} 个样本`
+                          ? REASON[r.volume_x_reason ?? ""] ?? "not computable"
+                          : `${r.volume_samples} samples`
                       }
                     >
                       {r.volume_x_median === null ? (
                         <span className="text-dim">
-                          {r.volume_x_reason === "zero_median" ? "中位数 0" : "—"}
+                          {r.volume_x_reason === "zero_median" ? "median 0" : "—"}
                         </span>
                       ) : (
                         `${r.volume_x_median.toFixed(2)}×`
@@ -570,16 +570,16 @@ export default function Scanner() {
                         <span
                           className="text-dim"
                           title={
-                            (REASON[r.iv_reason ?? ""] ?? "算不出") +
-                            " —— 这是算不出，不是排名低"
+                            (REASON[r.iv_reason ?? ""] ?? "not computable") +
+                            " — this is not computable, not a low rank"
                           }
                         >
                           {r.iv_reason === "insufficient_history"
-                            ? `还差 ${r.iv_days_needed} 天`
+                            ? `${r.iv_days_needed} more days`
                             : r.iv_reason === "no_current_iv"
-                              ? "无 IV30"
+                              ? "no IV30"
                               : r.iv_reason === "flat_history"
-                                ? "区间为 0"
+                                ? "zero range"
                                 : "—"}
                         </span>
                       ) : (
@@ -600,25 +600,25 @@ export default function Scanner() {
             </table>
             {data.truncated && (
               <div className="mt-2 text-[10px] text-dim">
-                共 {data.count} 只符合，只显示前 200 —— 收紧条件可以看到全部。
+                {data.count} match; only the first 200 are shown — tighten the conditions to see them all.
               </div>
             )}
           </div>
         )}
 
         <div className="mt-4 text-[10px] leading-relaxed text-dim">
-          <b className="text-ink">IV Rank 与 IV 百分位是两个口径</b>，本页两个都给：
-          IV Rank =（当前 − 最低）/（最高 − 最低），只看两个端点，一年里有一天暴涨
-          就会把它永久压扁；IV 百分位 = 有多少天低于当前，看的是整个分布。
+          <b className="text-ink">IV Rank and IV percentile are two different measures</b>, and this page gives both:
+          IV Rank = (current − low) / (high − low), which reads only the two extremes, so one spike in a year
+          flattens it permanently; IV percentile = how many days sat below the current value, which reads the whole distribution.
           <br />
           <Emph>{N?.snapshot}</Emph> <Emph>{N?.universe}</Emph>
         </div>
       </Card>
 
       <p className="mb-6 text-[10px] leading-relaxed text-dim">
-        数据源：Cboe Global Markets 延时行情。⛔ 仅供在本机做个人研究，
-        对外展示会被认定为 OPRA redistributor（$1,500/月）。
-        本页只呈现数值与排名，不做任何买卖建议与预测。
+        Source: Cboe Global Markets delayed quotes. ⛔ For personal research on your own machine only;
+        showing it externally makes you an OPRA redistributor ($1,500/month).
+        This page presents values and rankings, and makes no recommendation or prediction.
       </p>
     </>
   );

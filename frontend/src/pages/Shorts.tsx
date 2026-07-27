@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactECharts from "echarts-for-react";
 import { Card, Emph, PageHead, Td, Th, esc } from "../components/Shell";
 
-/* ── 类型（与后端 modules/shorts.py 对齐）── */
+/* ── Types (aligned with the backend's modules/shorts.py) ── */
 type Fail = {
   settlement_date: string;
   cusip: string;
@@ -125,7 +125,7 @@ export default function Shorts() {
     const seq = ++reqRef.current;
     setLoading(true);
     setErr(null);
-    // ⚠️ 明细与汇总共用同一份查询串
+    // ⚠️ Detail and summary share one query string
     const q = new URLSearchParams();
     if (symbol) q.set("symbol", symbol);
     if (day) q.set("settlement_date", day);
@@ -182,7 +182,7 @@ export default function Shorts() {
           void load();
         }
       } catch {
-        /* 轮询失败不打断页面 */
+        /* a failed poll should not interrupt the page */
       }
     }, 3000);
   }, [load]);
@@ -197,7 +197,7 @@ export default function Shorts() {
       })
       .catch(() => {});
     return () => {
-      // 清定时器后必须把 ref 置空，否则新的 pollSync() 会直接 return
+      // The ref has to be nulled after clearing the timer, or a new pollSync() returns immediately
       if (pollRef.current) {
         window.clearInterval(pollRef.current);
         pollRef.current = null;
@@ -214,11 +214,11 @@ export default function Shorts() {
       if (s.started) pollSync();
       else if (s.reason) setErr(s.reason);
     } catch (e) {
-      setErr(`同步启动失败：${e instanceof Error ? e.message : String(e)}`);
+      setErr(`Could not start the sync: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
-  /* ── 交割失败余额最大的标的 ── */
+  /* ── Symbols with the largest fail-to-deliver balances ── */
   const symbolOption = useMemo(() => {
     const rows = (summary?.by_symbol ?? []).slice(0, 14).reverse();
     if (!rows.length) return {};
@@ -236,15 +236,15 @@ export default function Shorts() {
           const r = rows[ps[0].dataIndex];
           return (
             `<b>${esc(r.symbol)}</b> ${esc(r.description.slice(0, 30))}<br/>` +
-            `各结算日余额均值 ${num(r.avg_quantity ?? 0)} 股<br/>` +
-            `峰值 ${num(r.max_quantity ?? 0)} 股<br/>` +
-            `出现在 ${r.days} 个结算日`
+            `Mean balance across settlement dates ${num(r.avg_quantity ?? 0)} shares<br/>` +
+            `Peak ${num(r.max_quantity ?? 0)} shares<br/>` +
+            `Appearing on ${r.days} settlement dates`
           );
         },
       },
       xAxis: {
         type: "value",
-        name: "股",
+        name: "Shares",
         nameTextStyle: { color: "#8e8a83", fontSize: 10 },
         splitLine: { lineStyle: { color: "#1e1e24" } },
         axisLabel: {
@@ -271,11 +271,11 @@ export default function Shorts() {
             color: "#8e8a83",
             fontSize: 10,
             fontFamily: "JetBrains Mono",
-            // ⚠️ 无价格时标「无报价」而不是 $0：SEC 的价格字段在
-            // 「不可得或低于一美分」时是 "."，标成 $0 会让人以为这只股票不值钱
+            // ⚠️ With no price, mark it "no quote" rather than $0: the SEC's price field is "."
+            // when it is "unavailable or below one cent", and $0 reads as though the stock were worthless
             formatter: (p: any) => {
               const v = rows[p.dataIndex].avg_value;
-              return v == null || v === 0 ? "无报价" : money(v);
+              return v == null || v === 0 ? "no quote" : money(v);
             },
           },
         },
@@ -283,7 +283,7 @@ export default function Shorts() {
     };
   }, [summary]);
 
-  /* ── 各结算日的全市场余额 ── */
+  /* ── Market-wide balance per settlement date ── */
   const dateOption = useMemo(() => {
     const rows = summary?.by_date ?? [];
     if (rows.length < 2) return {};
@@ -300,8 +300,8 @@ export default function Shorts() {
           const r = rows[ps[0].dataIndex];
           return (
             `<b>${esc(r.settlement_date)}</b><br/>` +
-            `全市场未交割余额 ${num(r.total_quantity)} 股<br/>` +
-            `${r.symbols.toLocaleString()} 只标的有余额`
+            `Market-wide undelivered balance ${num(r.total_quantity)} shares<br/>` +
+            `${r.symbols.toLocaleString()} symbols with a balance`
           );
         },
       },
@@ -323,8 +323,8 @@ export default function Shorts() {
       },
       series: [
         {
-          // ⚠️ 用柱不用折线：折线会暗示"连续演进"，而 SEC 明说相邻两日的余额
-          // "may have little or no relationship" —— 各日是独立时点，不该连起来看趋势
+          // ⚠️ Bars, not a line: a line implies "continuous evolution", while the SEC states plainly that consecutive days'
+          // balances "may have little or no relationship" — each day is an independent instant and should not be joined into a trend
           type: "bar",
           itemStyle: { color: "#3b82f6" },
           data: rows.map((r) => r.total_quantity),
@@ -338,60 +338,60 @@ export default function Shorts() {
 
   return (
     <>
-      <PageHead kicker="Short Data · SEC Fails-to-Deliver" title="做空数据">
-        主源是 <b className="text-ink">SEC 交割失败（FTD）</b>数据 ——
-        美国政府公开记录，不限商用。FINRA 的场外空头成交量另有条款限制，
-        <b className="text-ink">默认关闭</b>（见下方）。
+      <PageHead kicker="Short Data · SEC Fails-to-Deliver" title="Short-sale data">
+        The main source is <b className="text-ink">SEC fails-to-deliver (FTD)</b> data —
+        US government public record, with no restriction on commercial use. FINRA's off-exchange short volume carries its own terms and is
+        <b className="text-ink"> off by default</b> (see below).
       </PageHead>
 
-      {/* ⭐ 三条官方原文 —— 这个分栏的数据最容易被读反 */}
+      {/* ⭐ Three official quotations — this section's data is the easiest to read backwards */}
       <div className="mb-5 rounded-2xl border border-brand/30 bg-brand/[0.06] p-5">
         <div className="mb-2 font-mono text-[11px] uppercase tracking-wider text-brand">
-          先看懂这三条，否则数据会读反
+          Understand these three first, or the data reads backwards
         </div>
         <ul className="space-y-2 text-sm leading-relaxed text-dim">
           <li>
-            <b className="text-ink">① FTD 不是当日新增，是累计余额。</b>{" "}
-            SEC 原文：「Fails to deliver on a given day are a cumulative number of all
+            <b className="text-ink">① An FTD is not that day's additions; it is a cumulative balance.</b>{" "}
+            The SEC's own words: "Fails to deliver on a given day are a cumulative number of all
             fails outstanding until that day... <b className="text-ink">The figure is not
             a daily amount of fails</b>... may have little or no relationship to
             yesterday's aggregate fails. Thus... <b className="text-ink">the age of fails
-            cannot be determined</b> by looking at these numbers.」
+            cannot be determined</b> by looking at these numbers."
             <br />
-            → 所以本页<b className="text-ink">不做日环比、不谈「激增」</b>，
-            下方按结算日用柱状图而非折线 —— 相邻两日不构成连续趋势。
+            → So this page <b className="text-ink">computes no day-on-day change and speaks of no surge</b>,
+            and the chart below uses bars by settlement date rather than a line — consecutive days are no continuous trend.
           </li>
           <li>
-            <b className="text-ink">② FTD 不是裸卖空的证据。</b> SEC 原文：
-            「fails-to-deliver can occur for a number of reasons on{" "}
+            <b className="text-ink">② An FTD is not evidence of naked shorting.</b> The SEC's own words:
+            "fails-to-deliver can occur for a number of reasons on{" "}
             <b className="text-ink">both long and short sales</b>. Therefore,
             fails-to-deliver are <b className="text-ink">not necessarily the result of
             short selling, and are not evidence of abusive short selling or 'naked'
-            short selling</b>.」
+            short selling</b>."
             <br />
-            → 这恰恰是该数据最流行的用法。实测余额最大的标的是 GOOG / AMD / XOM
-            这类高流动性大盘股，而非小盘股 —— 与「裸卖空打压」的叙事并不吻合。
+            → Which is precisely this data's most popular use. Measured, the largest balances sit on GOOG / AMD / XOM
+            and names like them — highly liquid large caps rather than small caps, which does not fit the "naked shorting is crushing it" story.
           </li>
           <li>
-            <b className="text-ink">③ 空头成交量 ≠ 空头持仓。</b> FINRA 原文：
-            「short interest position data <b className="text-ink">does not—and is not
-            intended to—equate to</b> the daily short sale volume data.」
-            且该文件只含<b className="text-ink">场外</b>成交
-            （not consolidated with exchange data）→
-            拿它算「全市场做空占比」是错的。
+            <b className="text-ink">③ Short volume ≠ short interest.</b> FINRA's own words:
+            "short interest position data <b className="text-ink">does not—and is not
+            intended to—equate to</b> the daily short sale volume data."
+            And that file holds <b className="text-ink">off-exchange</b> trades only
+            (not consolidated with exchange data) →
+            using it for a market-wide short share is wrong.
           </li>
         </ul>
       </div>
 
-      {/* 同步 */}
+      {/* Sync */}
       <Card
-        title="本地数据"
+        title="Local data"
         sub={
           stats && stats.rows
-            ? `${stats.rows.toLocaleString()} 条 · ${stats.symbols.toLocaleString()} 个标的 · ` +
-              `${stats.days} 个结算日 · 覆盖 ${stats.earliest} ~ ${stats.latest}` +
-              (stats.last_sync ? ` · 上次同步 ${stats.last_sync.replace("T", " ")}` : "")
-            : "尚未导入"
+            ? `${stats.rows.toLocaleString()} rows · ${stats.symbols.toLocaleString()} symbols · ` +
+              `${stats.days} settlement dates · covering ${stats.earliest} to ${stats.latest}` +
+              (stats.last_sync ? ` · last synced ${stats.last_sync.replace("T", " ")}` : "")
+            : "Not imported yet"
         }
         right={
           <div className="flex shrink-0 items-center gap-2">
@@ -404,7 +404,7 @@ export default function Shorts() {
             >
               {[2, 4, 6, 12].map((n) => (
                 <option key={n} value={n}>
-                  最近 {n} 档（{n / 2} 个月）
+                  Last {n} files ({n / 2} month{n / 2 > 1 ? "s" : ""})
                 </option>
               ))}
             </select>
@@ -414,7 +414,7 @@ export default function Shorts() {
               className="rounded-lg border border-brand/40 bg-brand/10 px-3.5 py-1.5 font-mono
                          text-xs text-brand transition hover:bg-brand/20 disabled:opacity-40"
             >
-              {sync?.running ? "导入中…" : "导入 FTD"}
+              {sync?.running ? "Importing…" : "Import FTD"}
             </button>
           </div>
         }
@@ -422,19 +422,19 @@ export default function Shorts() {
         {sync?.running && (
           <div className="mb-2 font-mono text-[11px] text-dim">
             {sync.stage}
-            {sync.rows > 0 && ` · 已入库 ${sync.rows.toLocaleString()} 条`}
+            {sync.rows > 0 && ` · ${sync.rows.toLocaleString()} stored`}
           </div>
         )}
         <div className="space-y-1 text-[11px] leading-relaxed text-dim">
           <div>
-            SEC 每月发<b className="text-ink">两个半月档</b>：上半月的月底发、
-            下半月的次月 15 号左右发 —— 所以最新一两档常常还没有，属正常。
+            The SEC publishes <b className="text-ink">two half-month files</b> a month: the first half at month end and
+            the second half around the 15th of the next — so the latest one or two are often not out yet, which is normal.
           </div>
-          {stats && stats.tags.length > 0 && <div>已导入档：{stats.tags.join("、")}</div>}
+          {stats && stats.tags.length > 0 && <div>Files imported: {stats.tags.join(", ")}</div>}
         </div>
         {sync && sync.error_count > 0 && (
           <details className="mt-2 text-xs text-dim">
-            <summary className="cursor-pointer">同步中有 {sync.error_count} 条提示</summary>
+            <summary className="cursor-pointer">{sync.error_count} notices during the sync</summary>
             <ul className="mt-1.5 space-y-0.5 font-mono text-[10px]">
               {sync.errors.map((e, i) => (
                 <li key={i}>{e}</li>
@@ -444,33 +444,33 @@ export default function Shorts() {
         )}
       </Card>
 
-      {/* ⚠️ FINRA 合规：把条款原文摆出来，判断交给用户 */}
+      {/* ⚠️ FINRA compliance: the terms are laid out as written, and the judgement left to the user */}
       {finra && (
         <Card
-          title={`FINRA 场外空头成交量 · ${finra.enabled ? "已开启" : "默认关闭"}`}
-          sub="这条线的合规判断由你自己做 —— 我们只保证你看得到条款原文"
+          title={`FINRA off-exchange short volume · ${finra.enabled ? "enabled" : "off by default"}`}
+          sub="The compliance judgement on this lane is yours — all we guarantee is that you can read the terms"
           right={
             <button
               onClick={() => setShowTerms((v) => !v)}
               className="shrink-0 rounded-lg border border-line bg-card2 px-3 py-1.5 font-mono
                          text-xs text-dim hover:text-ink"
             >
-              {showTerms ? "收起条款" : "查看条款原文"}
+              {showTerms ? "Hide the terms" : "Read the terms as written"}
             </button>
           }
         >
           <div className="text-xs leading-relaxed text-dim">
             {finra.enabled ? (
               <span>
-                已通过 <span className="font-mono text-ink">{finra.env_var}=1</span> 开启。
+                Enabled via <span className="font-mono text-ink">{finra.env_var}=1</span>.
               </span>
             ) : (
               <span>
-                未开启。要用请设{" "}
-                <span className="font-mono text-ink">{finra.env_var}=1</span> 并重启后端。
+                Not enabled. To use it, set{" "}
+                <span className="font-mono text-ink">{finra.env_var}=1</span> and restart the backend.
                 <b className="text-ink">
                   {" "}
-                  本分栏主源是 SEC FTD，不开这条也完全可用。
+                  This section's main source is SEC FTD, and works perfectly well without this lane.
                 </b>
               </span>
             )}
@@ -478,7 +478,7 @@ export default function Shorts() {
           {showTerms && (
             <div className="mt-3 space-y-2 rounded-lg border border-line bg-card2 p-3.5 text-[11px] leading-relaxed">
               <div className="font-mono text-[10px] text-dim">
-                FINRA Terms of Use · 最后修改 {finra.terms.last_modified} ·{" "}
+                FINRA Terms of Use · last modified {finra.terms.last_modified} ·{" "}
                 <a
                   href={finra.terms.url}
                   target="_blank"
@@ -489,23 +489,23 @@ export default function Shorts() {
                 </a>
               </div>
               <div>
-                <b className="text-ink">Permitted Uses：</b>
-                <span className="text-dim">「{finra.terms.permitted}」</span>
+                <b className="text-ink">Permitted Uses:</b>
+                <span className="text-dim">"{finra.terms.permitted}"</span>
               </div>
               <div>
-                <b className="text-ink">Restrictions (d)：</b>
-                <span className="text-dim">「{finra.terms.restriction_d}」</span>
+                <b className="text-ink">Restrictions (d):</b>
+                <span className="text-dim">"{finra.terms.restriction_d}"</span>
               </div>
               <div>
-                <b className="text-ink">Restrictions (e)：</b>
-                <span className="text-dim">「{finra.terms.restriction_e}」</span>
+                <b className="text-ink">Restrictions (e):</b>
+                <span className="text-dim">"{finra.terms.restriction_e}"</span>
               </div>
               <div className="border-t border-line pt-2">
-                <b className="text-brand">⚠️ 存在真实的模糊地带：</b>
+                <b className="text-brand">⚠️ There is a genuinely ambiguous area:</b>
                 <span className="text-dim"> {finra.terms.ambiguity}</span>
               </div>
               <div>
-                <b className="text-ink">本项目的处理：</b>
+                <b className="text-ink">How this project handles it:</b>
                 <span className="text-dim"> {finra.terms.our_stance}</span>
               </div>
             </div>
@@ -513,7 +513,7 @@ export default function Shorts() {
         </Card>
       )}
 
-      {/* 筛选 */}
+      {/* Filters */}
       {!cacheEmpty && (
         <div className="mb-5 flex flex-wrap items-center gap-2">
           <button
@@ -524,7 +524,7 @@ export default function Shorts() {
                 : "border-line bg-card text-dim hover:text-ink"
             }`}
           >
-            全部结算日
+            All settlement dates
           </button>
           {days.slice(-8).map((d) => (
             <button
@@ -549,7 +549,7 @@ export default function Shorts() {
             <input
               value={symbolInput}
               onChange={(e) => setSymbolInput(e.target.value)}
-              placeholder="按代码筛选"
+              placeholder="Filter by ticker"
               className="w-32 rounded-lg border border-line bg-card px-3 py-1.5 font-mono
                          text-xs uppercase outline-none focus:border-brand/50"
             />
@@ -562,7 +562,7 @@ export default function Shorts() {
                 }}
                 className="rounded-lg border border-line bg-card px-3 py-1.5 font-mono text-xs text-dim"
               >
-                清除
+                Clear
               </button>
             )}
           </form>
@@ -576,18 +576,18 @@ export default function Shorts() {
       )}
 
       {cacheEmpty && !err && (
-        <Card title="本地还没有数据" sub="导入一档约几秒">
+        <Card title="No local data yet" sub="Importing one file takes a few seconds">
           <div className="text-sm leading-relaxed text-dim">
-            点右上角「导入 FTD」。SEC 每月发两个半月档，建议先导最近 4 档（两个月）。
+            Press "Import FTD" at the top right. The SEC publishes two half-month files a month; start with the last 4 (two months).
           </div>
         </Card>
       )}
 
       {filterEmpty && !err && (
-        <Card title="当前筛选没有命中" sub={`本地共 ${(stats?.rows ?? 0).toLocaleString()} 条`}>
+        <Card title="Nothing matches the current filter" sub={`${(stats?.rows ?? 0).toLocaleString()} rows are held locally`}>
           <div className="text-sm leading-relaxed text-dim">
-            该代码在已导入的区间里没有交割失败余额记录 ——
-            <b className="text-ink">这是正常情况</b>：余额为零的标的不会出现在文件里。
+            This ticker has no fail-to-deliver balance in the imported range —
+            <b className="text-ink"> which is normal</b>: symbols with a zero balance never appear in the file.
           </div>
         </Card>
       )}
@@ -595,55 +595,55 @@ export default function Shorts() {
       {!cacheEmpty && !filterEmpty && summary && (
         <>
           <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
-            <Stat label="记录数" value={(summary.counts.n ?? 0).toLocaleString()} />
-            <Stat label="涉及标的" value={(summary.counts.syms ?? 0).toLocaleString()} />
-            <Stat label="结算日" value={String(summary.counts.days ?? 0)} />
+            <Stat label="Records" value={(summary.counts.n ?? 0).toLocaleString()} />
+            <Stat label="Symbols" value={(summary.counts.syms ?? 0).toLocaleString()} />
+            <Stat label="Settlement dates" value={String(summary.counts.days ?? 0)} />
             <Stat
-              label="区间"
+              label="Range"
               value={`${(summary.counts.lo ?? "").slice(5)} ~ ${(summary.counts.hi ?? "").slice(5)}`}
             />
           </div>
 
           <Card
-            title="交割失败余额最大的标的"
-            sub="按各结算日余额的均值排序（不是加总）· 条上标注名义金额"
+            title="Largest fail-to-deliver balances"
+            sub="Ordered by the mean balance across settlement dates (not their sum) · bars labelled with notional value"
           >
             {summary.by_symbol.length ? (
               <>
                 <ReactECharts option={symbolOption} style={{ height: 400 }} notMerge />
                 <div className="mt-2 text-[11px] leading-relaxed text-dim">
-                  ⚠️ 用均值不用加总：FTD 是<b className="text-ink">某时点的累计余额</b>，
-                  同一笔未交割会在连续多个结算日重复出现，把各日相加没有意义。
+                  ⚠️ The mean rather than the sum: an FTD is <b className="text-ink">a cumulative balance at a point in time</b>,
+                  one undelivered trade reappears across consecutive settlement dates, and adding the days together means nothing.
                 </div>
               </>
             ) : (
-              <div className="py-8 text-center text-sm text-dim">无数据</div>
+              <div className="py-8 text-center text-sm text-dim">No data</div>
             )}
           </Card>
 
           {days.length > 1 && (
-            <Card title="各结算日的全市场未交割余额" sub="每根柱是一个独立时点，不构成趋势">
+            <Card title="Market-wide undelivered balance by settlement date" sub="Each bar is an independent instant and forms no trend">
               <ReactECharts option={dateOption} style={{ height: 280 }} notMerge />
               <div className="mt-2 text-[11px] leading-relaxed text-dim">
-                ⚠️ 刻意用柱不用折线：SEC 明说相邻两日的余额
-                「may have little or no relationship」——
-                折线会暗示一种并不存在的连续演进。
+                ⚠️ Bars rather than a line, deliberately: the SEC states plainly that consecutive days' balances
+                "may have little or no relationship" —
+                and a line would imply a continuous evolution that does not exist.
               </div>
             </Card>
           )}
 
-          <Card title="明细" sub={`${fails.length} 条 · 按结算日与金额倒序`}>
+          <Card title="Detail" sub={`${fails.length} rows · by settlement date and value, descending`}>
             <div className="-mx-1 overflow-x-auto">
               <table className="w-full min-w-[760px] text-left text-xs">
                 <thead className="text-dim">
                   <tr className="border-b border-line">
-                    <Th>结算日</Th>
-                    <Th>代码</Th>
-                    <Th>名称</Th>
+                    <Th>Settlement date</Th>
+                    <Th>Ticker</Th>
+                    <Th>Name</Th>
                     <Th>CUSIP</Th>
-                    <Th>未交割余额</Th>
-                    <Th>前收价</Th>
-                    <Th>名义金额</Th>
+                    <Th>Undelivered balance</Th>
+                    <Th>Previous close</Th>
+                    <Th>Notional</Th>
                   </tr>
                 </thead>
                 <tbody className="font-mono">
@@ -655,10 +655,10 @@ export default function Shorts() {
                       <Td className="text-dim">{f.cusip}</Td>
                       <Td>{f.quantity != null ? f.quantity.toLocaleString() : "—"}</Td>
                       <Td className={f.price == null ? "text-dim" : ""}>
-                        {f.price != null ? `$${f.price.toFixed(2)}` : "无报价"}
+                        {f.price != null ? `$${f.price.toFixed(2)}` : "no quote"}
                       </Td>
                       <Td className="text-ink">
-                        {f.value != null ? money(f.value) : <span className="text-dim">无报价</span>}
+                        {f.value != null ? money(f.value) : <span className="text-dim">no quote</span>}
                       </Td>
                     </tr>
                   ))}
@@ -669,10 +669,10 @@ export default function Shorts() {
         </>
       )}
 
-      {/* 口径与边界 */}
+      {/* Definitions and limits */}
       <div className="mb-5 rounded-2xl border border-brand/25 bg-brand/5 p-5">
         <div className="mb-2 font-mono text-[11px] uppercase tracking-wider text-brand">
-          口径与边界
+          Definitions and limits
         </div>
         <ul className="space-y-1.5 text-xs leading-relaxed text-dim">
           {notes && (
@@ -684,22 +684,22 @@ export default function Shorts() {
             </>
           )}
           <li>
-            · <b className="text-ink">价格可能缺失</b>：SEC 说明价格字段在
-            「不可得或低于一美分」时留空，这类记录本页标为「无报价」——
-            不是价值为零。
+            · <b className="text-ink">The price may be missing</b>: the SEC states that the price field is left empty
+            when it is "unavailable or below one cent", and such records are shown here as "no quote" —
+            which is not a value of zero.
           </li>
           <li>
-            · <b className="text-ink">余额为零不会出现在文件里</b>：某标的查不到记录，
-            意味着它当日没有未交割余额，不是数据缺失。
+            · <b className="text-ink">A zero balance never appears in the file</b>: finding no record for a symbol
+            means it had no undelivered balance that day, not that data is missing.
           </li>
           <li>
-            · <b className="text-ink">发布有滞后</b>：上半月的档月底才发、
-            下半月的次月 15 号左右发。SEC 亦声明「We cannot guarantee the accuracy of the data」。
+            · <b className="text-ink">Publication lags</b>: the first half of a month appears at month end,
+            and the second half around the 15th of the next. The SEC also states "We cannot guarantee the accuracy of the data".
           </li>
           <li>
-            · 数据源 SEC（美国政府公开记录，不限商用）。FINRA 那条另有条款限制、默认关闭。
-            本页只呈现已公开的数据，
-            <b className="text-ink">不打「被做空」标签、不做评分、不构成任何投资建议</b>。
+            · Source: the SEC (US government public record, no restriction on commercial use). The FINRA lane carries its own terms and is off by default.
+            This page presents public data, and
+            <b className="text-ink"> attaches no "being shorted" label, produces no score, and is not investment advice</b>.
           </li>
         </ul>
       </div>

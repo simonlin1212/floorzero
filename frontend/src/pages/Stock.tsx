@@ -2,20 +2,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Card, Emph, PageHead, Td, Th } from "../components/Shell";
 
-/* ── 类型（与后端 modules/stock.py 对齐）── */
+/* ── Types (aligned with the backend's modules/stock.py) ── */
 type Notes = { timeline: string; no_score: string; missing: string };
 type Lane = {
   key: string;
   title: string;
   lag_note: string;
   as_of: string | null;
-  // ⚠️ 每块**自己的**滞后天数 —— 排序用它，不用我们写死的顺序
+  // ⚠️ Each block's **own** lag in days — the sort uses this, not an order we hardcoded
   lag_days: number | null;
   ok: boolean;
   // not_synced / not_enough / disabled / fetch_failed / no_data / no_mapping / bad_symbol
   reason: string | null;
   reason_label: string | null;
-  // 只有它为 true 才表示"这只票确实没有那类活动"；其余都是"我们拿不到"
+  // Only when this is true does it mean "this ticker genuinely has no such activity"; everything else means "we could not get it"
   means_absent: boolean | null;
   detail: string | null;
   data: Record<string, unknown> | null;
@@ -29,17 +29,17 @@ type Stock = {
   notes: Notes;
 };
 
-/** 每条线对应的分栏路由 —— 缺数据时给出"去哪儿补" */
+/** The section each lane belongs to — so a missing block says where to go and fill it in */
 const LANE_LINK: Record<string, { to: string; label: string }> = {
-  quote: { to: "/gex", label: "GEX 伽马" },
-  gex: { to: "/gex", label: "GEX 伽马" },
-  flow: { to: "/flow", label: "期权流" },
-  scanner: { to: "/scanner", label: "扫描器" },
-  insider: { to: "/insiders", label: "内部人" },
-  shorts: { to: "/shorts", label: "做空数据" },
-  congress: { to: "/congress", label: "国会交易" },
-  institution: { to: "/institutions", label: "机构持仓" },
-  darkpool: { to: "/darkpool", label: "暗池" },
+  quote: { to: "/gex", label: "GEX" },
+  gex: { to: "/gex", label: "GEX" },
+  flow: { to: "/flow", label: "Options flow" },
+  scanner: { to: "/scanner", label: "Scanner" },
+  insider: { to: "/insiders", label: "Insiders" },
+  shorts: { to: "/shorts", label: "Short data" },
+  congress: { to: "/congress", label: "Congress" },
+  institution: { to: "/institutions", label: "Institutions" },
+  darkpool: { to: "/darkpool", label: "Dark pools" },
 };
 
 function num(n: unknown): string {
@@ -52,7 +52,7 @@ function num(n: unknown): string {
   return `${s}${a.toFixed(0)}`;
 }
 
-/** 滞后天数 → 颜色。越旧越灰，让"这块很旧"一眼可见。 */
+/** Lag in days → colour. The older it is the greyer it goes, so "this block is stale" is visible at a glance. */
 function ageTone(d: number | null): string {
   if (d === null) return "text-dim";
   if (d <= 3) return "text-brand";
@@ -67,9 +67,9 @@ export default function StockPage() {
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const seq = useRef(0);
-  // ⚠️ 提交新代码时**立刻**作废在途请求，不等 effect 跑起来 ——
-  //    否则 A 在 B 的 effect 递增 seq 之前返回，A 的数据会被接纳，
-  //    并一直显示到 B 回来为止（输入框写着 B、卡片是 A）。
+  // ⚠️ Submitting a new ticker invalidates in-flight requests **immediately**, without waiting for the effect —
+  //    otherwise A returning before B's effect increments seq means A's data is accepted
+  //    and shown until B comes back (the box says B while the cards are A).
   const submit = useCallback((t: string) => {
     seq.current += 1;
     setTicker(t.trim() || "NVDA");
@@ -104,16 +104,16 @@ export default function StockPage() {
 
   return (
     <>
-      <PageHead kicker="Stock · 个股" title="一只票的九条线">
-        把九个数据源在同一只票上汇合。⚠️ 它们的
-        <b className="text-ink">新鲜度相差两个数量级</b> —— 所以每块都标了
-        自己的时点，按从新到旧排。
+      <PageHead kicker="Stock" title="One ticker, nine lanes">
+        Nine sources converging on one ticker. ⚠️ They differ in
+        <b className="text-ink"> freshness by two orders of magnitude</b> — so each block carries
+        its own instant, ordered newest to oldest.
       </PageHead>
 
-      {/* ⭐ 这一栏最容易被误读的地方 */}
+      {/* ⭐ The easiest thing to misread here */}
       <div className="mb-5 rounded-2xl border border-brand/30 bg-brand/5 p-4 text-xs leading-relaxed text-dim">
         <div className="mb-1.5 font-mono text-[10px] uppercase tracking-widest text-brand">
-          先说清楚「全景」这两个字的水分
+          How much the word "overview" is worth, said first
         </div>
         <p className="mb-1.5">
           <Emph>{data?.notes.timeline}</Emph>
@@ -127,14 +127,14 @@ export default function StockPage() {
       </div>
 
       <Card
-        title={data ? data.ticker : "个股"}
+        title={data ? data.ticker : "Stock"}
         sub={
           data
-            ? `${data.available} 条线有数据 · ${data.unavailable} 条空着` +
+            ? `${data.available} lanes have data · ${data.unavailable} are empty` +
               (data.lag_spread_days
-                ? ` · 最新的是 ${data.lag_spread_days.newest} 天前、最旧的是 ${data.lag_spread_days.oldest} 天前`
+                ? ` · the newest is ${data.lag_spread_days.newest} days old, the oldest ${data.lag_spread_days.oldest}`
                 : "")
-            : "输入代码后加载"
+            : "Enter a ticker to load"
         }
         right={
           <div className="flex items-center gap-2">
@@ -153,7 +153,7 @@ export default function StockPage() {
               className="rounded-lg border border-line bg-card2 px-3 py-1.5 text-xs text-ink
                          transition hover:border-brand disabled:opacity-40"
             >
-              {loading ? "加载中…" : "查询"}
+              {loading ? "Loading…" : "Query"}
             </button>
           </div>
         }
@@ -164,8 +164,8 @@ export default function StockPage() {
           </div>
         )}
 
-        {/* ⚠️ 横跨天数**总是显示**，不设阈值 —— 跨 10 天和跨 100 天都值得知道，
-            而"只有超过 30 天才提"会让读者以为没提就是"都挺新的"。 */}
+        {/* ⚠️ The span in days is **always shown**, with no threshold — 10 days and 100 days are both worth knowing,
+            and "only mention it beyond 30 days" leaves the reader assuming silence means "all fairly fresh". */}
         {data?.lag_spread_days && (
             <div
               className={`mb-4 rounded-lg px-3 py-2 text-xs ${
@@ -175,29 +175,29 @@ export default function StockPage() {
               }`}
             >
               <b className="text-brand">
-                这几块数据横跨 {data.lag_spread_days.oldest - data.lag_spread_days.newest} 天
+                These blocks span {data.lag_spread_days.oldest - data.lag_spread_days.newest} days
               </b>
               <span className="text-dim">
                 {" "}
-                —— 最新的来自 {data.lag_spread_days.newest} 天前、最旧的来自{" "}
-                {data.lag_spread_days.oldest} 天前。
-                <b className="text-ink">它们不是同一时刻的事</b>，
-                串成一个故事之前先看清各自的时点。
+                — the newest is from {data.lag_spread_days.newest} days ago and the oldest from{" "}
+                {data.lag_spread_days.oldest} days ago.
+                <b className="text-ink">They are not contemporaneous</b>,
+                so read each one's instant before stringing them into a story.
               </span>
             </div>
           )}
 
-        {/* 时间轴总览 */}
+        {/* Timeline overview */}
         {data && (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="border-b border-line text-dim">
                 <tr>
-                  <Th>数据线</Th>
-                  <Th>时点</Th>
-                  <Th>距今</Th>
-                  <Th>天然滞后</Th>
-                  <Th>状态</Th>
+                  <Th>Lane</Th>
+                  <Th>Instant</Th>
+                  <Th>Age</Th>
+                  <Th>Inherent lag</Th>
+                  <Th>State</Th>
                 </tr>
               </thead>
               <tbody>
@@ -206,12 +206,12 @@ export default function StockPage() {
                     <Td className={l.ok ? "font-semibold" : "text-dim"}>{l.title}</Td>
                     <Td className="font-mono text-dim">{l.as_of ?? "—"}</Td>
                     <Td className={`font-mono ${ageTone(l.lag_days)}`}>
-                      {l.lag_days === null ? "—" : `${l.lag_days} 天`}
+                      {l.lag_days === null ? "—" : `${l.lag_days} days`}
                     </Td>
                     <Td className="text-dim">{l.lag_note}</Td>
                     <Td>
                       {l.ok ? (
-                        <span className="text-brand">有数据</span>
+                        <span className="text-brand">has data</span>
                       ) : (
                         <span className="text-dim" title={l.detail ?? ""}>
                           {l.reason_label ?? l.reason}
@@ -226,15 +226,15 @@ export default function StockPage() {
         )}
       </Card>
 
-      {/* 逐块详情 */}
+      {/* Block by block */}
       {data?.lanes.map((l) => (
         <Card
           key={l.key}
           title={l.title}
           sub={
             l.ok
-              ? `${l.as_of ?? "时点未知"}${l.lag_days !== null ? ` · ${l.lag_days} 天前` : ""} · ${l.lag_note}`
-              : l.reason_label ?? l.reason ?? "无数据"
+              ? `${l.as_of ?? "instant unknown"}${l.lag_days !== null ? ` · ${l.lag_days} days ago` : ""} · ${l.lag_note}`
+              : l.reason_label ?? l.reason ?? "no data"
           }
           right={
             LANE_LINK[l.key] && (
@@ -243,7 +243,7 @@ export default function StockPage() {
                 className="rounded-lg border border-line bg-card2 px-3 py-1.5 text-xs
                            text-dim transition hover:border-brand hover:text-ink"
               >
-                去「{LANE_LINK[l.key].label}」→
+                Go to {LANE_LINK[l.key].label} →
               </Link>
             )
           }
@@ -251,14 +251,14 @@ export default function StockPage() {
           {!l.ok ? (
             <div className="rounded-lg border border-line bg-card2/40 px-3 py-3 text-xs leading-relaxed text-dim">
               <Emph>{l.detail ?? ""}</Emph>
-              {/* ⚠️ 只有 no_data 才是"这只票没有那类活动"，别的都不是 */}
-              {/* 后端直接给 means_absent —— 前端不必自己判断哪条算"真的没有" */}
+              {/* ⚠️ Only no_data means "this ticker has no such activity"; nothing else does */}
+              {/* The backend gives means_absent directly — the frontend need not decide which reasons count as genuinely absent */}
               {l.means_absent === false && (
                 <div className="mt-2 text-[10px]">
-                  ⚠️ 这一栏空着是因为
-                  <b className="text-ink">{l.reason_label}</b>，
-                  <b className="text-ink">不等于</b>
-                  这只票没有这类活动。
+                  ⚠️ This lane is empty because
+                  <b className="text-ink"> {l.reason_label}</b>,
+                  which <b className="text-ink">does not mean</b>{" "}
+                  this ticker has no such activity.
                 </div>
               )}
             </div>
@@ -269,35 +269,35 @@ export default function StockPage() {
       ))}
 
       <p className="mb-6 text-[10px] leading-relaxed text-dim">
-        数据源：Cboe（延时，仅本地）· SEC EDGAR · 众议院/参议院披露（禁商用）·
-        FINRA（默认关闭）。本页只把各源并排呈现，不做跨源综合评分、
-        不做任何买卖建议与预测。
+        Sources: Cboe (delayed, local only) · SEC EDGAR · House and Senate disclosures (commercial use forbidden) ·
+        FINRA (off by default). This page sets the sources side by side, produces no cross-source score,
+        and makes no recommendation or prediction.
       </p>
     </>
   );
 }
 
-/** 各块的简要呈现 —— 只挑几个数，详情在各自分栏。 */
+/** A brief rendering of each block — a few numbers only; the detail lives in each section. */
 function LaneBody({ lane }: { lane: Lane }) {
   const d = (lane.data ?? {}) as Record<string, any>;
   const rows: [string, string][] = [];
 
   if (lane.key === "quote") {
-    rows.push(["现价", `$${(d.spot ?? 0).toFixed?.(2) ?? "—"}`]);
-    rows.push(["合约数", num(d.contracts)]);
-    rows.push(["快照时刻", String(d.timestamp ?? "—")]);
+    rows.push(["Spot", `$${(d.spot ?? 0).toFixed?.(2) ?? "—"}`]);
+    rows.push(["Contracts", num(d.contracts)]);
+    rows.push(["Snapshot time", String(d.timestamp ?? "—")]);
   } else if (lane.key === "gex") {
-    rows.push(["总 GEX", `${num(d.total_gex_bn)}B`]);
+    rows.push(["Total GEX", `${num(d.total_gex_bn)}B`]);
     rows.push(["gamma flip", d.gamma_flip == null ? "—" : String(d.gamma_flip)]);
     rows.push(["call wall", String(d.call_wall ?? "—")]);
     rows.push(["put wall", String(d.put_wall ?? "—")]);
   } else if (lane.key === "flow") {
     const c = d.counts ?? {};
     const r = d.ratios ?? {};
-    rows.push(["有成交合约", num(c.traded_contracts)]);
-    rows.push(["异动", num(c.unusual)]);
+    rows.push(["Contracts traded", num(c.traded_contracts)]);
+    rows.push(["Unusual", num(c.unusual)]);
     rows.push([
-      "P/C（成交量 / 持仓量）",
+      "P/C (volume / open interest)",
       `${r.by_volume?.pc?.toFixed?.(2) ?? "—"} / ${r.by_oi?.pc?.toFixed?.(2) ?? "—"}`,
     ]);
   } else if (lane.key === "scanner") {
@@ -305,26 +305,26 @@ function LaneBody({ lane }: { lane: Lane }) {
     rows.push([
       "IV Rank",
       d.iv_rank == null
-        ? `算不出（${d.iv_reason === "insufficient_history" ? `还差 ${d.iv_days_needed} 个交易日` : d.iv_reason}）`
+        ? `not computable (${d.iv_reason === "insufficient_history" ? `${d.iv_days_needed} more trading days needed` : d.iv_reason})`
         : d.iv_rank.toFixed(1),
     ]);
-    rows.push(["本地样本", `${d.iv_samples ?? 0} 个交易日`]);
+    rows.push(["Local samples", `${d.iv_samples ?? 0} trading days`]);
   } else if (lane.key === "insider") {
     const c = d.counts ?? {};
-    rows.push(["公开市场交易", `${num(c.om)} 笔（共 ${num(c.n)} 笔含薪酬类）`]);
-    rows.push(["买 / 卖", `${num(c.buys)} / ${num(c.sells)} 笔`]);
-    rows.push(["买额 / 卖额", `$${num(c.bv)} / $${num(c.sv)}`]);
+    rows.push(["Open-market trades", `${num(c.om)} of ${num(c.n)} including compensation`]);
+    rows.push(["Buys / sells", `${num(c.buys)} / ${num(c.sells)}`]);
+    rows.push(["Bought / sold", `$${num(c.bv)} / $${num(c.sv)}`]);
   } else if (lane.key === "shorts") {
     const c = d.counts ?? {};
-    rows.push(["记录", `${num(c.n)} 条 · ${num(c.days)} 个结算日`]);
-    rows.push(["区间", `${c.lo ?? "—"} ~ ${c.hi ?? "—"}`]);
+    rows.push(["Records", `${num(c.n)} · ${num(c.days)} settlement dates`]);
+    rows.push(["Range", `${c.lo ?? "—"} to ${c.hi ?? "—"}`]);
   } else if (lane.key === "congress") {
-    rows.push(["申报交易", `${num(d.count)} 笔`]);
+    rows.push(["Disclosed trades", `${num(d.count)}`]);
   } else if (lane.key === "darkpool") {
-    rows.push(["ATS（真暗池）", `${num(d.ats?.shares)} 股`]);
-    rows.push(["非 ATS（内部化）", `${num(d.otc?.shares)} 股`]);
+    rows.push(["ATS (genuine dark pools)", `${num(d.ats?.shares)} shares`]);
+    rows.push(["Non-ATS (internalisation)", `${num(d.otc?.shares)} shares`]);
     rows.push([
-      "ATS / 非 ATS",
+      "ATS / non-ATS",
       d.ats_over_otc == null ? "—" : `${d.ats_over_otc.toFixed(2)}×`,
     ]);
   }

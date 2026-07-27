@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactECharts from "echarts-for-react";
 import { Card, Emph, PageHead, Td, Th, esc } from "../components/Shell";
 
-/* ── 类型（与后端 modules/market.py 对齐）── */
+/* ── Types (aligned with the backend's modules/market.py) ── */
 type Notes = { inversion: string; cot_lag: string; cot_scope: string };
 type CurveLatest = {
   date: string;
@@ -15,8 +15,8 @@ type Curve = {
   year: number;
   years: number[];
   missing_years: number[];
-  /** ⚠️ 拉取失败的年份 —— 后端仍会把库里的旧数据给出来，
-   *  所以这个字段**必须显示**，否则用户会把旧缓存当成最新的。 */
+  /** ⚠️ Years that failed to fetch — the backend still serves whatever is in the database,
+   *  so this field **must be displayed**, or the user takes an old cache for the latest. */
   failed: Record<string, string>;
   fetched: Record<string, number>;
   cache: { rows: number; earliest: string | null; latest: string | null;
@@ -90,16 +90,16 @@ export default function Market() {
   const [cotErr, setCotErr] = useState<string | null>(null);
   const [cotLoading, setCotLoading] = useState(false);
 
-  // ⚠️ 每类请求各一个序号：曲线和 COT 是两条独立的加载线，
-  //    共用一个计数器的话，切市场会把在途的曲线响应也判成"过期"丢掉。
+  // ⚠️ One sequence number per request type: the curve and COT are two independent loading lanes,
+  //    and sharing a counter would judge an in-flight curve response "stale" when the market changes.
   const curveSeq = useRef(0);
   const cotSeq = useRef(0);
   const mktSeq = useRef(0);
 
-  /* ── 收益率曲线 ── */
-  // `force` 只在用户主动点「刷新」时为 true。
-  // ⚠️ 不传它的话后端会直接复用缓存 —— 按钮写着"刷新"却什么都不做，
-  //    而 Treasury 是**会修订历史值**的，用户拿不到修订后的数字。
+  /* ── The yield curve ── */
+  // `force` is true only when the user presses Refresh themselves.
+  // ⚠️ Without it the backend simply reuses the cache — a button labelled "Refresh" that does nothing,
+  //    while Treasury **does revise historical values**, so the user never gets the revised figures.
   const loadCurve = useCallback(async (force = false) => {
     const seq = ++curveSeq.current;
     setCurveLoading(true);
@@ -124,11 +124,11 @@ export default function Market() {
     void loadCurve();
   }, [loadCurve]);
 
-  /* ── COT 市场清单（只加载一次）── */
-  // ⚠️ 这里**不能吞错**：清单取不到时下拉框会是空的，
-  //    而"空下拉框"和"CFTC 连不上"在界面上长得一模一样。
-  // ⚠️ 「重试」按钮可以连点，所以这里也要序号：先发的请求后返回时，
-  //    会把后发那次的成功结果重新清空成失败态。
+  /* ── The COT market list (loaded once) ── */
+  // ⚠️ Errors **must not be swallowed** here: without the list the dropdown is empty,
+  //    and "an empty dropdown" looks exactly like "CFTC is unreachable" in the interface.
+  // ⚠️ The Retry button can be pressed repeatedly, so this needs a sequence number too: an earlier request
+  //    returning later would clear a later request's success back into a failure state.
   const loadMarkets = useCallback(async () => {
     const seq = ++mktSeq.current;
     setMarketsErr(null);
@@ -138,7 +138,7 @@ export default function Market() {
       const d = (await r.json()) as MarketList;
       if (seq !== mktSeq.current) return;
       setMarkets(d);
-      // 默认选一个多数人认得的：优先 E-MINI S&P 500
+      // Default to something most people recognise: E-MINI S&P 500 first
       const pref =
         d.markets.find((m) => m.market.startsWith("E-MINI S&P 500")) ?? d.markets[0];
       if (pref) setPicked(pref.market);
@@ -153,17 +153,17 @@ export default function Market() {
     void loadMarkets();
   }, [loadMarkets]);
 
-  /* ── COT 时间序列 ── */
+  /* ── The COT time series ── */
   const loadCot = useCallback(async () => {
     if (!picked) return;
     const seq = ++cotSeq.current;
     setCotLoading(true);
     setCotErr(null);
-    // ⚠️ 必须先清空：下拉框已经显示合约 B 了，指标卡/图/表还留着 A 的数字，
-    //    看上去就是"B 的持仓"。慢网络下这个错配能持续到请求超时。
+    // ⚠️ It has to be cleared first: with the dropdown already showing contract B while the cards, chart and table
+    //    still hold A's numbers, it reads as "B's positioning". On a slow connection that mismatch lasts until the request times out.
     setCot(null);
     try {
-      // ⚠️ exact=true：模糊匹配会把不同合约揉成一条锯齿线
+      // ⚠️ exact=true: a fuzzy match kneads different contracts into one sawtooth line
       const q = new URLSearchParams({ market: picked, exact: "true", limit: "160" });
       const r = await fetch(`/api/market/cot?${q}`);
       if (!r.ok) throw new Error((await r.json()).detail ?? `HTTP ${r.status}`);
@@ -189,7 +189,7 @@ export default function Market() {
     return f ? all.filter((m) => m.market.toUpperCase().includes(f)) : all;
   }, [markets, filter]);
 
-  /* ── 图：利差时间序列 ── */
+  /* ── Chart: the spread time series ── */
   const spreadOption = useMemo(() => {
     if (!curve) return null;
     return {
@@ -211,7 +211,7 @@ export default function Market() {
             .map((p) => {
               const v = p.data;
               const tag =
-                v === null ? "" : v < 0 ? " <span style='color:#ff5a1f'>倒挂</span>" : "";
+                v === null ? "" : v < 0 ? " <span style='color:#ff5a1f'>inverted</span>" : "";
               return `${esc(p.seriesName)}: ${v === null ? "—" : `${v.toFixed(2)}%`}${tag}`;
             })
             .join("<br/>");
@@ -226,7 +226,7 @@ export default function Market() {
       },
       yAxis: {
         type: "value",
-        name: "利差 %",
+        name: "Spread %",
         nameTextStyle: { color: "#8e8a83", fontSize: 10 },
         axisLabel: { color: "#8e8a83", fontSize: 10, formatter: "{value}" },
         splitLine: { lineStyle: { color: "#2a2a31", type: "dashed" } },
@@ -240,7 +240,7 @@ export default function Market() {
         connectNulls: false,
         lineStyle: { width: k === "30Y-10Y" ? 1 : 1.6, color: SPREAD_COLOR[k] },
         itemStyle: { color: SPREAD_COLOR[k] },
-        // 零轴：低于它就是倒挂。画成标线而不是靠肉眼估。
+        // The zero line: below it is inversion. Drawn as a mark line rather than left to the eye.
         markLine:
           k === "10Y-2Y"
             ? {
@@ -255,7 +255,7 @@ export default function Market() {
     };
   }, [curve]);
 
-  /* ── 图：当日期限结构 ── */
+  /* ── Chart: the term structure on the day ── */
   const shapeOption = useMemo(() => {
     const L = curve?.latest;
     if (!L) return null;
@@ -299,10 +299,10 @@ export default function Market() {
     };
   }, [curve]);
 
-  /* ── 图：COT 净持仓 ── */
+  /* ── Chart: COT net positioning ── */
   const cotOption = useMemo(() => {
     if (!cot || !cot.rows.length) return null;
-    // 后端按日期倒序返回；画图要正序
+    // The backend returns newest first; the chart needs oldest first
     const rows = [...cot.rows].reverse();
     const dates = rows.map((r) => r.report_date ?? "");
     return {
@@ -311,7 +311,7 @@ export default function Market() {
       legend: {
         top: 0,
         textStyle: { color: "#8e8a83", fontSize: 11 },
-        data: ["杠杆基金净持仓", "资产管理净持仓"],
+        data: ["Leveraged funds net", "Asset managers net"],
       },
       tooltip: {
         trigger: "axis",
@@ -319,11 +319,11 @@ export default function Market() {
         borderColor: "#2a2a31",
         textStyle: { color: "#f2efe9", fontSize: 11 },
         formatter: (ps: { axisValue: string; seriesName: string; data: number | null }[]) =>
-          `<b>${esc(ps[0]?.axisValue)}</b>（周二持仓）<br/>` +
+          `<b>${esc(ps[0]?.axisValue)}</b> (Tuesday's positions)<br/>` +
           ps
             .map(
               (p) =>
-                `${esc(p.seriesName)}: ${p.data === null ? "—" : p.data.toLocaleString()} 手`,
+                `${esc(p.seriesName)}: ${p.data === null ? "—" : p.data.toLocaleString()} contracts`,
             )
             .join("<br/>"),
       },
@@ -335,7 +335,7 @@ export default function Market() {
       },
       yAxis: {
         type: "value",
-        name: "净持仓（手）",
+        name: "Net position (contracts)",
         nameTextStyle: { color: "#8e8a83", fontSize: 10 },
         axisLabel: {
           color: "#8e8a83",
@@ -347,7 +347,7 @@ export default function Market() {
       dataZoom: [{ type: "inside" }, { type: "slider", height: 16, bottom: 8 }],
       series: [
         {
-          name: "杠杆基金净持仓",
+          name: "Leveraged funds net",
           type: "line",
           data: rows.map((r) => r.lev_net),
           showSymbol: false,
@@ -363,7 +363,7 @@ export default function Market() {
           },
         },
         {
-          name: "资产管理净持仓",
+          name: "Asset managers net",
           type: "line",
           data: rows.map((r) => r.asset_net),
           showSymbol: false,
@@ -380,39 +380,39 @@ export default function Market() {
 
   return (
     <>
-      <PageHead kicker="Market · 宏观" title="收益率曲线与持仓报告">
-        美国财政部与 CFTC 的公开数据 —— 全项目
-        <b className="text-ink"> 最干净的一条线</b>：政府作品，不限商用、可自由再分发，
-        没有 OPRA、没有 §13107、没有 FINRA 条款。
+      <PageHead kicker="Market · macro" title="Yield curve and positioning report">
+        Public data from the US Treasury and the CFTC — the
+        <b className="text-ink"> cleanest lane in the project</b>: government works, no restriction on commercial use, freely redistributable,
+        with no OPRA, no §13107 and no FINRA terms.
       </PageHead>
 
-      {/* ── 合规与口径 ── */}
+      {/* ── Compliance and definitions ── */}
       <div className="mb-5 rounded-2xl border border-line bg-card2/60 p-4 text-xs leading-relaxed text-dim">
         <div className="mb-1.5 font-mono text-[10px] uppercase tracking-widest text-brand">
-          S 级 · 口径说明
+          Tier S · definitions
         </div>
         <p className="mb-1.5">
-          <b className="text-ink">倒挂看哪条？</b>{" "}
+          <b className="text-ink">Which inversion?</b>{" "}
           <Emph>
             {notes?.inversion ??
-              "10Y−2Y 与 10Y−3M 是两条不同的利差，倒挂时点可以差好几个月。本页两条都显示。"}
+              "10Y−2Y and 10Y−3M are two different spreads and can invert months apart. This page shows both."}
           </Emph>
         </p>
         <p>
-          <b className="text-ink">COT 的三天时滞：</b>{" "}
-          <Emph>{notes?.cot_lag ?? "报告的是周二收盘持仓，周五下午才发布。"}</Emph>{" "}
+          <b className="text-ink">COT's three-day lag:</b>{" "}
+          <Emph>{notes?.cot_lag ?? "It reports Tuesday's closing positions and is published on Friday afternoon."}</Emph>{" "}
           <Emph>{notes?.cot_scope}</Emph>
         </p>
       </div>
 
-      {/* ═══ 收益率曲线 ═══ */}
+      {/* ═══ The yield curve ═══ */}
       <Card
-        title="美债收益率曲线"
+        title="US Treasury yield curve"
         sub={
           curve
-            ? `${curve.years[0]}–${curve.year} · ${curve.dates.length} 个交易日` +
-              (curve.missing_years.length ? ` · 缺 ${curve.missing_years.join("/")}` : "")
-            : "U.S. Treasury 官方日度数据"
+            ? `${curve.years[0]}–${curve.year} · ${curve.dates.length} trading days` +
+              (curve.missing_years.length ? ` · missing ${curve.missing_years.join("/")}` : "")
+            : "U.S. Treasury official daily data"
         }
         right={
           <div className="flex items-center gap-2">
@@ -423,18 +423,18 @@ export default function Market() {
             >
               {[1, 2, 3, 5, 10].map((y) => (
                 <option key={y} value={y}>
-                  近 {y} 年
+                  Last {y} years
                 </option>
               ))}
             </select>
             <button
               onClick={() => void loadCurve(true)}
               disabled={curveLoading}
-              title="强制重拉 Treasury（官方会修订历史值），不吃本地缓存"
+              title="Force a refetch from Treasury (which does revise historical values), bypassing the local cache"
               className="rounded-lg border border-line bg-card2 px-3 py-1.5 text-xs text-ink
                          transition hover:border-brand disabled:opacity-40"
             >
-              {curveLoading ? "拉取中…" : "重新拉取"}
+              {curveLoading ? "Fetching…" : "Refetch"}
             </button>
           </div>
         }
@@ -445,17 +445,17 @@ export default function Market() {
           </div>
         )}
 
-        {/* ⚠️ 部分年份拉失败时，下面显示的是**本地旧数据**。
-            必须说出来 —— 否则"最新 2026-07-24"会被当成今天刚取的。 */}
+        {/* ⚠️ When some years fail to fetch, what is shown below is **local, older data**.
+            That has to be said — or "latest 2026-07-24" is taken for something fetched just now. */}
         {curve && Object.keys(curve.failed).length > 0 && (
           <div className="mb-3 rounded-lg border border-brand/40 bg-brand/8 px-3 py-2 text-xs">
             <div className="font-semibold text-brand">
-              以下年份取数失败，图表用的是本地已有数据，可能不是最新的：
+              These years failed to fetch, so the chart uses local data that may not be current:
             </div>
             <ul className="mt-1 space-y-0.5 text-dim">
               {Object.entries(curve.failed).map(([y, msg]) => (
                 <li key={y}>
-                  · <span className="font-mono text-ink">{y}</span>：{msg}
+                  · <span className="font-mono text-ink">{y}</span>: {msg}
                 </li>
               ))}
             </ul>
@@ -463,15 +463,15 @@ export default function Market() {
         )}
         {curve && curve.missing_years.length > 0 && (
           <div className="mb-3 text-[10px] text-dim">
-            Treasury 没有 {curve.missing_years.join("、")} 年的数据（早年缺报是常态，
-            与取数失败不同）。
+            Treasury has no data for {curve.missing_years.join(", ")} (gaps in the early years are normal,
+            and different from a failed fetch).
           </div>
         )}
 
         {latest && (
           <>
             <div className="mb-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-              <Stat label={`最新 ${latest.date}`} value={pct(latest.yields["10Y"])} sub="10Y" />
+              <Stat label={`Latest ${latest.date}`} value={pct(latest.yields["10Y"])} sub="10Y" />
               {SPREAD_KEYS.map((k) => {
                 const v = latest.spreads[k];
                 const inv = latest.inverted[k];
@@ -480,20 +480,20 @@ export default function Market() {
                     key={k}
                     label={k}
                     value={v === null ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(2)}%`}
-                    sub={inv === null ? "数据缺失" : inv ? "倒挂" : "未倒挂"}
+                    sub={inv === null ? "data missing" : inv ? "inverted" : "not inverted"}
                     warn={inv === true}
                   />
                 );
               })}
             </div>
 
-            <div className="mb-1 text-xs text-dim">利差走势（虚线为零轴，低于它即倒挂）</div>
+            <div className="mb-1 text-xs text-dim">Spread history (the dashed line is zero; below it is inversion)</div>
             {spreadOption && (
               <ReactECharts option={spreadOption} style={{ height: 300 }} notMerge />
             )}
 
             <div className="mb-1 mt-4 text-xs text-dim">
-              {latest.date} 的期限结构（横轴是期限，不是时间）
+              Term structure on {latest.date} (the x axis is maturity, not time)
             </div>
             {shapeOption && (
               <ReactECharts option={shapeOption} style={{ height: 220 }} notMerge />
@@ -503,7 +503,7 @@ export default function Market() {
               <table className="w-full text-left text-xs">
                 <thead className="border-b border-line text-dim">
                   <tr>
-                    <Th>期限</Th>
+                    <Th>Maturity</Th>
                     {curve!.tenors.map((t) => (
                       <Th key={t}>{t}</Th>
                     ))}
@@ -511,7 +511,7 @@ export default function Market() {
                 </thead>
                 <tbody>
                   <tr className="border-b border-line/50">
-                    <Td className="text-dim">收益率</Td>
+                    <Td className="text-dim">Yield</Td>
                     {curve!.tenors.map((t) => (
                       <Td key={t} className="font-mono">
                         {pct(latest.yields[t])}
@@ -524,18 +524,18 @@ export default function Market() {
           </>
         )}
         {!latest && !curveErr && !curveLoading && (
-          <div className="py-8 text-center text-xs text-dim">无数据</div>
+          <div className="py-8 text-center text-xs text-dim">No data</div>
         )}
       </Card>
 
       {/* ═══ COT ═══ */}
       <Card
-        title="CFTC 持仓报告（TFF · 金融期货）"
+        title="CFTC positioning report (TFF · financial futures)"
         sub={
           markets
-            ? `${markets.active} 个在报合约 · 最新一期 ${markets.latest_report ?? "—"}（周二持仓）`
+            ? `${markets.active} contracts reporting · newest report ${markets.latest_report ?? "—"} (Tuesday's positions)`
             : marketsErr
-              ? "合约清单取数失败"
+              ? "Could not fetch the contract list"
               : "Traders in Financial Futures"
         }
         right={
@@ -545,7 +545,7 @@ export default function Market() {
             className="rounded-lg border border-line bg-card2 px-3 py-1.5 text-xs text-ink
                        transition hover:border-brand disabled:opacity-40"
           >
-            {cotLoading ? "加载中…" : "刷新"}
+            {cotLoading ? "Loading…" : "Refresh"}
           </button>
         }
       >
@@ -553,7 +553,7 @@ export default function Market() {
           <input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            placeholder="筛合约名（S&P / TREASURY / VIX…）"
+            placeholder="Filter contract names (S&P / TREASURY / VIX…)"
             className="w-56 rounded-lg border border-line bg-card2 px-2.5 py-1.5 text-xs
                        text-ink placeholder:text-dim"
           />
@@ -565,7 +565,7 @@ export default function Market() {
           >
             {shown.length === 0 && (
               <option value="">
-                {marketsErr ? "清单取数失败" : markets ? "无匹配合约" : "加载中…"}
+                {marketsErr ? "Could not fetch the list" : markets ? "No matching contract" : "Loading…"}
               </option>
             )}
             {shown.map((m) => (
@@ -581,18 +581,18 @@ export default function Market() {
 
         {marketsErr && (
           <div className="mb-3 rounded-lg border border-brand/40 bg-brand/8 px-3 py-2 text-xs">
-            <span className="font-semibold text-brand">合约清单取不到</span>
+            <span className="font-semibold text-brand">The contract list could not be fetched</span>
             <span className="text-dim">
               {" "}
-              —— {marketsErr}。这是<b className="text-ink">取数失败</b>，
-              不是"CFTC 没有合约"。
+              — {marketsErr}. This is <b className="text-ink">a failed fetch</b>,
+              not "CFTC has no contracts".
             </span>
             <button
               onClick={() => void loadMarkets()}
               className="ml-2 rounded border border-line px-2 py-0.5 text-[10px] text-ink
                          hover:border-brand"
             >
-              重试
+              Retry
             </button>
           </div>
         )}
@@ -608,24 +608,24 @@ export default function Market() {
               const r = cot.rows[0];
               return (
                 <div className="mb-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-                  <Stat label="报告日（周二）" value={r.report_date ?? "—"} sub="周五发布" />
+                  <Stat label="Report date (Tuesday)" value={r.report_date ?? "—"} sub="published Friday" />
                   <Stat
-                    label="杠杆基金净持仓"
+                    label="Leveraged funds net"
                     value={num(r.lev_net)}
-                    sub={`多 ${num(r.lev_long)} / 空 ${num(r.lev_short)}`}
+                    sub={`${num(r.lev_long)} long / ${num(r.lev_short)} short`}
                   />
                   <Stat
-                    label="资产管理净持仓"
+                    label="Asset managers net"
                     value={num(r.asset_net)}
-                    sub={`多 ${num(r.asset_long)} / 空 ${num(r.asset_short)}`}
+                    sub={`${num(r.asset_long)} long / ${num(r.asset_short)} short`}
                   />
-                  <Stat label="总持仓量" value={num(r.open_interest)} sub="open interest" />
+                  <Stat label="Total open interest" value={num(r.open_interest)} sub="open interest" />
                 </div>
               );
             })()}
 
             <div className="mb-1 text-xs text-dim">
-              净持仓走势（正=净多，负=净空；虚线为零轴）
+              Net positioning over time (positive = net long, negative = net short; the dashed line is zero)
             </div>
             {cotOption && <ReactECharts option={cotOption} style={{ height: 300 }} notMerge />}
 
@@ -633,16 +633,16 @@ export default function Market() {
               <table className="w-full text-left text-xs">
                 <thead className="border-b border-line text-dim">
                   <tr>
-                    <Th>报告日</Th>
-                    <Th>杠杆多</Th>
-                    <Th>杠杆空</Th>
-                    <Th>杠杆净</Th>
-                    <Th>资管多</Th>
-                    <Th>资管空</Th>
-                    <Th>资管净</Th>
-                    <Th>交易商多</Th>
-                    <Th>交易商空</Th>
-                    <Th>总持仓</Th>
+                    <Th>Report date</Th>
+                    <Th>Lev. long</Th>
+                    <Th>Lev. short</Th>
+                    <Th>Lev. net</Th>
+                    <Th>AM long</Th>
+                    <Th>AM short</Th>
+                    <Th>AM net</Th>
+                    <Th>Dealer long</Th>
+                    <Th>Dealer short</Th>
+                    <Th>Open interest</Th>
                   </tr>
                 </thead>
                 <tbody>
@@ -676,28 +676,28 @@ export default function Market() {
               </table>
               {cot.rows.length > 30 && (
                 <div className="mt-2 text-[10px] text-dim">
-                  表只列最近 30 期，图为全部 {cot.rows.length} 期
+                  The table lists the last 30 reports; the chart shows all {cot.rows.length}
                 </div>
               )}
             </div>
           </>
         )}
         {cot && cot.rows.length === 0 && !cotErr && (
-          <div className="py-8 text-center text-xs text-dim">该合约无记录</div>
+          <div className="py-8 text-center text-xs text-dim">No records for this contract</div>
         )}
       </Card>
 
       <p className="mb-6 text-[10px] leading-relaxed text-dim">
-        数据源：U.S. Department of the Treasury（Daily Treasury Par Yield Curve Rates）·
-        U.S. Commodity Futures Trading Commission（Traders in Financial Futures）。
-        均为美国政府作品，公有领域。本页只呈现数值，不做任何判断与预测。
-        今年为 {thisYear}。
+        Sources: U.S. Department of the Treasury (Daily Treasury Par Yield Curve Rates) ·
+        U.S. Commodity Futures Trading Commission (Traders in Financial Futures).
+        Both are US government works in the public domain. This page presents values and makes no judgement or prediction.
+        The current year is {thisYear}.
       </p>
     </>
   );
 }
 
-/** 小指标块。 */
+/** A small metric block. */
 function Stat({
   label,
   value,

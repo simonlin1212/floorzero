@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactECharts from "echarts-for-react";
 import { Card, Emph, PageHead, Td, Th, esc } from "../components/Shell";
 
-/* ── 类型（与后端 modules/darkpool.py 对齐）── */
+/* ── Types (aligned with the backend's modules/darkpool.py) ── */
 type Notes = {
   ats_vs_otc: string;
   no_double_count: string;
@@ -46,8 +46,8 @@ type Recon = {
 };
 type Side = {
   shares: number;
-  // ⚠️ `records` 是行数、`firms` 是按 MPID 去重的机构数。非 ATS 那边
-  //    MPID 全为空 —— 32 条记录点不出一家，两个数不能混用。
+  // ⚠️ `records` is a row count; `firms` is the number of distinct MPIDs. On the non-ATS side
+  //    every MPID is blank — 32 records name not one firm, and the two numbers must not be conflated.
   records: number;
   firms: number;
   anonymous_records: number;
@@ -65,7 +65,7 @@ type Dark = {
   otc: Side;
   off_exchange_shares: number;
   ats_over_otc: number | null;
-  // 分母凑不齐时为 null —— **不拿近似值顶替**
+  // null when the denominator is incomplete — **no approximation is substituted**
   share: {
     consolidated: number;
     ats_pct: number;
@@ -84,11 +84,11 @@ type Dark = {
   }[];
   unknown_types: Record<string, number>;
   null_shares: Record<string, number>;
-  // 取满行数上限 = 周序列可能不全，而该接口不支持排序，截掉哪几周未知
+  // Hitting the row limit = the weekly series may be incomplete, and since the endpoint cannot sort, which weeks were cut is unknown
   truncated: boolean;
   weekdays: string[];
   locally_observed_days: string[];
-  // 本地观测不到整周时的说明（分不清休市还是没扫）
+  // The explanation when a whole week cannot be observed locally (a holiday and a missed scan being indistinguishable)
   calendar_note: string | null;
   notes: Notes;
 };
@@ -119,8 +119,8 @@ export default function Darkpool() {
   const seq = useRef(0);
 
   useEffect(() => {
-    // ⚠️ 这个请求失败**不能吞**：关闭卡要求 `gated && status`、主卡要求 `!gated`，
-    //    status 拿不到时两块都不渲染 —— 页面变一片空白，看不出发生了什么。
+    // ⚠️ A failure here **must not be swallowed**: the disabled card requires `gated && status` and the main card `!gated`,
+    //    so without status neither renders — the page goes blank with nothing to show what happened.
     fetch("/api/darkpool-status")
       .then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -138,11 +138,11 @@ export default function Darkpool() {
       const q = week ? `?week=${encodeURIComponent(week)}` : "";
       const r = await fetch(`/api/darkpool/${encodeURIComponent(ticker)}${q}`);
       if (r.status === 409) {
-        // ⚠️ 409 = **这一栏被关着**（配置状态），不是"没有数据"。
-        //    这两件事在界面上必须长得完全不一样。
-        // ⚠️ 序号要在 `await r.json()` **之后**再对一次 —— 解析期间用户可能
-        //    已经发起新查询，先检查再 await 挡不住旧响应覆盖新状态。
-        const detail = (await r.json()).detail ?? "FINRA 源已关闭";
+        // ⚠️ 409 = **this section is switched off** (a configuration state), not "there is no data".
+        //    The two must look entirely different in the interface.
+        // ⚠️ The sequence number is checked again **after** `await r.json()` — during parsing the user may
+        //    have started a new query, and checking before the await does not stop a stale response overwriting the new state.
+        const detail = (await r.json()).detail ?? "The FINRA source is switched off";
         if (s !== seq.current) return;
         setGated(detail);
         setData(null);
@@ -182,9 +182,9 @@ export default function Darkpool() {
         borderColor: "#2a2a31",
         textStyle: { color: "#f2efe9", fontSize: 11 },
         formatter: (ps: { axisValue: string; seriesName: string; data: number }[]) =>
-          `<b>${esc(ps[0]?.axisValue)} 起那周</b><br/>` +
+          `<b>Week beginning ${esc(ps[0]?.axisValue)}</b><br/>` +
           ps
-            .map((p) => `${esc(p.seriesName)}: ${p.data.toLocaleString()} 股`)
+            .map((p) => `${esc(p.seriesName)}: ${p.data.toLocaleString()} shares`)
             .join("<br/>"),
       },
       xAxis: {
@@ -201,7 +201,7 @@ export default function Darkpool() {
       dataZoom: [{ type: "inside" }, { type: "slider", height: 16, bottom: 6 }],
       series: [
         {
-          name: "ATS（暗池）",
+          name: "ATS (dark pools)",
           type: "line",
           data: s.map((x) => x.ats_shares),
           showSymbol: false,
@@ -209,7 +209,7 @@ export default function Darkpool() {
           itemStyle: { color: "#ff5a1f" },
         },
         {
-          name: "非 ATS 场外（内部化）",
+          name: "Non-ATS off-exchange (internalisation)",
           type: "line",
           data: s.map((x) => x.otc_shares),
           showSymbol: false,
@@ -222,16 +222,16 @@ export default function Darkpool() {
 
   return (
     <>
-      <PageHead kicker="Darkpool · 暗池" title="场外成交：ATS 与内部化">
-        FINRA 场外成交透明度。这一栏
-        <b className="text-ink">默认关闭</b> —— B 级源，条款限非商业用途且
-        明文禁止「用本站数据建立数据库」，而本项目正是下载→落 SQLite。
+      <PageHead kicker="Darkpool" title="Off-exchange: ATS and internalisation">
+        FINRA off-exchange transparency. This section is
+        <b className="text-ink"> off by default</b> — a tier B source whose terms restrict it to non-commercial use and
+        explicitly forbid using the site's data to build a database, which is exactly what this project does, downloading into SQLite.
       </PageHead>
 
-      {/* ⭐ 最重要的一条：暗池 ≠ 场外 */}
+      {/* ⭐ The most important point: a dark pool is not the same as off-exchange */}
       <div className="mb-5 rounded-2xl border border-brand/30 bg-brand/5 p-4 text-xs leading-relaxed text-dim">
         <div className="mb-1.5 font-mono text-[10px] uppercase tracking-widest text-brand">
-          先说清楚这一栏最容易被算错的地方
+          The easiest thing to compute wrongly here, said first
         </div>
         <p className="mb-1.5">
           <Emph>{N?.ats_vs_otc}</Emph>
@@ -246,30 +246,30 @@ export default function Darkpool() {
 
       {statusErr && (
         <div className="mb-5 rounded-2xl border border-brand/40 bg-brand/8 px-4 py-3 text-xs">
-          <b className="text-brand">取不到本栏的开关状态</b>
-          <span className="text-dim"> —— {statusErr}。下面的内容可能不完整。</span>
+          <b className="text-brand">Could not read this section's on/off state</b>
+          <span className="text-dim"> — {statusErr}. What follows may be incomplete.</span>
         </div>
       )}
 
-      {/* status 拿不到时的降级关闭卡 —— 别让页面变空白 */}
+      {/* The fallback disabled card for when status cannot be fetched — do not let the page go blank */}
       {gated && !status && (
-        <Card title="这一栏当前是关着的" sub="设置环境变量 FZ_ENABLE_FINRA=1 才启用">
+        <Card title="This section is currently switched off" sub="Set the environment variable FZ_ENABLE_FINRA=1 to enable it">
           <p className="text-xs leading-relaxed text-dim">{gated}</p>
         </Card>
       )}
 
-      {/* 关闭态 */}
+      {/* Switched off */}
       {gated && status && (
         <Card
-          title="这一栏当前是关着的"
-          sub={`设置环境变量 ${status.env_var}=1 才启用`}
+          title="This section is currently switched off"
+          sub={`Set the environment variable ${status.env_var}=1 to enable it`}
           right={
             <button
               onClick={() => setShowTerms((v) => !v)}
               className="rounded-lg border border-line bg-card2 px-3 py-1.5 text-xs text-ink
                          hover:border-brand"
             >
-              {showTerms ? "收起条款" : "看条款原文"}
+              {showTerms ? "Hide the terms" : "Read the terms as written"}
             </button>
           }
         >
@@ -282,28 +282,28 @@ export default function Darkpool() {
           {showTerms && (
             <div className="space-y-2 rounded-lg border border-line bg-card2/40 p-3 text-[11px] leading-relaxed text-dim">
               <div>
-                条款出处：{" "}
-                <span className="font-mono text-ink">{status.terms.url}</span>
-                （{status.terms.last_modified} 版）
+                Terms from:{" "}
+                <span className="font-mono text-ink">{status.terms.url}</span>{" "}
+                ({status.terms.last_modified} version)
               </div>
               {(
                 [
-                  ["允许的用途", status.terms.permitted],
-                  ["限制 (d)", status.terms.restriction_d],
-                  ["限制 (e)", status.terms.restriction_e],
+                  ["Permitted uses", status.terms.permitted],
+                  ["Restriction (d)", status.terms.restriction_d],
+                  ["Restriction (e)", status.terms.restriction_e],
                 ] as const
               ).map(([k, v]) => (
                 <div key={k}>
-                  <b className="text-ink">{k}：</b>
+                  <b className="text-ink">{k}:</b>
                   <span className="italic">“{v}”</span>
                 </div>
               ))}
               <div>
-                <b className="text-ink">模糊之处：</b>
+                <b className="text-ink">Where it is ambiguous:</b>
                 {status.terms.ambiguity}
               </div>
               <div>
-                <b className="text-ink">我们的立场：</b>
+                <b className="text-ink">Our position:</b>
                 {status.terms.our_stance}
               </div>
             </div>
@@ -313,11 +313,11 @@ export default function Darkpool() {
 
       {!gated && (
         <Card
-          title={data ? `${data.ticker} · ${data.week} 起那周` : "场外成交"}
+          title={data ? `${data.ticker} · week beginning ${data.week}` : "Off-exchange volume"}
           sub={
             data
-              ? `本地可选 ${data.weeks.length} 周 · 最新 ${data.weeks[data.weeks.length - 1]}`
-              : "输入代码后加载"
+              ? `${data.weeks.length} weeks available locally · newest ${data.weeks[data.weeks.length - 1]}`
+              : "Enter a ticker to load"
           }
           right={
             <div className="flex items-center gap-2">
@@ -355,7 +355,7 @@ export default function Darkpool() {
                 className="rounded-lg border border-line bg-card2 px-3 py-1.5 text-xs text-ink
                            transition hover:border-brand disabled:opacity-40"
               >
-                {loading ? "加载中…" : "查询"}
+                {loading ? "Loading…" : "Query"}
               </button>
             </div>
           }
@@ -370,70 +370,70 @@ export default function Darkpool() {
             <>
               <div className="mb-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
                 <Stat
-                  label="ATS（真暗池）"
-                  value={`${num(data.ats.shares)} 股`}
-                  sub={`${data.ats.firms} 家 / ${data.ats.records} 条 · ${num(data.ats.trades)} 笔`}
+                  label="ATS (genuine dark pools)"
+                  value={`${num(data.ats.shares)} shares`}
+                  sub={`${data.ats.firms} firms / ${data.ats.records} records · ${num(data.ats.trades)} trades`}
                 />
                 <Stat
-                  label="非 ATS 场外（内部化）"
-                  value={`${num(data.otc.shares)} 股`}
-                  sub={`${data.otc.records} 条记录 · 能点名 ${data.otc.firms} 家`}
+                  label="Non-ATS off-exchange (internalisation)"
+                  value={`${num(data.otc.shares)} shares`}
+                  sub={`${data.otc.records} records · ${data.otc.firms} can be named`}
                   warn
                 />
                 <Stat
-                  label="ATS / 非 ATS"
+                  label="ATS / non-ATS"
                   value={
                     data.ats_over_otc === null ? "—" : `${data.ats_over_otc.toFixed(2)}×`
                   }
-                  sub="小于 1 = 内部化更大"
+                  sub="Below 1 = internalisation is larger"
                 />
                 <Stat
-                  label="场外合计"
-                  value={`${num(data.off_exchange_shares)} 股`}
-                  sub="⚠️ 这不叫「暗池成交量」"
+                  label="Off-exchange total"
+                  value={`${num(data.off_exchange_shares)} shares`}
+                  sub="⚠️ This is not called dark pool volume"
                 />
               </div>
 
-              {/* 对账结果 */}
+              {/* Reconciliation */}
               <div className="mb-4 space-y-1 text-[11px] leading-relaxed text-dim">
                 {(
                   [
                     ["ATS", data.ats.reconcile],
-                    ["非 ATS 场外", data.otc.reconcile],
+                    ["Non-ATS off-exchange", data.otc.reconcile],
                   ] as const
                 ).map(([k, rc]) => (
                   <div key={k}>
                     <b className={rc.matches === false ? "text-brand" : "text-ink"}>
-                      {k} 对账：
+                      {k} reconciliation:
                     </b>{" "}
                     <Emph>{rc.note}</Emph>
                   </div>
                 ))}
                 {data.truncated && (
                   <div className="text-brand">
-                    ⚠️ 本次取满了行数上限，
+                    ⚠️ This fetch hit the row limit,
                     <span className="text-dim">
                       {" "}
-                      周序列<b className="text-ink">可能不全</b> —— 该接口不支持排序，
-                      截掉了哪几周无从得知。
+                      so the weekly series <b className="text-ink">may be incomplete</b> — the endpoint cannot sort,
+                      and which weeks were cut is unknowable.
                     </span>
                   </div>
                 )}
                 {data.ats.null_share_records + data.otc.null_share_records > 0 && (
                   <div className="text-brand">
-                    ⚠️ 有 {data.ats.null_share_records + data.otc.null_share_records}{" "}
-                    条记录成交量为空，
+                    ⚠️ {data.ats.null_share_records + data.otc.null_share_records}{" "}
+                    records have a null volume,
                     <span className="text-dim">
                       {" "}
-                      已<b className="text-ink">排除</b>而不是当成 0 —— 合计因此偏小，
-                      占比也因此不给。
+                      and were <b className="text-ink">excluded</b> rather than counted as 0 — so the totals are correspondingly small,
+                      and no share is given.
                     </span>
                   </div>
                 )}
                 {data.ats.null_trade_records + data.otc.null_trade_records > 0 && (
                   <div className="text-dim">
-                    ⚠️ 有 {data.ats.null_trade_records + data.otc.null_trade_records}{" "}
-                    条记录笔数为空，已排除（未当成 0），笔数合计偏小。
+                    ⚠️ {data.ats.null_trade_records + data.otc.null_trade_records}{" "}
+                    records have a null trade count and were excluded (not counted as 0), so the trade totals are small.
                   </div>
                 )}
                 {data.calendar_note && (
@@ -443,34 +443,34 @@ export default function Darkpool() {
                 )}
                 {Object.keys(data.unknown_types).length > 0 && (
                   <div className="text-brand">
-                    ⚠️ 出现了未知的记录类型：{JSON.stringify(data.unknown_types)} ——
+                    ⚠️ Unrecognised record types appeared: {JSON.stringify(data.unknown_types)} —
                     <span className="text-dim">
                       {" "}
-                      FINRA 可能加了新分类，这部分成交量没有被计入，需要更新解析。
+                      FINRA may have added a category, that volume has not been counted, and the parser needs updating.
                     </span>
                   </div>
                 )}
               </div>
 
-              {/* 占比 */}
+              {/* Share */}
               <div className="mb-4 rounded-xl border border-line bg-card2/40 px-3 py-2.5 text-xs leading-relaxed">
                 {data.share ? (
                   <>
                     <div className="mb-1 flex flex-wrap gap-x-6 gap-y-1">
                       <span className="text-dim">
-                        ATS 占比{" "}
+                        ATS share{" "}
                         <b className="font-mono text-ink">
                           {data.share.ats_pct.toFixed(2)}%
                         </b>
                       </span>
                       <span className="text-dim">
-                        非 ATS 场外占比{" "}
+                        Non-ATS off-exchange share{" "}
                         <b className="font-mono text-ink">
                           {data.share.otc_pct.toFixed(2)}%
                         </b>
                       </span>
                       <span className="text-dim">
-                        场外合计{" "}
+                        Off-exchange total{" "}
                         <b className="font-mono text-ink">
                           {data.share.off_exchange_pct.toFixed(2)}%
                         </b>
@@ -482,21 +482,21 @@ export default function Darkpool() {
                   </>
                 ) : (
                   <div className="text-dim">
-                    <b className="text-brand">场外占比算不出来</b> ——
-                    分母是同期总成交量，本地那周
+                    <b className="text-brand">The off-exchange share cannot be computed</b> —
+                    the denominator is total volume over the same period, and locally that week
                     {data.missing_days.length > 0 && (
                       <>
                         {" "}
-                        缺 {data.missing_days.length} 个交易日（
-                        <span className="font-mono">{data.missing_days.join("、")}</span>
-                        ）
+                        is missing {data.missing_days.length} trading days (
+                        <span className="font-mono">{data.missing_days.join(", ")}</span>
+                        )
                       </>
                     )}
-                    。<Emph>{N?.share_needs_local}</Emph>
+                    . <Emph>{N?.share_needs_local}</Emph>
                     <div className="mt-1 text-[10px]">
-                      去「扫描器」分栏扫一下 {data.ticker}，把那几天的行情攒上就能算了 ——
-                      不过这份历史<b className="text-ink">补不回来</b>，
-                      只能从装上那天起往后攒。
+                      Scan {data.ticker} in the Scanner section to accrue those days' quotes and it can be computed —
+                      though this history <b className="text-ink">cannot be backfilled</b>,
+                      and only accrues forward from installation.
                     </div>
                   </div>
                 )}
@@ -505,8 +505,8 @@ export default function Darkpool() {
               {seriesOption && (
                 <>
                   <div className="mb-1 text-xs text-dim">
-                    逐周走势 —— <b className="text-ink">两条线分开画</b>
-                    ，因为它们是两类不同的成交
+                    Week by week — <b className="text-ink">the two lines are drawn apart</b>
+                    , because they are two different kinds of trading
                   </div>
                   <ReactECharts option={seriesOption} style={{ height: 260 }} notMerge />
                 </>
@@ -515,8 +515,8 @@ export default function Darkpool() {
               <div className="mb-2 mt-4 flex items-center gap-2">
                 {(
                   [
-                    ["ats", `ATS 暗池 (${data.ats.records} 条)`],
-                    ["otc", `非 ATS 场外 (${data.otc.records} 条)`],
+                    ["ats", `ATS dark pools (${data.ats.records} records)`],
+                    ["otc", `Non-ATS off-exchange (${data.otc.records} records)`],
                   ] as const
                 ).map(([k, label]) => (
                   <button
@@ -532,7 +532,7 @@ export default function Darkpool() {
                   </button>
                 ))}
                 <span className="ml-auto text-[10px] text-dim">
-                  「均每笔」= 成交量 ÷ 笔数，只是个除法结果
+                  "Mean per trade" = volume ÷ trades, which is no more than a division
                 </span>
               </div>
               <div className="overflow-x-auto">
@@ -540,11 +540,11 @@ export default function Darkpool() {
                   <thead className="border-b border-line text-dim">
                     <tr>
                       <Th>MPID</Th>
-                      <Th>机构</Th>
-                      <Th>层级</Th>
-                      <Th>成交量</Th>
-                      <Th>笔数</Th>
-                      <Th>均每笔</Th>
+                      <Th>Firm</Th>
+                      <Th>Tier</Th>
+                      <Th>Volume</Th>
+                      <Th>Trades</Th>
+                      <Th>Mean per trade</Th>
                     </tr>
                   </thead>
                   <tbody>
@@ -552,7 +552,7 @@ export default function Darkpool() {
                       <tr key={`${v.mpid ?? "anon"}-${i}`} className="border-b border-line/50">
                         <Td className="font-mono">{v.mpid ?? "—"}</Td>
                         <Td className={v.name ? "" : "text-dim"}>
-                          {v.name ?? "（该数据不披露机构名）"}
+                          {v.name ?? "(this data does not disclose the firm)"}
                         </Td>
                         <Td className="text-dim">{v.tier ?? "—"}</Td>
                         <Td className="font-mono">{num(v.shares)}</Td>
@@ -560,14 +560,14 @@ export default function Darkpool() {
                         <Td className="font-mono">
                           {v.avg_trade_size === null
                             ? "—"
-                            : `${v.avg_trade_size.toFixed(0)} 股`}
+                            : `${v.avg_trade_size.toFixed(0)} shares`}
                         </Td>
                       </tr>
                     ))}
                     {rows.length === 0 && (
                       <tr>
                         <td colSpan={6} className="py-8 text-center text-dim">
-                          该周无记录
+                          No records that week
                         </td>
                       </tr>
                     )}
@@ -585,8 +585,8 @@ export default function Darkpool() {
       )}
 
       <p className="mb-6 text-[10px] leading-relaxed text-dim">
-        数据源：FINRA OTC Transparency（B 级，默认关闭）+ Cboe 延时行情（分母）。
-        本页只呈现数值，不做任何判断与预测。
+        Sources: FINRA OTC Transparency (tier B, off by default) + Cboe delayed quotes (the denominator).
+        This page presents values and makes no judgement or prediction.
       </p>
     </>
   );

@@ -1,37 +1,37 @@
 import { NavLink } from "react-router-dom";
 
-/** 分栏导航。加新分栏时只改这里。 */
+/** Section navigation. Adding a section changes only this. */
 const NAV = [
-  // 个股页把九条线汇合 —— 放最前面，多数人从这里进
-  { to: "/stock", label: "个股", tag: "九条线汇合" },
-  // CBOE = C 级：需授权，只能本地跑，绝不对外展示
-  { to: "/flow", label: "期权流", tag: "CBOE·仅本地" },
-  { to: "/gex", label: "GEX 伽马", tag: "CBOE·仅本地" },
-  { to: "/scanner", label: "扫描器", tag: "CBOE·仅本地" },
-  // FINRA = B 级：条款限非商业用途，默认关闭
-  { to: "/darkpool", label: "暗池", tag: "FINRA·默认关" },
-  // ⚠️ 国会披露虽是政府公开记录，但 5 U.S.C. §13107(c) 明文禁止商用 ——
-  //    与 EDGAR 的"可商用"不是一个级别，标签必须区分开
-  { to: "/congress", label: "国会交易", tag: "公开·禁商用" },
-  { to: "/insiders", label: "内部人", tag: "S 级·可商用" },
-  { to: "/institutions", label: "机构持仓", tag: "S 级·可商用" },
-  // FTD 是 S 级；FINRA 那条默认关闭、标签只反映默认状态
-  { to: "/shorts", label: "做空数据", tag: "S 级·FTD" },
-  { to: "/market", label: "宏观", tag: "S 级·可商用" },
+  // The stock page brings the nine lanes together — first in the list, since most people enter here
+  { to: "/stock", label: "Stock", tag: "nine lanes" },
+  // Cboe = tier C: needs authorisation, runs locally only, never shown externally
+  { to: "/flow", label: "Options flow", tag: "Cboe · local only" },
+  { to: "/gex", label: "GEX", tag: "Cboe · local only" },
+  { to: "/scanner", label: "Scanner", tag: "Cboe · local only" },
+  // FINRA = tier B: the terms restrict it to non-commercial use, so it is off by default
+  { to: "/darkpool", label: "Dark pools", tag: "FINRA · off" },
+  // ⚠️ Congressional disclosures are government public record, but 5 U.S.C. §13107(c) forbids commercial use —
+  //    a different tier from EDGAR's "commercial use allowed", and the tags must keep them apart
+  { to: "/congress", label: "Congress", tag: "no commercial use" },
+  { to: "/insiders", label: "Insiders", tag: "tier S · reusable" },
+  { to: "/institutions", label: "Institutions", tag: "tier S · reusable" },
+  // FTD is tier S; the FINRA lane is off by default, and the tag reflects only the default state
+  { to: "/shorts", label: "Short data", tag: "tier S · FTD" },
+  { to: "/market", label: "Macro", tag: "tier S · reusable" },
 ];
 
 /**
- * 页面外壳：侧栏 + 内容区。
+ * The page shell: sidebar plus content area.
  *
- * `tag` 标的是数据源合规级 —— 放在导航上是刻意的：
- * 用户随时能看见哪条线是"政府公开记录（可自由再分发）"、
- * 哪条线是"受许可约束、只能本地跑"。这是本项目的核心叙事，不该藏进文档。
+ * The `tag` marks each source's compliance tier — putting it in the navigation is deliberate:
+ * the user can see at any moment which lane is "government public record (freely redistributable)"
+ * and which is "licence-bound, local only". That is this project's central story, and does not belong buried in the docs.
  */
 export default function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen grid-bg">
-      {/* 窄屏顶部导航：侧栏在 lg 以下隐藏，没有它的话手机/平板用户
-          落在默认路由后就再也找不到别的分栏（只能手改 URL）。 */}
+      {/* Narrow-screen top navigation: the sidebar hides below lg, and without this, phone and tablet users
+          land on the default route and can never reach another section (short of editing the URL by hand). */}
       <nav className="sticky top-0 z-10 flex items-center gap-1 border-b border-line
                       bg-bg/90 px-4 py-2.5 backdrop-blur lg:hidden">
         <span className="mr-2 font-mono text-[11px] uppercase tracking-[0.2em] text-brand">
@@ -76,7 +76,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
               ))}
             </nav>
             <div className="mt-6 border-t border-line pt-4 text-[10px] leading-relaxed text-dim">
-              本机自部署 · 数据留在你自己机器上
+              Self-hosted · your data stays on your own machine
             </div>
           </div>
         </aside>
@@ -86,7 +86,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** 分栏卡片（各页共用，避免每页各写一份而样式漂移）。 */
+/** A section card (shared by every page, so styling cannot drift page to page). */
 export function Card({
   title,
   sub,
@@ -112,7 +112,7 @@ export function Card({
   );
 }
 
-/** 页头。 */
+/** Page heading. */
 export function PageHead({
   kicker,
   title,
@@ -135,15 +135,15 @@ export function PageHead({
   );
 }
 
-/** 表头单元格（各页共用）。 */
+/** A table header cell (shared by every page). */
 export function Th({ children }: { children: React.ReactNode }) {
   return <th className="whitespace-nowrap px-2 py-2 font-normal">{children}</th>;
 }
 
-/** 表格单元格（各页共用）。
+/** A table cell (shared by every page).
  *
- * ⚠️ 抽到这里是因为 Congress 与 Insiders 各写了一份，
- * 加 `title` 时又各漏各的 —— 同一个组件不该有两份定义。 */
+ * ⚠️ It was extracted here because Congress and Insiders each had their own copy,
+ * and adding `title` missed one of them — one component should not have two definitions. */
 export function Td({
   children,
   className = "",
@@ -161,14 +161,14 @@ export function Td({
 }
 
 /**
- * 渲染后端 notes 里的 `**强调**`。
+ * Renders the `**emphasis**` inside the backend's notes.
  *
- * ⚠️ 后端的口径说明是**写给人看的正文**，里头用 `**` 标了"这句是重点"
- * （"倒挂时点**可以差好几个月**"这种）。直接 `{note}` 塞进 JSX，
- * 用户看到的就是一串裸星号——实测 Market 与 Shorts 两页都这样。
+ * ⚠️ The backend's definitions are **prose written for people**, and they use `**` to mark "this bit matters"
+ * ("they **can invert months apart**" and the like). Dropped straight into JSX as `{note}`,
+ * what the user sees is a string of bare asterisks — as measured on both the Market and Shorts pages.
  *
- * 这里**刻意不引 markdown 库**：只认 `**` 一种标记，切成数组交给 React 渲染，
- * 不碰 `dangerouslySetInnerHTML`。上游文本再怎么写都不可能注入。
+ * It **deliberately pulls in no markdown library**: it recognises `**` alone, splits into an array and hands it to React,
+ * never touching `dangerouslySetInnerHTML`. However the upstream text is written, injection is impossible.
  */
 export function Emph({ children }: { children?: string }) {
   if (!children) return null;
@@ -188,13 +188,13 @@ export function Emph({ children }: { children?: string }) {
 }
 
 /**
- * 转义要插进 HTML 的上游文本。
+ * Escapes upstream text destined for HTML.
  *
- * ⚠️ ECharts 的 tooltip formatter 返回的是 **HTML 字符串**，
- * 而公司名/内部人姓名/资产名都是**申报人自由填写**的字段
- * （实测 ticker 里出现过 `"""OMEX"""` 这类内容）。
- * 直接拼进去，一份含 `<img onerror=...>` 的申报就能在本地界面里执行脚本。
- * 所有插进 tooltip 的上游文本都要过这里。
+ * ⚠️ ECharts tooltip formatters return an **HTML string**,
+ * while company names, insider names and asset names are all fields **typed freely by the filer**
+ * (a ticker was measured containing `"""OMEX"""`).
+ * Concatenated straight in, one filing containing `<img onerror=...>` would execute script in the local interface.
+ * Every piece of upstream text going into a tooltip passes through here.
  */
 export function esc(v: unknown): string {
   return String(v ?? "").replace(/[&<>"']/g, (c) =>

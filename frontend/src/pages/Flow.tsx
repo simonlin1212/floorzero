@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactECharts from "echarts-for-react";
 import { Card, Emph, PageHead, Td, Th, esc } from "../components/Shell";
 
-/* ── 类型（与后端 modules/flow.py 对齐）── */
+/* ── Types (aligned with the backend's modules/flow.py) ── */
 type Limits = {
   no_tape: string;
   no_direction: string;
@@ -30,7 +30,7 @@ type Row = {
   unusual: boolean;
 };
 type Leg = {
-  // 某一边一个都算不出时为 null —— **「算不出」不是「零」**
+  // null when a side has nothing computable at all — **"not computable" is not "zero"**
   call: number | null;
   put: number | null;
   pc: number | null;
@@ -59,7 +59,7 @@ type Flow = {
     one_sided_quotes: number;
   };
   exposure: {
-    // 全部合约都缺希腊字母时为 null —— **「算不出」不是「敞口为零」**
+    // null when every contract lacks its greeks — **"not computable" is not "zero exposure"**
     call_delta_shares: number | null;
     put_delta_shares: number | null;
     total_delta_shares: number | null;
@@ -186,9 +186,9 @@ export default function Flow() {
       const d = (await r.json()) as Flow;
       if (s !== seq.current) return;
       setFlow(d);
-      // OI 变化是**增强视图**：失败只影响那张卡片，不清掉主数据。
-      // ⚠️ 但**不能静默**：接口 500 时如果只是把 oi 留成 null，
-      //    卡片会显示"还没攒够"—— 把服务故障说成了"没有历史"。
+      // The OI change is an **enhanced view**: a failure affects that card alone and does not clear the main data.
+      // ⚠️ But **it must not be silent**: leaving oi as null when the endpoint 500s makes the card
+      //    read "not enough accrued yet" — reporting a server fault as an absence of history.
       try {
         const o = await fetch(`/api/flow/${encodeURIComponent(ticker)}/oi-change`);
         if (s !== seq.current) return;
@@ -214,10 +214,10 @@ export default function Flow() {
     void load();
   }, [load]);
 
-  // ⚠️ 归档是**长请求**，返回时用户可能已经切到别的标的了。
-  //    闭包里的 `load()` 绑的是旧 ticker —— 直接调用会把在途的新标的请求
-  //    判成过期、再把旧标的重新加载回来：输入框写着 QQQ、卡片显示 SPY。
-  //    所以回来先对一次标的，不一致就只报结果、不回写主数据。
+  // ⚠️ Archiving is a **long request**, and the user may have switched symbol by the time it returns.
+  //    The `load()` in the closure is bound to the old ticker — calling it directly would judge the in-flight
+  //    new symbol's request stale and reload the old one: the box says QQQ while the cards show SPY.
+  //    So the ticker is checked on return, and on a mismatch only the result is reported, with no write-back to the main data.
   const tickerRef = useRef(ticker);
   useEffect(() => {
     tickerRef.current = ticker;
@@ -234,14 +234,14 @@ export default function Flow() {
       if (!r.ok) throw new Error((await r.json()).detail ?? `HTTP ${r.status}`);
       const d = (await r.json()) as { snapshot_date: string; recorded: number };
       if (tickerRef.current !== mine) {
-        setRecordMsg(`${mine} 的 ${d.snapshot_date} 快照已归档（${d.recorded} 个合约），`
-          + `当前显示的是 ${tickerRef.current}，未刷新本页。`);
+        setRecordMsg(`The ${d.snapshot_date} snapshot for ${mine} was archived (${d.recorded} contracts), `
+          + `but ${tickerRef.current} is on screen now, so this page was not refreshed.`);
         return;
       }
-      setRecordMsg(`已归档 ${d.snapshot_date} 交易时段的 ${d.recorded} 个合约`);
+      setRecordMsg(`Archived ${d.recorded} contracts for the ${d.snapshot_date} trading session`);
       await load();
     } catch (e) {
-      setRecordMsg(`归档失败：${e instanceof Error ? e.message : String(e)}`);
+      setRecordMsg(`Archiving failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setRecording(false);
     }
@@ -250,7 +250,7 @@ export default function Flow() {
   const rows = tab === "unusual" ? (flow?.unusual_rows ?? []) : (flow?.biggest_rows ?? []);
   const L = flow?.limits;
 
-  /* 按到期分布 */
+  /* Distribution by expiry */
   const expiryOption = useMemo(() => {
     if (!flow?.by_expiry.length) return null;
     const b = flow.by_expiry;
@@ -266,7 +266,7 @@ export default function Flow() {
         textStyle: { color: "#f2efe9", fontSize: 11 },
         formatter: (ps: { axisValue: string; seriesName: string; data: number }[]) =>
           `<b>${esc(ps[0]?.axisValue)}</b><br/>` +
-          ps.map((p) => `${esc(p.seriesName)}: ${p.data.toLocaleString()} 张`).join("<br/>"),
+          ps.map((p) => `${esc(p.seriesName)}: ${p.data.toLocaleString()}`).join("<br/>"),
       },
       xAxis: {
         type: "category",
@@ -281,14 +281,14 @@ export default function Flow() {
       },
       series: [
         {
-          name: "认购",
+          name: "Calls",
           type: "bar",
           stack: "v",
           data: b.map((x) => x.call_volume),
           itemStyle: { color: "#ff5a1f" },
         },
         {
-          name: "认沽",
+          name: "Puts",
           type: "bar",
           stack: "v",
           data: b.map((x) => x.put_volume),
@@ -298,7 +298,7 @@ export default function Flow() {
     };
   }, [flow]);
 
-  /* 按行权价分布（认沽画成负轴，看形状） */
+  /* Distribution by strike (puts drawn on the negative axis, to read the shape) */
   const strikeOption = useMemo(() => {
     if (!flow?.by_strike.rows.length) return null;
     const b = flow.by_strike.rows;
@@ -313,11 +313,11 @@ export default function Flow() {
         borderColor: "#2a2a31",
         textStyle: { color: "#f2efe9", fontSize: 11 },
         formatter: (ps: { axisValue: string; seriesName: string; data: number }[]) =>
-          `<b>行权价 ${esc(ps[0]?.axisValue)}</b><br/>` +
+          `<b>Strike ${esc(ps[0]?.axisValue)}</b><br/>` +
           ps
             .map(
               (p) =>
-                `${esc(p.seriesName)}: ${Math.abs(p.data).toLocaleString()} 张`,
+                `${esc(p.seriesName)}: ${Math.abs(p.data).toLocaleString()}`,
             )
             .join("<br/>"),
       },
@@ -338,14 +338,14 @@ export default function Flow() {
       },
       series: [
         {
-          name: "认购成交",
+          name: "Call volume",
           type: "bar",
           data: b.map((x) => x.call_volume),
           itemStyle: { color: "#ff5a1f" },
         },
         {
-          // 画到负轴纯粹是为了看形状对称性，数值本身是正的（tooltip 取绝对值）
-          name: "认沽成交",
+          // Drawn on the negative axis purely to read the symmetry of the shape; the values themselves are positive (the tooltip takes the absolute)
+          name: "Put volume",
           type: "bar",
           data: b.map((x) => -x.put_volume),
           itemStyle: { color: "#5b9cf7" },
@@ -357,15 +357,15 @@ export default function Flow() {
 
   return (
     <>
-      <PageHead kicker="Flow · 期权流" title="期权异动与持仓结构">
-        CBOE 官方延时期权链。<b className="text-ink">只在你自己机器上跑</b> ——
-        这条线是 C 级源，任何对外展示都会触发 OPRA redistributor 认定。
+      <PageHead kicker="Flow · options flow" title="Unusual activity and positioning">
+        Cboe's official delayed options chain. <b className="text-ink">It runs on your own machine only</b> —
+        this is a tier C source, and showing it externally in any form triggers OPRA redistributor status.
       </PageHead>
 
-      {/* ⭐ 能力边界：放在最前面，而不是藏进脚注 */}
+      {/* ⭐ The limits, stated up front rather than buried in a footnote */}
       <div className="mb-5 rounded-2xl border border-brand/30 bg-brand/5 p-4 text-xs leading-relaxed text-dim">
         <div className="mb-1.5 font-mono text-[10px] uppercase tracking-widest text-brand">
-          先说清楚这一栏做不了什么
+          What this section cannot do, said plainly first
         </div>
         <p className="mb-1.5">
           <Emph>{L?.no_tape}</Emph>
@@ -379,11 +379,11 @@ export default function Flow() {
       </div>
 
       <Card
-        title={flow ? `${flow.ticker} · $${flow.spot.toFixed(2)}` : "期权流"}
+        title={flow ? `${flow.ticker} · $${flow.spot.toFixed(2)}` : "Options flow"}
         sub={
           flow
-            ? `交易时段 ${flow.session ?? "—"} · CBOE 发布于 ${flow.timestamp ?? "—"}`
-            : "输入代码后加载"
+            ? `Trading session ${flow.session ?? "—"} · published by Cboe at ${flow.timestamp ?? "—"}`
+            : "Enter a ticker to load"
         }
         right={
           <div className="flex items-center gap-2">
@@ -405,10 +405,10 @@ export default function Flow() {
               className="rounded-lg border border-line bg-card2 px-2.5 py-1.5 text-xs text-ink"
             >
               <option value="0">0DTE</option>
-              <option value="7">7 天内</option>
-              <option value="30">30 天内</option>
-              <option value="90">90 天内</option>
-              <option value="all">全链</option>
+              <option value="7">Within 7 days</option>
+              <option value="30">Within 30 days</option>
+              <option value="90">Within 90 days</option>
+              <option value="all">Whole chain</option>
             </select>
             <button
               onClick={() => setTicker(tickerInput.trim() || "SPY")}
@@ -416,7 +416,7 @@ export default function Flow() {
               className="rounded-lg border border-line bg-card2 px-3 py-1.5 text-xs text-ink
                          transition hover:border-brand disabled:opacity-40"
             >
-              {loading ? "加载中…" : "查询"}
+              {loading ? "Loading…" : "Query"}
             </button>
           </div>
         }
@@ -431,38 +431,38 @@ export default function Flow() {
           <>
             <div className="mb-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
               <Stat
-                label="有成交合约"
+                label="Contracts traded"
                 value={num(flow.counts.traded_contracts)}
-                sub={`总成交 ${num(flow.counts.total_volume)} 张`}
+                sub={`${num(flow.counts.total_volume)} contracts traded in total`}
               />
               <Stat
-                label="异动合约"
+                label="Unusual contracts"
                 value={num(flow.counts.unusual)}
-                sub={`vol/OI ≥ ${flow.thresholds.unusual_ratio} 且量 ≥ ${flow.thresholds.min_volume}`}
+                sub={`vol/OI ≥ ${flow.thresholds.unusual_ratio} and volume ≥ ${flow.thresholds.min_volume}`}
               />
               <Stat
-                label="前收持仓为 0"
+                label="Zero prior open interest"
                 value={num(flow.counts.zero_prior_oi)}
-                sub="昨收无未平仓头寸，今日有成交"
+                sub="No open position at yesterday's close, and volume today"
               />
               <Stat
-                label="持仓量合计"
+                label="Total open interest"
                 value={num(flow.counts.total_oi)}
-                sub={`范围内全部 ${num(flow.counts.scope_contracts)} 个合约 · 隔夜结算数`}
+                sub={`All ${num(flow.counts.scope_contracts)} contracts in range · settled overnight`}
               />
             </div>
 
-            {/* P/C 三口径 */}
+            {/* The three P/C bases */}
             <div className="mb-2 text-xs text-dim">
-              认沽/认购比 —— <b className="text-ink">三个口径都给，不挑一个当「那个」P/C</b>
-              （它们量的是不同的东西，结论不同是正常的）
+              Put/call ratio — <b className="text-ink">all three bases are given, and none is crowned "the" P/C</b>{" "}
+              (they measure different things, and disagreeing is normal)
             </div>
             <div className="mb-4 grid grid-cols-1 gap-2.5 sm:grid-cols-3">
               {(
                 [
-                  ["by_volume", "按成交量", ""],
-                  ["by_oi", "按持仓量", ""],
-                  ["by_notional", "按权利金（估算）", ""],
+                  ["by_volume", "On volume", ""],
+                  ["by_oi", "On open interest", ""],
+                  ["by_notional", "On premium (estimated)", ""],
                 ] as const
               ).map(([k, title, hint]) => {
                 const d = flow.ratios[k];
@@ -473,11 +473,11 @@ export default function Flow() {
                       {d.pc === null ? "—" : d.pc.toFixed(3)}
                     </div>
                     <div className="mt-0.5 text-[10px] leading-relaxed text-dim">
-                      认购 {k === "by_notional" ? money(d.call) : num(d.call)} / 认沽{" "}
+                      Calls {k === "by_notional" ? money(d.call) : num(d.call)} / puts{" "}
                       {k === "by_notional" ? money(d.put) : num(d.put)}
                       <br />
                       <span className="opacity-70">
-                        口径：<Emph>{d.basis}</Emph>
+                        Basis: <Emph>{d.basis}</Emph>
                       </span>
                       {hint}
                     </div>
@@ -486,33 +486,33 @@ export default function Flow() {
               })}
             </div>
             <div className="mb-4 text-[10px] leading-relaxed text-dim">
-              ⚠️ <b className="text-ink">「权利金」是估算值，不是实际成交金额</b>：
-              链快照没有逐笔成交价，这里算的是「当日累计成交量 × <b className="text-ink">抓取时</b>
-              中间价 × 100」。若 1,000 张在上午以 $1 成交、抓取时中间价已到 $5，
-              这里会显示 $50 万而实际约 $10 万。没有 tape 就算不准，所以只叫它估算。
+              ⚠️ <b className="text-ink">"Premium" is an estimate, not the money actually traded</b>:
+              a chain snapshot carries no per-print price, so this computes cumulative volume for the day × the mid
+              <b className="text-ink"> at capture time</b> × 100. If 1,000 contracts traded at $1 in the morning and the mid is $5 by capture,
+              this shows $500k against roughly $100k. Without a tape it cannot be exact, so it is only ever called an estimate.
               {flow.ratios.notional_excluded > 0 && (
                 <>
-                  {" "}另有 {flow.ratios.notional_excluded} 个合约完全没有报价、连估算都做不了，
-                  已排除在这个口径之外（不是当成 0）。
+                  {" "}A further {flow.ratios.notional_excluded} contracts have no quote at all, so not even an estimate is possible;
+                  they are excluded from this basis (rather than counted as 0).
                 </>
               )}
               {flow.ratios.one_sided_quotes > 0 && (
                 <>
-                  {" "}其中 {flow.ratios.one_sided_quotes} 个是
-                  <b className="text-ink">零买价</b>（有卖价没买价 = 没人接盘），
-                  中间价对它们偏乐观 —— 照算是为了不让这个口径偏向实值侧，
-                  但知道这一点。
+                  {" "}Of those, {flow.ratios.one_sided_quotes} have a
+                  <b className="text-ink"> zero bid</b> (an ask with no bid = nobody buying),
+                  and the mid reads optimistically for them — they are counted anyway, so this basis does not tilt
+                  towards the in-the-money side, but it is worth knowing.
                 </>
               )}
             </div>
 
-            {/* 敞口 */}
+            {/* Exposure */}
             <div className="mb-4 rounded-xl border border-line bg-card2/40 px-3 py-2.5">
               <div className="mb-1.5 flex flex-wrap gap-x-6 gap-y-1 text-xs">
                 <span className="text-dim">
-                  认购 |delta| 敞口{" "}
+                  Call |delta| exposure{" "}
                   <b className="font-mono text-ink">
-                    {num(flow.exposure.call_delta_shares)} 股
+                    {num(flow.exposure.call_delta_shares)} shares
                   </b>
                   <span className="text-dim">
                     {" "}
@@ -520,9 +520,9 @@ export default function Flow() {
                   </span>
                 </span>
                 <span className="text-dim">
-                  认沽 |delta| 敞口{" "}
+                  Put |delta| exposure{" "}
                   <b className="font-mono text-ink">
-                    {num(flow.exposure.put_delta_shares)} 股
+                    {num(flow.exposure.put_delta_shares)} shares
                   </b>
                   <span className="text-dim">
                     {" "}
@@ -532,10 +532,10 @@ export default function Flow() {
               </div>
               <div className="text-[10px] leading-relaxed text-dim">
                 <Emph>{flow.exposure.note}</Emph>
-                {/* ⚠️ 全缺时后端给的是 null、上面显示"—"。
-                    这里再说清是"算不出"而不是"敞口为零"。 */}
-                {/* ⚠️ 按边分别提示：认沽全有、认购全缺时，
-                    只报一个总数会让人以为认购那边"敞口是零"。 */}
+                {/* ⚠️ With everything missing the backend gives null and "—" is shown above.
+                    This says explicitly that it is "not computable" rather than "zero exposure". */}
+                {/* ⚠️ Reported per side: with puts complete and calls all missing,
+                    one combined number reads as though the call side had "zero exposure". */}
                 {(["call", "put"] as const).map((side) => {
                   const n =
                     side === "call"
@@ -545,20 +545,20 @@ export default function Flow() {
                     side === "call"
                       ? flow.exposure.missing_delta_call
                       : flow.exposure.missing_delta_put;
-                  const label = side === "call" ? "认购" : "认沽";
+                  const label = side === "call" ? "call" : "put";
                   if (n === 0 && m > 0)
                     return (
                       <b key={side} className="text-brand">
                         {" "}
-                        {label}侧 {m} 个合约全都没有 delta，敞口
-                        <b className="text-ink">算不出来</b>（不是零）。
+                        All {m} contracts on the {label} side lack a delta, so the exposure
+                        <b className="text-ink"> cannot be computed</b> (which is not zero).
                       </b>
                     );
                   if (m > 0)
                     return (
                       <span key={side}>
                         {" "}
-                        （{label}侧 {m} 个缺 delta 未计入，已计入 {n} 个。）
+                        ({m} on the {label} side lack a delta and are not counted; {n} are.)
                       </span>
                     );
                   return null;
@@ -566,12 +566,12 @@ export default function Flow() {
               </div>
             </div>
 
-            {/* 明细表 */}
+            {/* Detail table */}
             <div className="mb-2 flex items-center gap-2">
               {(
                 [
-                  ["unusual", `异动 (${flow.counts.unusual})`],
-                  ["biggest", "名义金额最大"],
+                  ["unusual", `Unusual (${flow.counts.unusual})`],
+                  ["biggest", "Largest notional"],
                 ] as const
               ).map(([k, label]) => (
                 <button
@@ -587,22 +587,22 @@ export default function Flow() {
                 </button>
               ))}
               <span className="ml-auto text-[10px] text-dim">
-                两张表都按权利金估算降序 —— 「前收 0」是徽章不是排序键
+                Both tables descend by estimated premium — "zero prior OI" is a badge, not a sort key
               </span>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead className="border-b border-line text-dim">
                   <tr>
-                    <Th>到期</Th>
+                    <Th>Expiry</Th>
                     <Th>DTE</Th>
-                    <Th>类型</Th>
-                    <Th>行权价</Th>
-                    <Th>成交量</Th>
-                    <Th>持仓量</Th>
+                    <Th>Type</Th>
+                    <Th>Strike</Th>
+                    <Th>Volume</Th>
+                    <Th>Open interest</Th>
                     <Th>vol/OI</Th>
-                    <Th>中间价</Th>
-                    <Th>权利金(估算)</Th>
+                    <Th>Mid</Th>
+                    <Th>Premium (est.)</Th>
                     <Th>IV</Th>
                     <Th>delta</Th>
                   </tr>
@@ -616,7 +616,7 @@ export default function Flow() {
                       <Td className="font-mono">{r.expiry}</Td>
                       <Td className="text-dim">{r.dte}</Td>
                       <Td className={r.type === "put" ? "text-[#5b9cf7]" : "text-brand"}>
-                        {r.type === "put" ? "认沽" : "认购"}
+                        {r.type === "put" ? "Put" : "Call"}
                       </Td>
                       <Td className="font-mono">{r.strike.toFixed(1)}</Td>
                       <Td className="font-mono">{r.volume.toLocaleString()}</Td>
@@ -625,9 +625,9 @@ export default function Flow() {
                         {r.zero_prior_oi ? (
                           <span
                             className="rounded bg-brand/15 px-1.5 py-0.5 text-[10px] text-brand"
-                            title="此前持仓量为 0，比值算不出来（不是无穷大）"
+                            title="Prior open interest was 0, so the ratio does not exist (it is not infinity)"
                           >
-                            全新
+                            new
                           </span>
                         ) : r.vol_oi === null ? (
                           "—"
@@ -648,7 +648,7 @@ export default function Flow() {
                   {rows.length === 0 && (
                     <tr>
                       <td colSpan={11} className="py-8 text-center text-dim">
-                        无符合条件的合约
+                        No contracts match
                       </td>
                     </tr>
                   )}
@@ -664,23 +664,23 @@ export default function Flow() {
       </Card>
 
       {flow && (
-        <Card title="成交分布" sub="认沽画在负轴只为看形状，数值本身为正">
+        <Card title="Volume distribution" sub="Puts are drawn on the negative axis only to read the shape; the values themselves are positive">
           <div className="mb-1 text-xs text-dim">
-            按到期日 —— <b className="text-ink">全部行权价</b>
+            By expiry — <b className="text-ink">all strikes</b>
           </div>
           {expiryOption && <ReactECharts option={expiryOption} style={{ height: 240 }} notMerge />}
           {strikeOption && (
             <div className="mt-4">
-              {/* ⚠️ 两张图的范围不同，合计对不上是**必然**的。
-                  不说出来，用户只会以为其中一张算错了。 */}
+              {/* ⚠️ The two charts cover different ranges, so their totals **necessarily** disagree.
+                  Left unsaid, the user simply assumes one of them is miscomputed. */}
               <div className="mb-1 text-xs text-dim">
-                按行权价 —— 只画现价 ±{(flow.by_strike.window_pct * 100).toFixed(0)}%
-                （{flow.by_strike.low.toFixed(0)} ~ {flow.by_strike.high.toFixed(0)}）
+                By strike — drawn within ±{(flow.by_strike.window_pct * 100).toFixed(0)}% of spot only
+                ({flow.by_strike.low.toFixed(0)} to {flow.by_strike.high.toFixed(0)})
                 {flow.by_strike.dropped_contracts > 0 && (
                   <span className="text-dim">
-                    ，窗口外的 {flow.by_strike.dropped_contracts} 个合约
-                    （{num(flow.by_strike.dropped_volume)} 张）未画，
-                    <b className="text-ink">所以它与上图的合计对不上</b>
+                    ; the {flow.by_strike.dropped_contracts} contracts outside the window
+                    ({num(flow.by_strike.dropped_volume)} contracts of volume) are not drawn,
+                    <b className="text-ink"> so its total does not match the chart above</b>
                   </span>
                 )}
               </div>
@@ -690,13 +690,13 @@ export default function Flow() {
         </Card>
       )}
 
-      {/* ⭐ OI 历史沉淀 */}
+      {/* ⭐ Locally accrued OI history */}
       <Card
-        title="持仓量变化（本地沉淀）"
+        title="Open interest change (locally accrued)"
         sub={
           oi?.enough
-            ? `${oi.date_from} → ${oi.date_to}（相隔 ${oi.span_days} 天）`
-            : "这份历史补不回来，只能从装上那天起逐日攒"
+            ? `${oi.date_from} → ${oi.date_to} (${oi.span_days} days apart)`
+            : "This history cannot be backfilled; it only accrues, day by day, from installation"
         }
         right={
           <button
@@ -705,7 +705,7 @@ export default function Flow() {
             className="rounded-lg border border-line bg-card2 px-3 py-1.5 text-xs text-ink
                        transition hover:border-brand disabled:opacity-40"
           >
-            {recording ? "归档中…" : "归档本次快照"}
+            {recording ? "Archiving…" : "Archive this snapshot"}
           </button>
         }
       >
@@ -713,11 +713,11 @@ export default function Flow() {
 
         {oiErr && (
           <div className="mb-3 rounded-lg border border-brand/40 bg-brand/8 px-3 py-2 text-xs">
-            <b className="text-brand">持仓量变化取数失败</b>
+            <b className="text-brand">Could not fetch the open-interest change</b>
             <span className="text-dim">
               {" "}
-              —— {oiErr}。这是<b className="text-ink">接口出错</b>，
-              不是"还没攒够历史"。
+              — {oiErr}. This is <b className="text-ink">an endpoint error</b>,
+              not "not enough accrued yet".
             </span>
           </div>
         )}
@@ -727,12 +727,12 @@ export default function Flow() {
             <Emph>{oi?.note}</Emph>
             {oi?.dates && oi.dates.length > 0 && (
               <div className="mt-2 font-mono text-[10px]">
-                已有快照：{oi.dates.join("、")}
+                Snapshots held: {oi.dates.join(", ")}
               </div>
             )}
             <div className="mt-2 text-[10px]">
-              ⚠️ 这里显示的是<b className="text-ink">还没攒够</b>，
-              不是"持仓没有变化" —— 两者在界面上必须能分清。
+              ⚠️ What is shown here is <b className="text-ink">not enough accrued yet</b>,
+              not "open interest did not change" — the two must be tellable apart in the interface.
             </div>
           </div>
         )}
@@ -741,53 +741,53 @@ export default function Flow() {
           <>
             {oi.is_consecutive === false && (
               <div className="mb-3 rounded-lg border border-brand/40 bg-brand/8 px-3 py-2 text-xs text-brand">
-                两个快照相隔 {oi.span_days} 天
+                The two snapshots are {oi.span_days} days apart
                 {(oi.snapshots_between ?? 0) > 0 &&
-                  `、中间还夹着 ${oi.snapshots_between} 次观测`}
-                ，
+                  `, with ${oi.snapshots_between} observations in between`}
+                ,
                 <span className="text-dim">
                   {" "}
-                  下面是这段时间的<b className="text-ink">累计</b>变化，不是单日变化。
+                  so what follows is the <b className="text-ink">cumulative</b> change over that stretch, not a single day's.
                 </span>
               </div>
             )}
             {(oi.incomplete_excluded ?? 0) > 0 && (
               <div className="mb-3 rounded-lg border border-brand/40 bg-brand/8 px-3 py-2 text-xs">
-                <b className="text-brand">有 {oi.incomplete_excluded} 个合约尚未到期却不在结束快照里</b>
+                <b className="text-brand">{oi.incomplete_excluded} contracts are not yet expired yet absent from the end snapshot</b>
                 <span className="text-dim">
-                  （{num(oi.incomplete_oi ?? 0)} 张持仓）—— CBOE 会把合约挂到到期为止，
-                  所以这只能说明<b className="text-ink">那次抓取不完整</b>，已排除。
-                  两次快照合约数：{num(oi.contracts_from ?? 0)} → {num(oi.contracts_to ?? 0)}，
-                  差得多就说明这次比较不可信。
+                  ({num(oi.incomplete_oi ?? 0)} of open interest) — Cboe lists contracts through to expiry,
+                  so this can only mean <b className="text-ink">that pull was incomplete</b>. They are excluded.
+                  Contract counts across the two snapshots: {num(oi.contracts_from ?? 0)} → {num(oi.contracts_to ?? 0)};
+                  a wide gap means this comparison cannot be trusted.
                 </span>
               </div>
             )}
             {(oi.expired_excluded ?? 0) > 0 && (
               <div className="mb-3 text-[10px] leading-relaxed text-dim">
-                已排除 {oi.expired_excluded} 个<b className="text-ink">在此期间到期</b>的合约
-                （合计 {num(oi.expired_oi ?? 0)} 张持仓）—— 它们从链里消失是因为到期，
-                不是有人平仓。
+                Excluded {oi.expired_excluded} contracts that <b className="text-ink">expired during the period</b>{" "}
+                ({num(oi.expired_oi ?? 0)} of open interest) — they left the chain because they expired,
+                not because anyone closed out.
               </div>
             )}
             <div className="mb-4 grid grid-cols-2 gap-2.5 sm:grid-cols-3">
               <Stat
-                label="认购持仓净变化"
+                label="Net change in call open interest"
                 value={`${(oi.totals?.call_change ?? 0) > 0 ? "+" : ""}${num(oi.totals?.call_change ?? 0)}`}
-                sub="张"
+                sub="contracts"
               />
               <Stat
-                label="认沽持仓净变化"
+                label="Net change in put open interest"
                 value={`${(oi.totals?.put_change ?? 0) > 0 ? "+" : ""}${num(oi.totals?.put_change ?? 0)}`}
-                sub="张"
+                sub="contracts"
               />
-              <Stat label="涉及合约" value={num(oi.totals?.contracts ?? 0)} sub="两日并集" />
+              <Stat label="Contracts involved" value={num(oi.totals?.contracts ?? 0)} sub="union of the two days" />
             </div>
 
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               {(
                 [
-                  ["净增持", oi.gained ?? []],
-                  ["净减持", oi.lost ?? []],
+                  ["Largest increases", oi.gained ?? []],
+                  ["Largest decreases", oi.lost ?? []],
                 ] as const
               ).map(([title, list]) => (
                 <div key={title}>
@@ -796,12 +796,12 @@ export default function Flow() {
                     <table className="w-full text-left text-xs">
                       <thead className="border-b border-line text-dim">
                         <tr>
-                          <Th>到期</Th>
-                          <Th>类型</Th>
-                          <Th>行权价</Th>
-                          <Th>前</Th>
-                          <Th>后</Th>
-                          <Th>变化</Th>
+                          <Th>Expiry</Th>
+                          <Th>Type</Th>
+                          <Th>Strike</Th>
+                          <Th>Before</Th>
+                          <Th>After</Th>
+                          <Th>Change</Th>
                         </tr>
                       </thead>
                       <tbody>
@@ -812,7 +812,7 @@ export default function Flow() {
                           >
                             <Td className="font-mono">{r.expiry}</Td>
                             <Td className={r.type === "put" ? "text-[#5b9cf7]" : "text-brand"}>
-                              {r.type === "put" ? "认沽" : "认购"}
+                              {r.type === "put" ? "Put" : "Call"}
                             </Td>
                             <Td className="font-mono">{r.strike.toFixed(1)}</Td>
                             <Td className="font-mono text-dim">{num(r.oi_from)}</Td>
@@ -821,7 +821,7 @@ export default function Flow() {
                               className={`font-mono ${r.change > 0 ? "text-ink" : "text-brand"}`}
                               title={
                                 r.change_pct === null
-                                  ? "此前持仓为 0，算不出百分比"
+                                  ? "Prior open interest was 0, so no percentage can be computed"
                                   : `${r.change_pct.toFixed(1)}%`
                               }
                             >
@@ -833,7 +833,7 @@ export default function Flow() {
                         {list.length === 0 && (
                           <tr>
                             <td colSpan={6} className="py-6 text-center text-dim">
-                              无
+                              None
                             </td>
                           </tr>
                         )}
@@ -851,9 +851,9 @@ export default function Flow() {
       </Card>
 
       <p className="mb-6 text-[10px] leading-relaxed text-dim">
-        数据源：Cboe Global Markets 延时期权报价。⛔ 本页数据仅供在本机做个人研究，
-        对外展示会被认定为 OPRA redistributor（$1,500/月）。本页只呈现数值，
-        不做任何方向判断与预测。
+        Source: Cboe Global Markets delayed options quotes. ⛔ This page's data is for personal research on your own machine only;
+        showing it externally makes you an OPRA redistributor ($1,500/month). This page presents values and
+        makes no directional judgement or prediction.
       </p>
     </>
   );

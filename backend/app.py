@@ -325,8 +325,18 @@ def _row_to_trade(r: dict) -> congress_parse.Trade:
         chamber=r["chamber"], member=r["member"],
         state_district=r["state_district"] or "", ticker=r["ticker"],
         asset_name=r["asset_name"] or "", asset_type=r["asset_type"],
-        asset_type_label=r["asset_type_label"] or "", tx_type=r["tx_type"] or "",
-        tx_type_label=r["tx_type_label"] or "", tx_date=d(r["tx_date"]),
+        # ⚠️ Both labels are **derived on read** from the stored codes, never taken from the
+        #    stored label. They were written into the database at sync time, so rows synced by
+        #    an earlier build keep that build's wording for good — and re-deriving them is the
+        #    only way to fix an existing database short of refetching every filing, which is
+        #    hours of PDFs. Falls back to the stored value where there is no code to derive
+        #    from (the Senate path gives free-text asset types with asset_type=None).
+        asset_type_label=congress_parse.ASSET_TYPES.get(
+            r["asset_type"] or "", r["asset_type_label"] or ""),
+        tx_type=r["tx_type"] or "",
+        tx_type_label=congress_parse.TX_TYPES.get(
+            r["tx_type"] or "", r["tx_type_label"] or ""),
+        tx_date=d(r["tx_date"]),
         notification_date=d(r["notification_date"]), filing_date=d(r["filing_date"]),
         amount_low=r["amount_low"], amount_high=r["amount_high"],
         amount_raw=r["amount_raw"] or "", owner=r["owner"] or "self",
