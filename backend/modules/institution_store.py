@@ -1,13 +1,13 @@
-"""13F 机构持仓的本地存储。
+"""Local storage for 13F institutional holdings.
 
-━━━ 规模 ━━━
-单个报告期实测 **332 万条**持仓（8,741 家机构 × 31,464 个 CUSIP）。
-全量入库约 600MB-1GB —— 对"clone 下来就跑"的自部署工具偏重。
+━━━ Scale ━━━
+One reporting period was measured at **3.32m holdings** (8,741 managers × 31,464 CUSIPs).
+Stored whole that is 600MB-1GB — heavy for a self-hosted tool meant to run straight from a clone.
 
-⭐ 所以默认设**金额门槛 $100 万**：实测保留 37.5% 的行数、
-覆盖 **99.37%** 的金额。这是个很划算的交换，但**必须如实报出丢了什么**
-（`stats()` 会返回门槛与丢弃量）—— 悄悄截断会让"谁持有某只股票"
-这类查询漏掉小持仓，而用户毫不知情。门槛可设为 0 收全量。
+⭐ Hence the default **$1m value threshold**: measured, it keeps 37.5% of the rows and
+covers **99.37%** of the value. A good trade, but **what it drops has to be reported honestly**
+(`stats()` returns both the threshold and the discarded amount) — truncating quietly makes queries
+like "who holds this stock" miss the small positions with the user none the wiser. Set it to 0 to keep everything.
 """
 from __future__ import annotations
 
@@ -19,17 +19,17 @@ from modules import db
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS f13_holding (
     accession    TEXT NOT NULL,
-    holding_key  TEXT NOT NULL,      -- cusip|kind|discretion#序号（见 institution.assign_keys）
+    holding_key  TEXT NOT NULL,      -- cusip|kind|discretion#index (see institution.assign_keys)
     manager      TEXT NOT NULL,
     manager_cik  TEXT,
-    period       TEXT NOT NULL,      -- 报告期（季末）
+    period       TEXT NOT NULL,      -- reporting period (quarter-end)
     filing_date  TEXT,
     is_amendment INTEGER NOT NULL DEFAULT 0,
-    cusip        TEXT NOT NULL,      -- ⭐ 聚合与跨季比对的主键（不是 ticker）
+    cusip        TEXT NOT NULL,      -- ⭐ the key for aggregation and cross-quarter comparison (not the ticker)
     issuer       TEXT,
     title_of_class TEXT,
-    kind         TEXT NOT NULL,      -- share / call / put ⚠️ 必须分开统计
-    value        REAL,               -- 美元（已按申报期把千美元换算过）
+    kind         TEXT NOT NULL,      -- share / call / put ⚠️ must be counted separately
+    value        REAL,               -- dollars (thousands already converted, per filing period)
     shares       REAL,
     shares_type  TEXT,               -- SH / PRN
     discretion   TEXT,
@@ -43,10 +43,10 @@ CREATE INDEX IF NOT EXISTS idx_f13_cusip   ON f13_holding (cusip, period, kind);
 CREATE INDEX IF NOT EXISTS idx_f13_manager ON f13_holding (manager_cik, period);
 CREATE INDEX IF NOT EXISTS idx_f13_period  ON f13_holding (period, kind);
 
--- 导入暂存表：与 f13_holding 同构，但**独立主键空间**。
--- ⚠️ 不能把暂存数据写进 f13_holding 再靠 period 区分 ——
--- 主键是 (accession, holding_key) 不含 period，暂存行会与正式行撞键
--- 被 INSERT OR IGNORE 静默丢弃（实测 7 条只进去 4 条）。
+-- Import staging table: same shape as f13_holding, but with an **independent key space**.
+-- ⚠️ Staged rows cannot go into f13_holding and be told apart by period —
+-- the key is (accession, holding_key) and carries no period, so staged rows collide with live ones
+-- and INSERT OR IGNORE drops them silently (measured: 7 rows in, 4 stored).
 CREATE TABLE IF NOT EXISTS f13_holding_staging (
     accession    TEXT NOT NULL,
     holding_key  TEXT NOT NULL,
@@ -70,9 +70,9 @@ CREATE TABLE IF NOT EXISTS f13_holding_staging (
     PRIMARY KEY (accession, holding_key)
 );
 
--- ⭐ CUSIP → 规范发行人名称（来自 SEC 官方 13(f) 证券清单）。
--- 申报里的 NAMEOFISSUER 是自由填写的：实测苹果那个 CUSIP 有 61 种写法，
--- 还混着别家公司的名字。展示/分组一律以本表为准，查不到才退回申报里的众数。
+-- ⭐ CUSIP → canonical issuer name (from the SEC's official 13(f) securities list).
+-- NAMEOFISSUER in a filing is free text: Apple's CUSIP was measured carrying 61 spellings,
+-- some of them other companies' names. Display and grouping follow this table, falling back to the filings' modal spelling only when it holds no answer.
 CREATE TABLE IF NOT EXISTS f13_security (
     cusip      TEXT PRIMARY KEY,
     issuer     TEXT NOT NULL,
@@ -82,15 +82,15 @@ CREATE TABLE IF NOT EXISTS f13_security (
     synced_at  TEXT NOT NULL
 );
 
--- 已导入的报告期批次
+-- Reporting periods already imported
 CREATE TABLE IF NOT EXISTS f13_batch (
     period       TEXT PRIMARY KEY,
     window       TEXT,
-    rows         INTEGER NOT NULL,   -- 实际入库条数
-    parsed_rows  INTEGER,            -- 解析出的总条数（含被门槛滤掉的）
-    dropped_rows INTEGER,            -- 被门槛滤掉的条数
-    dropped_value REAL,              -- 被滤掉的金额
-    min_value    REAL,               -- 本次使用的门槛
+    rows         INTEGER NOT NULL,   -- rows actually stored
+    parsed_rows  INTEGER,            -- rows parsed in total (including those the threshold dropped)
+    dropped_rows INTEGER,            -- rows dropped by the threshold
+    dropped_value REAL,              -- value dropped
+    min_value    REAL,               -- the threshold used this time
     managers     INTEGER,
     synced_at    TEXT NOT NULL
 );
@@ -107,7 +107,7 @@ def _init() -> None:
 
 
 def _row_tuple(r: dict) -> tuple:
-    """dict → 入库元组（正式表与暂存表共用，避免两处字段顺序漂移）。"""
+    """dict → a storage tuple (shared by the live and staging tables, so field order cannot drift)."""
     return (r["accession"], r["holding_key"], r["manager"], r["manager_cik"],
             r["period"], r["filing_date"], int(bool(r["is_amendment"])),
             r["cusip"], r["issuer"], r["title_of_class"], r["kind"], r["value"],
@@ -116,7 +116,7 @@ def _row_tuple(r: dict) -> tuple:
 
 
 def clear_staging(period: Optional[str] = None) -> None:
-    """清空暂存表（上次导入中途失败会留下数据）。"""
+    """Empty the staging table (an import that failed part-way leaves rows behind)."""
     _init()
     with db.connect() as conn:
         if period:
@@ -126,7 +126,7 @@ def clear_staging(period: Optional[str] = None) -> None:
 
 
 def save_staging(rows: list[dict]) -> int:
-    """写入暂存表。"""
+    """Write to the staging table."""
     _init()
     if not rows:
         return 0
@@ -138,21 +138,21 @@ def save_staging(rows: list[dict]) -> int:
 
 
 def commit_staging(period: str) -> int:
-    """**原子切换**：删旧 → 暂存转正，同一个事务里完成。
+    """**Atomic switch**: drop the old, promote the staged, both in one transaction.
 
-    ⚠️ 不能"先删后写"：流式导入中途失败（网络中断、进程被杀、崩溃）
-    会留下空的或半份数据，而 `f13_batch` 还写着旧的条数 ——
-    之后所有查询都在悄悄提供残缺数据，且完全看不出来。
-    先写暂存、全部成功了再切换，失败时旧数据分毫未动。
+    ⚠️ "Delete then write" will not do: a streaming import failing part-way (network drop, process
+    killed, crash) leaves nothing or half a period behind, while `f13_batch` still records the old
+    row count — after which every query quietly serves incomplete data, entirely undetectably.
+    Stage first, switch only once everything succeeded, and a failure leaves the old data untouched.
     """
     _init()
     cols = ",".join(_COLS)
     with db.connect() as conn:
         n = conn.execute("SELECT COUNT(*) FROM f13_holding_staging WHERE period = ?",
                          (period,)).fetchone()[0]
-        # ⚠️ 暂存为空**也要**执行切换：门槛调得足够高时可能一行都不剩，
-        # 直接返回的话旧持仓仍留在库里，而批次元数据已记成"0 条 + 新门槛" ——
-        # 页面说没有数据、查询却照样返回旧数据。
+        # ⚠️ Switch **even when staging is empty**: a high enough threshold can leave no rows at all,
+        # and returning early there leaves the old holdings in place while the batch metadata already
+        # reads "0 rows at the new threshold" — the page says there is no data while queries still serve the old.
         conn.execute("BEGIN IMMEDIATE")
         conn.execute("DELETE FROM f13_holding WHERE period = ?", (period,))
         conn.execute(f"INSERT OR REPLACE INTO f13_holding ({cols}) "
@@ -164,11 +164,11 @@ def commit_staging(period: str) -> int:
 
 
 def save_holdings(rows: list[dict], replace_period: Optional[str] = None) -> int:
-    """批量写入（幂等）。返回实际新增条数。
+    """Bulk write (idempotent). Returns the number of rows actually added.
 
-    `replace_period`：先把该报告期的旧数据清空再写。
-    ⚠️ 直接用它是**破坏性**的（失败即毁数据）——
-    流式导入请改用 `clear_staging()` + 写入 `<period>#staging` + `commit_staging()`。
+    `replace_period`: clear that reporting period's old data before writing.
+    ⚠️ Using it directly is **destructive** (a failure destroys the data) —
+    streaming imports should use `clear_staging()` + write to `<period>#staging` + `commit_staging()`.
     """
     _init()
     if replace_period:
@@ -200,7 +200,7 @@ def mark_batch(period: str, window: str, rows: int, parsed_rows: int,
 
 
 def save_securities(rows: list[dict], quarter: str) -> int:
-    """写入官方证券清单（CUSIP → 规范名称）。"""
+    """Write the official securities list (CUSIP → canonical name)."""
     _init()
     if not rows:
         return 0
@@ -231,18 +231,18 @@ def _where(period: Optional[str] = None, cusip: Optional[str] = None,
            manager: Optional[str] = None, kind: Optional[str] = "share",
            min_value: Optional[float] = None,
            include_amendments: bool = False, alias: str = "") -> tuple[str, list]:
-    """筛选条件 —— 明细与聚合**共用这一处**，避免两边口径漂移。
+    """The filter conditions — detail and aggregate **share this one place**, so the two cannot drift.
 
-    ⚠️ `kind` 默认 `share`：把 put（看空）混进持仓统计，
-    等于把看空算成看多（该季 put 规模 $2.66 万亿）。
+    ⚠️ `kind` defaults to `share`: mixing puts (bearish) into the holdings totals
+    counts bearish exposure as bullish (puts ran to $2.66tn that quarter).
     """
-    # `alias` 让同一套条件能用在带表别名的 JOIN 查询上 ——
-    # 早前是用字符串 replace 硬改别名，那种写法一改列名就会静默出错。
+    # `alias` lets one set of conditions serve JOIN queries that use table aliases —
+    # this used to rewrite the alias by string replacement, which fails silently the moment a column is renamed.
     p = f"{alias}." if alias else ""
     sql, args = "WHERE 1=1", []
     if not include_amendments:
-        # 修订件会重述整份申报（Form 13F 说明第 3 条要求全文重述），
-        # 与原件同时统计就是重复计数
+        # An amendment restates the filing whole (Form 13F Instruction 3 requires a full restatement),
+        # so counting it alongside the original is double counting
         sql += f" AND {p}is_amendment = 0"
     if period:
         sql += f" AND {p}period = ?"; args.append(period)
@@ -258,10 +258,10 @@ def _where(period: Optional[str] = None, cusip: Optional[str] = None,
 
 
 def query(limit: int = 200, **filters) -> list[dict]:
-    """持仓明细（按金额倒序）。
+    """Holding detail (largest value first).
 
-    ⚠️ 发行人名同样走官方清单：聚合视图用了、明细却用申报原值的话，
-    同一个 CUSIP 会在图表里叫「APPLE INC」、在下面的表里叫别家公司的名字。
+    ⚠️ Issuer names come from the official list here too: use it for the aggregate view but not the
+    detail, and one CUSIP is called "APPLE INC" in the chart and another company's name in the table below it.
     """
     _init()
     wh, args = _where(**filters, alias="h")
@@ -273,23 +273,23 @@ def query(limit: int = 200, **filters) -> list[dict]:
 
 
 def aggregate(top: int = 20, **filters) -> dict:
-    """在 SQL 里对**全部命中行**聚合（不是取前 N 行再算）。"""
+    """Aggregate in SQL over **every matching row** (not over the first N rows fetched)."""
     _init()
     w, a = _where(**filters)
-    wh, ah = _where(**filters, alias="h")          # 带别名版本，供 JOIN 查询用
+    wh, ah = _where(**filters, alias="h")          # the aliased version, for JOIN queries
     with db.connect() as conn:
         tot = conn.execute(
             f"SELECT COUNT(*) n, COUNT(DISTINCT manager_cik) mgrs, "
             f" COUNT(DISTINCT cusip) cusips, SUM(value) val "
             f"FROM f13_holding {w}", a).fetchone()
-        # ⚠️ 发行人名用**官方清单**，不能用 MAX(issuer)：
-        # 申报里的名称是自由填写的，MAX 取的是字母序最大那个 ——
-        # 实测苹果的 CUSIP 会被显示成 "VANGUARD WHITEHALL FDS"（别家公司），
-        # 亚马逊显示成 "JOHNSON & JOHNSON COM"。张冠李戴且看不出来。
-        # 官方清单查不到时才退回申报里**出现最多**的那个写法（众数，不是 MAX）。
-        # ⚠️ 带上官方清单的 class：同一发行人常有多个股份类别
-        # （Alphabet 的 CL A / CL C 是两个不同 CUSIP、两只不同证券）。
-        # 不显示类别的话，榜单上会出现两行"ALPHABET INC"，看着像重复数据。
+        # ⚠️ The issuer name comes from the **official list**, never from MAX(issuer):
+        # names in filings are free text, and MAX takes the alphabetically largest —
+        # measured, Apple's CUSIP then displays as "VANGUARD WHITEHALL FDS" (another company)
+        # and Amazon's as "JOHNSON & JOHNSON COM". Wrongly attributed, and invisibly so.
+        # Only when the official list has no answer does it fall back to the **most frequent** spelling in the filings (the mode, not MAX).
+        # ⚠️ Carry the official list's class along: one issuer often has several share classes
+        # (Alphabet's CL A and CL C are two CUSIPs and two distinct securities).
+        # Without the class, the table shows two rows of "ALPHABET INC" and reads like duplicated data.
         by_issuer = [dict(r) for r in conn.execute(
             f"SELECT h.cusip, COALESCE(s.issuer, "
             f"  (SELECT issuer FROM f13_holding x WHERE x.cusip = h.cusip "
@@ -304,7 +304,7 @@ def aggregate(top: int = 20, **filters) -> dict:
             f" SUM(value) value "
             f"FROM f13_holding {w} GROUP BY manager_cik "
             f"ORDER BY value DESC LIMIT ?", a + [top])]
-        # ⭐ 三种持仓类型各自的规模 —— 让 put 的量级摆在明面上
+        # ⭐ The size of each of the three position kinds — so the scale of puts sits in plain sight
         by_kind = {r["kind"]: {"rows": r["n"], "value": r["v"]}
                    for r in conn.execute(
                        f"SELECT kind, COUNT(*) n, SUM(value) v FROM f13_holding "
@@ -316,19 +316,19 @@ def aggregate(top: int = 20, **filters) -> dict:
 
 def changes(period: str, prev_period: str, top: int = 20,
             kind: str = "share", manager: Optional[str] = None) -> dict:
-    """季度环比变动：新建仓 / 加仓 / 减仓 / 清仓。
+    """Quarter-on-quarter change: new positions / added / trimmed / exited.
 
-    ⭐ 这才是 13F 的主要价值 —— 单季持仓是静态快照，变动才有信息量。
+    ⭐ This is where 13F's value actually is — a single quarter is a static snapshot; the change carries the information.
 
-    ⚠️ 按 **CUSIP** 比对，不用 ticker（ticker 只有四成能匹配上）。
-    ⚠️ 「清仓」只代表**不再出现在 13(f) 持仓里**，不等于机构看空 ——
-    可能转成了期权、转到不需申报的账户、或该证券已退出 13(f) 清单。
+    ⚠️ Compared on **CUSIP**, not ticker (only four in ten tickers match at all).
+    ⚠️ "Exited" means only that it **no longer appears among 13(f) holdings**, and is not the manager turning bearish —
+    it may have moved into options, into an account that need not be reported, or the security may have left the 13(f) list.
     """
     _init()
-    # ⚠️ **金额门槛会污染「新建仓/清仓」的判定**：
-    # 上季 $90 万（被门槛滤掉）、本季 $110 万（保留）的持仓，
-    # 会被算成"新建仓"，实际只是加仓；反向则被算成"清仓"。
-    # 所以要把两期的门槛取出来，在结果里如实标注这个失真区间。
+    # ⚠️ **The value threshold contaminates the new-position and exit calls**:
+    # a holding of $900k last quarter (dropped by the threshold) and $1.1m this quarter (kept)
+    # counts as a "new position" when it was only an increase; the reverse counts as an exit.
+    # So both periods' thresholds are read out, and the distorted band is stated honestly in the result.
     with db.connect() as conn:
         floors = {r[0]: r[1] for r in conn.execute(
             "SELECT period, min_value FROM f13_batch WHERE period IN (?,?)",
@@ -337,7 +337,7 @@ def changes(period: str, prev_period: str, top: int = 20,
     m_sql, m_args = ("", [])
     if manager:
         m_sql, m_args = " AND manager LIKE ?", [f"%{manager}%"]
-    # 发行人名同样取自官方清单（见 aggregate 的说明），退回众数而非 MAX
+    # Issuer names come from the official list here too (see aggregate), falling back to the mode rather than MAX
     base = (f"SELECT h.cusip cusip, COALESCE(s.issuer, "
             f"  (SELECT issuer FROM f13_holding x WHERE x.cusip = h.cusip "
             f"   GROUP BY x.issuer ORDER BY COUNT(*) DESC LIMIT 1)) issuer, "
@@ -360,9 +360,9 @@ def changes(period: str, prev_period: str, top: int = 20,
         row = {**r, "prev_value": p["value"], "delta_value": d,
                "prev_shares": p["shares"],
                "delta_shares": (r["shares"] or 0) - (p["shares"] or 0)}
-        # ⚠️ d == 0 是「持仓没变」，既不是加仓也不是减仓。
-        # 早前写成 `inc if d > 0 else dec`，把 36 个完全未变动的标的
-        # 算进了减仓 —— 数字虚高，还把"没动"显示成"在减"。
+        # ⚠️ d == 0 means **the holding did not change**, which is neither an increase nor a decrease.
+        # This was once written `inc if d > 0 else dec`, which put 36 completely unchanged positions
+        # into the decreases — inflating the number and showing "did not move" as "is selling".
         if d > 0:
             inc.append(row)
         elif d < 0:
@@ -384,20 +384,20 @@ def changes(period: str, prev_period: str, top: int = 20,
                    "decreased": len(dec), "exited": len(exited),
                    "unchanged": len(unchanged)},
         "min_value": floor,
-        "note": "「清仓」只代表该 CUSIP 不再出现在 13(f) 多头持仓里 —— "
-                "不等于机构看空：可能转成了期权、移到无需申报的账户、"
-                "或该证券已退出 13(f) 清单。",
+        "note": "An exit means only that this CUSIP no longer appears among 13(f) long holdings — "
+                "not that the manager turned bearish: it may have moved into options, into an account "
+                "that need not be reported, or the security may have left the 13(f) list.",
         "floor_note": (
-            f"⚠️ 两期数据带 ${floor:,.0f} 的金额门槛：低于它的持仓没有入库。"
-            f"因此**金额接近门槛的「新建仓」与「清仓」不可信** —— "
-            f"上季 ${floor*0.9:,.0f}（被滤掉）、本季 ${floor*1.1:,.0f}（保留）"
-            f"会显示成新建仓，实际只是加仓。要精确比对请以门槛 0 重新导入两期。"
-            if floor else "两期均为全量导入（无金额门槛），新建仓/清仓判定可信。"),
+            f"⚠️ Both periods carry a ${floor:,.0f} value threshold, below which holdings were never stored. "
+            f"So **new positions and exits close to the threshold cannot be trusted** — "
+            f"${floor*0.9:,.0f} last quarter (dropped) and ${floor*1.1:,.0f} this quarter (kept) "
+            f"shows as a new position when it is only an increase. For an exact comparison, reimport both periods at a threshold of 0."
+            if floor else "Both periods were imported in full (no value threshold), so new positions and exits can be trusted."),
     }
 
 
 def stats() -> dict:
-    """库存概览 —— **必须把门槛与丢弃量报出来**。"""
+    """Storage overview — **the threshold and what it dropped have to be reported**."""
     _init()
     with db.connect() as conn:
         t = conn.execute(
@@ -416,7 +416,7 @@ def stats() -> dict:
         "batches": b,
         "last_sync": b[0]["synced_at"] if b else None,
         "db_path": db.DB_PATH,
-        "note": "13F 只含**季末时点、13(f) 证券的多头持仓** —— 不含空头、现金、"
-                "债券、仅境外上市股票与私募持仓。看跌期权(put)按标的列示，"
-                "已单独归类，默认口径不计入持仓。",
+        "note": "13F carries **long positions in 13(f) securities as of quarter-end** only — no shorts, "
+                "cash, bonds, stocks listed only outside the US, or private holdings. Puts are listed under "
+                "their underlying; they are classified separately and left out of the default holdings view.",
     }

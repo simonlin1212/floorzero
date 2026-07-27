@@ -1,10 +1,10 @@
-"""13F 同步编排。
+"""13F sync orchestration.
 
-一个窗口 95MB 压缩 / INFOTABLE 380 万行，下载+解析约 35 秒，
-按报告期过滤后单季约 332 万条。所以：
-- 一次只导**一个报告期**（用户选），不默认全导
-- 默认金额门槛 $100 万（保留 37.5% 行数、覆盖 99.37% 金额）
-- 丢弃量如实记进批次表并显示
+One window is 95MB compressed with 3.8m INFOTABLE rows, about 35 seconds to download and parse,
+and roughly 3.32m rows for a single quarter once filtered by reporting period. So:
+- import **one reporting period** at a time (the user picks), never all of them by default
+- default to a $1m value threshold (keeping 37.5% of rows, covering 99.37% of value)
+- record what was discarded in the batch table, and show it
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from sources import edgar13f as src
 from modules import institution as parse
 from modules import institution_store as store
 
-#: 默认金额门槛。实测保留 37.5% 行数、覆盖 99.37% 金额。
+#: The default value threshold. Measured: keeps 37.5% of rows, covers 99.37% of value.
 DEFAULT_MIN_VALUE = 1_000_000.0
 
 
@@ -33,8 +33,8 @@ class SyncState:
         self.periods: list[list] = []
 
     def _snapshot_locked(self) -> dict:
-        """⚠️ 调用方须**已持锁**（`threading.Lock` 不可重入，
-        在持锁时再调 snapshot() 会死锁 —— Congress 分栏踩过）。"""
+        """⚠️ The caller must **already hold the lock** (`threading.Lock` is not reentrant,
+        so calling snapshot() while holding it deadlocks — as the Congress section found out)."""
         return {
             "running": self.running, "stage": self.stage, "rows": self.rows,
             "started_at": self.started_at, "finished_at": self.finished_at,
@@ -57,15 +57,15 @@ def _err(msg: str) -> None:
 
 def _run(window: Optional[str], period: Optional[str], min_value: float) -> None:
     try:
-        STATE.stage = "探测可用窗口"
+        STATE.stage = "probing for available windows"
         windows = src.list_windows()
         with STATE.lock:
             STATE.windows = windows
         w = window or windows[0]
 
-        STATE.stage = f"下载数据集 {w}（约 95MB）"
-        # ⚠️ 只拿 ZIP 句柄，**不全量解析** —— INFOTABLE 380 万行全读进内存
-        # 实测峰值 5.3GB，8GB 机器会被 OOM 杀掉。
+        STATE.stage = f"downloading dataset {w} (about 95MB)"
+        # ⚠️ Take the ZIP handle only, **do not parse it whole** — reading all 3.8m INFOTABLE rows
+        # into memory was measured peaking at 5.3GB, which gets an 8GB machine OOM-killed.
         zf = src.download_window(w)
 
         periods = {}
@@ -77,7 +77,7 @@ def _run(window: Optional[str], period: Optional[str], min_value: float) -> None
         with STATE.lock:
             STATE.periods = [[p_, n] for p_, n in ordered[:8]]
         if not ordered:
-            _err(f"{w} 窗口内没有任何申报")
+            _err(f"The {w} window contains no filings at all")
             return
 
         target = period
@@ -85,29 +85,29 @@ def _run(window: Optional[str], period: Optional[str], min_value: float) -> None
             d0 = parse._parse_date(ordered[0][0])
             target = d0.isoformat() if d0 else None
         if not target:
-            _err(f"{w} 无法确定报告期")
+            _err(f"Could not determine a reporting period for {w}")
             return
 
-        # 官方证券清单：CUSIP → 规范发行人名称。
-        # 不同步的话，展示会用申报里自由填写的名字 ——
-        # 实测苹果的 CUSIP 有 61 种写法，其中还有别家公司的名字。
-        STATE.stage = "同步官方 13(f) 证券清单"
+        # The official securities list: CUSIP → canonical issuer name.
+        # Without syncing it, display falls back to the free-text names in the filings —
+        # Apple's CUSIP was measured carrying 61 spellings, some of them other companies' names.
+        STATE.stage = "syncing the official 13(f) securities list"
         d = parse._parse_date(target)
         for q in (src.list_quarters_for(d) if d else []):
             try:
                 n = store.save_securities(src.securities_list(q), q)
-                STATE.stage = f"证券清单 {q}：{n:,} 条"
+                STATE.stage = f"securities list {q}: {n:,} rows"
                 break
             except src.DataNotAvailable:
-                continue                      # 该季清单还没发布，试下一季
+                continue                      # that quarter's list is not published yet; try the next
             except Exception as e:
-                _err(f"证券清单 {q}: {type(e).__name__}: {e}")
+                _err(f"securities list {q}: {type(e).__name__}: {e}")
                 break
 
-        STATE.stage = f"流式导入 {target} 的持仓"
-        # ⚠️ 先写**暂存区**，全部成功后再原子切换 ——
-        # 直接"先删后写"的话，中途失败会留下空的或半份数据，
-        # 而批次元数据还写着旧条数，之后所有查询都在悄悄给残缺数据。
+        STATE.stage = f"streaming {target} holdings in"
+        # ⚠️ Write to **staging** first and switch atomically once everything succeeded —
+        # with a straight "delete then write", a failure part-way leaves nothing or half a period,
+        # while the batch metadata still records the old row count and every query quietly serves incomplete data.
         store.clear_staging(target)
 
         batch, total_kept, dropped_rows, dropped_value, parsed = [], 0, 0, 0.0, 0
@@ -118,15 +118,15 @@ def _run(window: Optional[str], period: Optional[str], min_value: float) -> None
                 dropped_rows += 1
                 dropped_value += val
                 continue
-            batch.append(parse.to_dict(h))     # 落暂存表（独立主键空间）
+            batch.append(parse.to_dict(h))     # into the staging table (its own key space)
             managers.add(h.manager_cik)
-            if len(batch) >= 50_000:          # 分批落库，内存恒定
+            if len(batch) >= 50_000:          # flush in batches, so memory stays constant
                 total_kept += len(batch)
                 store.save_staging(batch)
                 batch = []
                 with STATE.lock:
                     STATE.rows = total_kept
-                STATE.stage = f"流式导入 {target}：已写入 {total_kept:,} 条"
+                STATE.stage = f"streaming {target} in: {total_kept:,} rows written"
         if batch:
             total_kept += len(batch)
             store.save_staging(batch)
@@ -134,30 +134,30 @@ def _run(window: Optional[str], period: Optional[str], min_value: float) -> None
             STATE.rows = total_kept
 
         if not total_kept and not dropped_rows:
-            store.clear_staging(target)         # 该期压根没申报 → 别动旧数据
-            _err(f"{w} 中没有 {target} 的持仓申报（该窗口主体可能是别的报告期）")
+            store.clear_staging(target)         # nothing was filed for that period → leave the old data alone
+            _err(f"{w} holds no {target} holdings filings (the window may be mostly another reporting period)")
             return
         if not total_kept:
-            # 有申报、但全被门槛滤掉 —— 这是**成功的空导入**，
-            # 旧数据必须一并清掉，否则元数据说 0 条、查询却还返回旧持仓
-            _err(f"{target}: {dropped_rows:,} 条全部低于门槛 ${min_value:,.0f}，"
-                 f"该期已清空（如需保留请降低门槛重导）")
+            # Filings exist, but the threshold dropped every one — this is a **successful empty import**,
+            # so the old data has to go with it, or the metadata says 0 rows while queries still return the old holdings
+            _err(f"{target}: all {dropped_rows:,} rows fall below the ${min_value:,.0f} threshold, "
+                 f"so the period has been cleared (lower the threshold and reimport to keep them)")
 
-        # ⭐ 到这里才切换：旧数据在整个导入过程中一直是完好可用的
-        STATE.stage = f"切换 {target}（{total_kept:,} 条）"
+        # ⭐ Only now does it switch: the old data stayed whole and usable throughout the import
+        STATE.stage = f"switching {target} over ({total_kept:,} rows)"
         store.commit_staging(target)
 
         store.mark_batch(
             period=target, window=w, rows=total_kept, parsed_rows=parsed,
             dropped_rows=dropped_rows, dropped_value=dropped_value,
             min_value=min_value, managers=len(managers))
-        STATE.stage = "完成"
+        STATE.stage = "done"
     except src.DataNotAvailable as e:
-        _err(f"数据不可得：{e}")
-        STATE.stage = "完成（无数据）"
+        _err(f"Data unavailable: {e}")
+        STATE.stage = "done (no data)"
     except Exception as e:
-        STATE.stage = f"中断：{type(e).__name__}: {e}"
-        _err(f"同步中断：{type(e).__name__}: {e}")
+        STATE.stage = f"interrupted: {type(e).__name__}: {e}"
+        _err(f"Sync interrupted: {type(e).__name__}: {e}")
     finally:
         with STATE.lock:
             STATE.running = False
@@ -166,16 +166,16 @@ def _run(window: Optional[str], period: Optional[str], min_value: float) -> None
 
 def start(window: Optional[str] = None, period: Optional[str] = None,
           min_value: float = DEFAULT_MIN_VALUE) -> dict:
-    """启动一次导入（一次一个报告期）。"""
+    """Start an import (one reporting period per run)."""
     with STATE.lock:
         if STATE.running:
-            # 已持锁 —— 必须用 _snapshot_locked，调 snapshot() 会死锁
-            return {"started": False, "reason": "已有同步在进行中",
+            # Lock already held — this must use _snapshot_locked; calling snapshot() would deadlock
+            return {"started": False, "reason": "a sync is already running",
                     **STATE._snapshot_locked()}
         STATE.running = True
         STATE.rows = 0
         STATE.errors = []
-        STATE.stage = "启动中"
+        STATE.stage = "starting"
         STATE.started_at = datetime.now().isoformat(timespec="seconds")
         STATE.finished_at = None
 

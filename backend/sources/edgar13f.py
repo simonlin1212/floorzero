@@ -1,43 +1,43 @@
-"""SEC 13F —— 机构持仓数据源。
+"""SEC 13F — the source for institutional holdings.
 
-合规级与 Form 4 相同（S 级：EDGAR 公开记录，只限速率不限商用）。
-复用 `edgar.py` 的限速器与 `contact.py` 的 UA 配置。
+Same compliance tier as Form 4 (S: EDGAR public record, rate-limited but not restricted commercially).
+Reuses `edgar.py`'s rate limiter and `contact.py`'s UA configuration.
 
-━━━ ⭐ 13F 到底覆盖什么：这是本分栏最要紧的一件事 ━━━
+━━━ ⭐ What a 13F actually covers: the most important thing about this section ━━━
 
-「机构持仓」这个叫法本身就容易误导。13F 报的是
-**季末时点、对 13(f) 证券的多头持仓**，而且：
+The phrase "institutional holdings" misleads on its own. A 13F reports **long positions in
+13(f) securities as of quarter-end**, and beyond that:
 
-| 不包含 | 依据 |
+| Not included | Why |
 |---|---|
-| **空头头寸** | SEC 2023 年专门另立 Rule 13f-2 / Form SHO 报空头（2025-01 生效）—— 正因为 13F 不覆盖 |
-| 现金、债券、大宗商品、外汇 | 不在 13(f) 证券清单内 |
-| 仅在境外上市的股票 | 同上 |
-| 未上市/私募持仓 | 同上 |
-| 获保密豁免的持仓 | 可申请暂缓披露（Rule 24b-2） |
+| **Short positions** | the SEC created Rule 13f-2 / Form SHO in 2023 specifically to report shorts (effective 2025-01) — precisely because 13F does not cover them |
+| Cash, bonds, commodities, FX | not on the 13(f) securities list |
+| Stocks listed only outside the US | same |
+| Unlisted and private holdings | same |
+| Holdings granted confidential treatment | disclosure can be deferred on request (Rule 24b-2) |
 
-⚠️ **期权以「标的证券」的形态出现**（Form 13F 特别说明第 10 条）：
-看跌期权会被标成 `PUT` 但列在标的名下。实测 2026Q1 窗口：
-普通持股 $74.9 万亿 / Call $2.95 万亿 / **Put $3.66 万亿** ——
-把 PUT 当成持股加总，等于**把 3.66 万亿的看空头寸算成看多**。
+⚠️ **Options appear as their underlying security** (Form 13F Special Instruction 10):
+a put is marked `PUT` but listed under the underlying's name. Measured on the 2026Q1 window:
+ordinary holdings $74.9tn / calls $2.95tn / **puts $3.66tn** —
+so summing PUT rows in with holdings **counts $3.66tn of bearish exposure as bullish**.
 
-━━━ 数据源：季度结构化数据集（无需逐份解析 XML）━━━
+━━━ The source: the quarterly structured dataset (no need to parse filings one by one) ━━━
 
-⚠️ 命名不是自然季度，而是**三个月的申报日窗口**：
-`01mar2026-31may2026_form13f.zip`（2026-06-01 发布）。
-一个窗口里混着多个报告期 —— 实测该窗口：
-2026-03-31 报告 10,776 份，但也有一路到 2008 年的补报与修订。
-**所以必须按 `PERIODOFREPORT` 过滤**，不能拿整个窗口当一个季度。
+⚠️ The naming is not by calendar quarter but by a **three-month window of filing dates**:
+`01mar2026-31may2026_form13f.zip` (published 2026-06-01).
+One window mixes several reporting periods — measured, that window holds
+10,776 filings for the 2026-03-31 period, alongside late and amended filings going back to 2008.
+**So it has to be filtered on `PERIODOFREPORT`**; a whole window is not one quarter.
 
-⚠️ 规模比 Form 345 大一个量级：95MB 压缩 / INFOTABLE 396MB / 380 万行。
+⚠️ An order of magnitude larger than Form 345: 95MB compressed / INFOTABLE 396MB / 3.8m rows.
 
-━━━ 另外两个坑 ━━━
-1. **13F-NT 是「通知件」，不含任何持仓**（"我的持仓由别人申报"）。
-   实测该窗口 2,045 份 —— 占 18%。不排除就会报出两千家"零持仓"的机构。
-2. **只有 CUSIP 没有 ticker**。SEC 不提供 CUSIP→ticker 映射（那是商业数据）。
-   用发行人名称去 `company_tickers.json` 匹配实测命中率仅 **42.8%**
-   （未命中的多是 ETF/基金）—— 所以 ticker 只能当尽力而为的辅助字段，
-   **主键必须是 CUSIP**。
+━━━ Two further traps ━━━
+1. **13F-NT is a notice filing and carries no holdings at all** ("my holdings are reported by someone else").
+   Measured at 2,045 filings in that window — 18%. Leave them in and you report two thousand managers holding nothing.
+2. **There are CUSIPs and no tickers.** The SEC publishes no CUSIP→ticker mapping (that is commercial data).
+   Matching issuer names against `company_tickers.json` was measured hitting only **42.8%**
+   (most misses being ETFs and funds) — so a ticker is a best-effort auxiliary field and
+   **the key must be the CUSIP**.
 """
 from __future__ import annotations
 
@@ -55,15 +55,15 @@ from sources.edgar import DataNotAvailable, _limiter
 DATASET_INDEX = "https://www.sec.gov/data-research/sec-markets-data/form-13f-data-sets"
 DATASET_BASE = "https://www.sec.gov/files/structureddata/data/form-13f-data-sets"
 
-#: 我们要用的表
+#: The tables we use
 DATASET_TABLES = ("SUBMISSION", "COVERPAGE", "INFOTABLE")
 
-#: 含持仓的 **SUBMISSIONTYPE**（EDGAR 申报类型）。NT 是「通知件」，明确不含持仓。
+#: The **SUBMISSIONTYPE** values (EDGAR filing types) that carry holdings. NT is a notice, and explicitly carries none.
 #:
-#: ⚠️ 别把 `13F COMBINATION REPORT` 写进来 —— 它是 **COVERPAGE.REPORTTYPE** 的值，
-#: 不是申报类型。实测 2026Q1 窗口：441 份组合报告的 SUBMISSIONTYPE 全是
-#: `13F-HR`(410) 或 `13F-HR/A`(31)，**已经被下面这两个值覆盖**。
-#: 早前把它混进本常量，害得代码审查误判成"组合报告被丢掉了"（实际一条没丢）。
+#: ⚠️ Do not add `13F COMBINATION REPORT` here — that is a value of **COVERPAGE.REPORTTYPE**,
+#: not a filing type. Measured on the 2026Q1 window: all 441 combination reports have a SUBMISSIONTYPE
+#: of `13F-HR`(410) or `13F-HR/A`(31), so **the two values below already cover them**.
+#: It was once mixed into this constant, which led a code review to conclude combination reports were being dropped (not one was).
 HOLDINGS_TYPES = frozenset({"13F-HR", "13F-HR/A"})
 
 _WINDOW_RE = re.compile(
@@ -71,60 +71,60 @@ _WINDOW_RE = re.compile(
 
 
 def list_windows(limit: int = 12) -> list[str]:
-    """列出可用的数据集窗口（新→旧），如 `01mar2026-31may2026`。
+    """List the available dataset windows (newest first), e.g. `01mar2026-31may2026`.
 
-    ⚠️ 只能从索引页解析 —— 命名是三个月申报日窗口，无法用日期推算
-    （不像 Form 345 的 `2026q1`）。
+    ⚠️ Only obtainable by parsing the index page — the naming is a three-month window of filing
+    dates and cannot be derived from a date (unlike Form 345's `2026q1`).
     """
     _limiter.wait()
     try:
         r = requests.get(DATASET_INDEX, headers={"User-Agent": user_agent()},
                          timeout=60)
     except requests.RequestException as e:
-        raise RuntimeError(f"13F 数据集索引请求失败: {type(e).__name__}: {e}") from e
+        raise RuntimeError(f"The 13F dataset index request failed: {type(e).__name__}: {e}") from e
     if r.status_code != 200:
-        raise RuntimeError(f"13F 数据集索引 HTTP {r.status_code}")
+        raise RuntimeError(f"The 13F dataset index returned HTTP {r.status_code}")
     seen: list[str] = []
     for m in _WINDOW_RE.finditer(r.text):
         w = m.group(1).lower()
         if w not in seen:
             seen.append(w)
     if not seen:
-        raise RuntimeError("13F 数据集索引页未解析出任何窗口（页面结构可能已变更）")
+        raise RuntimeError("No windows parsed out of the 13F dataset index page (its structure may have changed)")
     return seen[:limit]
 
 
 def download_window(window: str) -> zipfile.ZipFile:
-    """下载一个窗口的 ZIP 并返回句柄（**不解析 INFOTABLE**）。
+    """Download one window's ZIP and return a handle (**without parsing INFOTABLE**).
 
-    ⚠️ 必须流式处理：把 INFOTABLE 全量读成字典列表，实测峰值内存
-    **5.3 GB**（下载后 4.1GB + 解析成对象后再 1.2GB）——
-    8GB 的机器会疯狂 swap 甚至被 OOM 杀掉，直接违背"clone 下来就能跑"。
-    所以这里只把 ZIP 拿在手上，小表（SUBMISSION/COVERPAGE 各约 1.2 万行）
-    可以全读，**INFOTABLE 只能用 `iter_table()` 边读边过滤**。
+    ⚠️ Streaming is mandatory: reading INFOTABLE whole into a list of dicts was measured peaking at
+    **5.3 GB** (4.1GB after download, plus another 1.2GB once parsed into objects) —
+    an 8GB machine swaps furiously or gets OOM-killed, which breaks "clone it and it runs" outright.
+    So this only takes hold of the ZIP. The small tables (SUBMISSION/COVERPAGE, ~12k rows each) can be
+    read whole; **INFOTABLE can only go through `iter_table()`, filtered as it is read**.
     """
     url = f"{DATASET_BASE}/{window}_form13f.zip"
     _limiter.wait()
     try:
         r = requests.get(url, headers={"User-Agent": user_agent()}, timeout=600)
     except requests.RequestException as e:
-        raise RuntimeError(f"13F 数据集下载失败: {type(e).__name__}: {e}") from e
+        raise RuntimeError(f"The 13F dataset download failed: {type(e).__name__}: {e}") from e
     if r.status_code == 404:
-        raise DataNotAvailable(f"13F 数据集窗口不存在: {window}")
+        raise DataNotAvailable(f"No such 13F dataset window: {window}")
     if r.status_code != 200:
-        raise RuntimeError(f"13F 数据集 HTTP {r.status_code}: {window}")
+        raise RuntimeError(f"The 13F dataset returned HTTP {r.status_code}: {window}")
     try:
         return zipfile.ZipFile(io.BytesIO(r.content))
     except zipfile.BadZipFile as e:
-        raise RuntimeError(f"{window} 返回的不是 ZIP（可能是错误页）") from e
+        raise RuntimeError(f"{window} did not return a ZIP (possibly an error page)") from e
 
 
 def iter_table(zf: zipfile.ZipFile, table: str):
-    """逐行迭代 ZIP 里的某张 TSV（**不驻留内存**）。"""
+    """Iterate one TSV inside the ZIP row by row (**nothing stays in memory**)."""
     names = {n.upper(): n for n in zf.namelist()}
     real = names.get(f"{table.upper()}.TSV")
     if real is None:
-        raise RuntimeError(f"数据集缺少 {table}.tsv（结构可能已变更）")
+        raise RuntimeError(f"The dataset is missing {table}.tsv (its structure may have changed)")
     with zf.open(real) as fh:
         text = io.TextIOWrapper(fh, encoding="utf-8", errors="replace")
         header = next(text).rstrip("\n").split("\t")
@@ -136,41 +136,41 @@ def iter_table(zf: zipfile.ZipFile, table: str):
 
 
 def read_table(zf: zipfile.ZipFile, table: str) -> list[dict]:
-    """整表读入 —— **只用于小表**（SUBMISSION / COVERPAGE 各约 1.2 万行）。
+    """Read a table whole — **for the small tables only** (SUBMISSION / COVERPAGE, ~12k rows each).
 
-    ⛔ 绝不要拿它读 INFOTABLE（380 万行 = 4GB 内存）。
+    ⛔ Never point it at INFOTABLE (3.8m rows = 4GB of memory).
     """
     return list(iter_table(zf, table))
 
 
 def window_dataset(window: str) -> dict[str, list[dict]]:
-    """⚠️ **已弃用** —— 会把 INFOTABLE 全量读进内存（实测峰值 5.3GB）。
+    """⚠️ **Deprecated** — it reads INFOTABLE whole into memory (measured peaking at 5.3GB).
 
-    保留仅为兼容既有调用；新代码请用
-    `download_window()` + `read_table()`（小表）+ `iter_table()`（INFOTABLE）。
+    Kept only so existing callers keep working; new code should use
+    `download_window()` + `read_table()` (small tables) + `iter_table()` (INFOTABLE).
     """
     url = f"{DATASET_BASE}/{window}_form13f.zip"
     _limiter.wait()
     try:
         r = requests.get(url, headers={"User-Agent": user_agent()}, timeout=600)
     except requests.RequestException as e:
-        raise RuntimeError(f"13F 数据集下载失败: {type(e).__name__}: {e}") from e
+        raise RuntimeError(f"The 13F dataset download failed: {type(e).__name__}: {e}") from e
     if r.status_code == 404:
-        raise DataNotAvailable(f"13F 数据集窗口不存在: {window}")
+        raise DataNotAvailable(f"No such 13F dataset window: {window}")
     if r.status_code != 200:
-        raise RuntimeError(f"13F 数据集 HTTP {r.status_code}: {window}")
+        raise RuntimeError(f"The 13F dataset returned HTTP {r.status_code}: {window}")
 
     try:
         zf = zipfile.ZipFile(io.BytesIO(r.content))
     except zipfile.BadZipFile as e:
-        raise RuntimeError(f"{window} 返回的不是 ZIP（可能是错误页）") from e
+        raise RuntimeError(f"{window} did not return a ZIP (possibly an error page)") from e
 
     names = {n.upper(): n for n in zf.namelist()}
     out: dict[str, list[dict]] = {}
     for table in DATASET_TABLES:
         real = names.get(f"{table}.TSV")
         if real is None:
-            raise RuntimeError(f"{window} 数据集缺少 {table}.tsv（结构可能已变更）")
+            raise RuntimeError(f"The {window} dataset is missing {table}.tsv (its structure may have changed)")
         with zf.open(real) as fh:
             text = io.TextIOWrapper(fh, encoding="utf-8", errors="replace")
             header = next(text).rstrip("\n").split("\t")
@@ -185,11 +185,11 @@ def window_dataset(window: str) -> dict[str, list[dict]]:
 
 
 def periods_in(tables: dict[str, list[dict]]) -> list[tuple[str, int]]:
-    """窗口里各报告期的申报份数（多→少）。
+    """Filing counts per reporting period inside a window (most first).
 
-    用来让用户看清「这个窗口主要是哪一期」——
-    实测 `01mar2026-31may2026` 里 2026-03-31 有 10,776 份，
-    但也混着一路到 2008 年的补报。
+    Lets the user see which period a window is mostly about —
+    measured, `01mar2026-31may2026` holds 10,776 filings for 2026-03-31,
+    mixed in with late filings going all the way back to 2008.
     """
     counts: dict[str, int] = {}
     for r in tables.get("SUBMISSION", []):
@@ -200,7 +200,7 @@ def periods_in(tables: dict[str, list[dict]]) -> list[tuple[str, int]]:
 
 
 def window_end(window: str) -> Optional[date]:
-    """`01mar2026-31may2026` → date(2026, 5, 31)（窗口截止日）。"""
+    """`01mar2026-31may2026` → date(2026, 5, 31) (the window's closing date)."""
     m = re.match(r"\d{2}[a-z]{3}\d{4}-(\d{2})([a-z]{3})(\d{4})", window, re.I)
     if not m:
         return None
@@ -212,34 +212,34 @@ def window_end(window: str) -> Optional[date]:
         return None
 
 
-# ─────────────────────── 官方 13F 证券清单 ───────────────────────
+# ─────────────────────── The official 13F securities list ───────────────────────
 
-#: SEC 每季发布的「Section 13(f) 证券官方清单」——
-#: **CUSIP → 规范发行人名称**的权威来源。
+#: The SEC's quarterly "Official List of Section 13(f) Securities" —
+#: the authoritative source for **CUSIP → canonical issuer name**.
 SEC_LIST_BASE = "https://www.sec.gov/files/investment"
 
 
 def securities_list(quarter: str) -> list[dict]:
-    """下载官方 13(f) 证券清单（定宽文本）。`quarter` 形如 `2026q2`。
+    """Download the official 13(f) securities list (fixed-width text). `quarter` looks like `2026q2`.
 
-    ⭐ 为什么必须要它：INFOTABLE 里的 `NAMEOFISSUER` 是**申报人自由填写**的，
-    实测苹果那个 CUSIP 有 **61 种不同写法**，其中还混着
-    `VANGUARD WHITEHALL FDS` 这种完全填错的（别家公司的名字挂在苹果的 CUSIP 上）。
-    拿这些名字做展示或分组，会把标的张冠李戴。
+    ⭐ Why it is needed: `NAMEOFISSUER` in INFOTABLE is **typed freely by the filer**, and Apple's
+    CUSIP was measured carrying **61 different spellings** — among them outright errors such as
+    `VANGUARD WHITEHALL FDS`, another company's name sitting on Apple's CUSIP.
+    Display or group by those names and securities get attributed to the wrong company.
 
-    定宽格式（SEC 页面明示）：
-        CUSIP 1-9 / 期权标记 10 / 发行人名 11-40 / 类别描述 41-67 / 状态 68-70
+    Fixed-width layout (stated on the SEC's page):
+        CUSIP 1-9 / option marker 10 / issuer name 11-40 / class description 41-67 / status 68-70
     """
     url = f"{SEC_LIST_BASE}/13flist{quarter}-txt.txt"
     _limiter.wait()
     try:
         r = requests.get(url, headers={"User-Agent": user_agent()}, timeout=90)
     except requests.RequestException as e:
-        raise RuntimeError(f"13F 证券清单请求失败: {type(e).__name__}: {e}") from e
+        raise RuntimeError(f"The 13F securities list request failed: {type(e).__name__}: {e}") from e
     if r.status_code == 404:
-        raise DataNotAvailable(f"13F 证券清单不存在: {quarter}")
+        raise DataNotAvailable(f"No 13F securities list for: {quarter}")
     if r.status_code != 200:
-        raise RuntimeError(f"13F 证券清单 HTTP {r.status_code}: {quarter}")
+        raise RuntimeError(f"The 13F securities list returned HTTP {r.status_code}: {quarter}")
 
     out: list[dict] = []
     for line in r.text.splitlines():
@@ -256,12 +256,12 @@ def securities_list(quarter: str) -> list[dict]:
             "status": line[67:70].strip(),
         })
     if not out:
-        raise RuntimeError(f"13F 证券清单 {quarter} 未解析出任何行（格式可能已变更）")
+        raise RuntimeError(f"No rows parsed out of the {quarter} 13F securities list (the format may have changed)")
     return out
 
 
 def list_quarters_for(period: date, back: int = 4) -> list[str]:
-    """给定报告期，返回可能对应的清单季度标识（新→旧，用于回退尝试）。"""
+    """Given a reporting period, return the list quarters it might correspond to (newest first, for fallback attempts)."""
     y, q = period.year, (period.month - 1) // 3 + 1
     out = []
     for _ in range(back):
