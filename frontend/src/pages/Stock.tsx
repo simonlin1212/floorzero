@@ -180,7 +180,7 @@ export default function StockPage() {
               <span className="text-dim">
                 {" "}
                 — the newest is from {data.lag_spread_days.newest} days ago and the oldest from{" "}
-                {data.lag_spread_days.oldest} days ago.
+                {data.lag_spread_days.oldest} days ago.{" "}
                 <b className="text-ink">They are not contemporaneous</b>,
                 so read each one's instant before stringing them into a story.
               </span>

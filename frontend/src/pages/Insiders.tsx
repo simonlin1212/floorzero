@@ -390,8 +390,8 @@ export default function Insiders() {
           <br />
           <span className="mt-1.5 inline-block">
             The classic shape: an option exercise and an immediate sale on the same day. The exercise is flagged "acquired",
-            but the insider <b className="text-ink">bought not one share on the open market and sold all they received</b> —
-            pay being cashed out, not conviction. So this page shows <b className="text-ink">open market (P/S) only</b> by default.
+            but the insider <b className="text-ink">did not buy a single share on the open market, and sold every share they received</b> —
+            that is compensation being cashed out, not conviction. So this page shows <b className="text-ink">open market (P/S) only</b> by default.
           </span>
         </p>
       </div>
@@ -817,7 +817,7 @@ export default function Insiders() {
             the price-per-share field (one reads <span className="font-mono">$24m per share</span>,
             and a single row like that pushes market-wide buying into the quadrillions). Provably wrong entries are excluded
             (over $1m per share, or over $200bn for a single trade — the first exceeds BRK.A's all-time high,
-            the second any US individual's holding).
+            the second any US individual's holding).{" "}
             <b className="text-ink">But subtler mis-entries cannot be caught</b>:
             one stock actually trading around $2 filed $14,561 per share, and without an external quote there is no way to tell.
             So value totals should be read as an indication of magnitude only.
