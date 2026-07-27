@@ -1,13 +1,13 @@
-"""国会披露的增量同步编排。
+"""Orchestration of the incremental congressional-disclosure sync.
 
-首次同步要抓几百份 PDF（众议院 2026 年 313 份，按限速约 100 秒），
-之后每次只补新增申报。同步在后台线程跑，进度可查询 —— 因为
-把一个两分钟的请求挂在那儿转圈，用户根本分不清是慢还是死了。
+A first sync fetches several hundred PDFs (313 for the House in 2026, about 100 seconds at our
+rate limit); after that it only picks up new filings. It runs on a background thread with progress
+you can query — because a two-minute request left spinning gives the user no way to tell slow from dead.
 
-⚠️ **失败要分类**：
-- 单份申报解析失败 → 记进库（附原因），继续跑下一份；
-- 参议院整条线不可用（缺 curl_cffi / 被拦）→ 记成**环境问题**并显示出来，
-  绝不能显示成"参议院没有交易"。
+⚠️ **Failures have to be classified**:
+- one filing fails to parse → record it (with the reason) and carry on to the next;
+- the whole Senate lane is unavailable (curl_cffi missing, or blocked) → record it as an
+  **environment problem** and show it as one, never as "senators did not trade".
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from modules import congress_store as store
 
 
 class SyncState:
-    """同步进度（单实例，够用；本工具设计上就是单用户自部署）。"""
+    """Sync progress (a single instance is enough; this tool is designed for one self-hosting user)."""
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
@@ -35,11 +35,11 @@ class SyncState:
         self.senate_status: Optional[str] = None
 
     def _snapshot_locked(self) -> dict:
-        """⚠️ 调用方必须**已持有** self.lock。
+        """⚠️ The caller must **already hold** self.lock.
 
-        单独拆出来，是因为 `threading.Lock` **不可重入**：
-        在 `with self.lock:` 里再调一次 `snapshot()` 会永久死锁
-        （实测：第二次 POST /api/congress/sync 卡死，吃掉一个 worker）。
+        Split out separately because `threading.Lock` is **not reentrant**:
+        calling `snapshot()` again inside `with self.lock:` deadlocks permanently
+        (measured: a second POST /api/congress/sync hangs and eats a worker).
         """
         return {
             "running": self.running, "done": self.done, "total": self.total,
@@ -58,11 +58,11 @@ STATE = SyncState()
 
 
 def _sync_house(year: int, limit: Optional[int]) -> None:
-    STATE.stage = f"众议院 {year} 索引"
+    STATE.stage = f"House {year} index"
     filings = [f for f in src.house_filings(year) if f.is_ptr]
-    # ⚠️ 跳过「已定局」的 = 解析成功的 + 扫描件（终态，读不了就是读不了）。
-    # 不能只跳过成功的：扫描件会把 limit 配额吃光，更早的申报永远轮不到。
-    # 也不能把所有失败都当已完成：那样暂时性故障永远没机会自愈。
+    # ⚠️ Skip what is **settled** = parsed successfully + scans (terminal; unreadable is unreadable).
+    # Skipping only the successes will not do: the scans eat the whole limit and earlier filings never get a turn.
+    # Nor can every failure count as done: then a transient fault never gets the chance to heal.
     known = store.settled_doc_ids("house")
     todo = [f for f in filings if f.doc_id not in known]
     todo.sort(key=lambda f: f.filing_date or date.min, reverse=True)
@@ -70,40 +70,39 @@ def _sync_house(year: int, limit: Optional[int]) -> None:
         todo = todo[:limit]
     with STATE.lock:
         STATE.total += len(todo)
-    STATE.stage = f"众议院 {year}（新增 {len(todo)} 份 / 共 {len(filings)} 份）"
+    STATE.stage = f"House {year} ({len(todo)} new of {len(filings)})"
 
     for f in todo:
         try:
             res = parse.parse_house_ptr(src.house_ptr_pdf(f.year, f.doc_id), f)
-            # 扫描件 = 终态（无 OCR 永远读不了）；其余失败留待下次重试
+            # A scan is terminal (without OCR it will never be readable); other failures wait for the next retry
             store.save_filing(f, [parse.to_dict(t) for t in res.trades],
                               res.unparsed_reason,
-                              terminal=bool(res.unparsed_reason
-                                            and "扫描件" in res.unparsed_reason))
+                              terminal=parse.is_terminal(res.unparsed_reason))
         except src.DataNotAvailable as e:
-            store.save_filing(f, [], f"文件不可得：{e}")
-        except Exception as e:                       # 单份失败不该拖垮整次同步
+            store.save_filing(f, [], f"File unavailable: {e}")
+        except Exception as e:                       # one failure should not sink the whole sync
             with STATE.lock:
-                STATE.errors.append(f"众议院 {f.doc_id} {f.name}: {type(e).__name__}: {e}")
+                STATE.errors.append(f"House {f.doc_id} {f.name}: {type(e).__name__}: {e}")
         finally:
             with STATE.lock:
                 STATE.done += 1
 
 
 def _sync_senate(since: str, limit: Optional[int]) -> None:
-    STATE.stage = "参议院索引"
+    STATE.stage = "Senate index"
     ok, msg = src.senate_available()
     STATE.senate_status = msg
     if not ok:
-        # ⚠️ 环境问题 —— 记成错误显示出来，不是"参议院没有交易"
+        # ⚠️ An environment problem — record it as an error and show it, not as "senators did not trade"
         with STATE.lock:
-            STATE.errors.append(f"参议院不可用：{msg}")
+            STATE.errors.append(f"Senate unavailable: {msg}")
         return
 
-    # ⚠️ 顺序是关键：**先取全量索引 → 再滤掉已同步的 → 最后才套配额**。
-    # 若把 limit 传给索引（只取最新 N 条），这 N 条一旦都已缓存，
-    # 之后每次同步都拿同一批再全部丢弃 —— 更早的申报**永远同步不到**，
-    # 而且表面上"跑完了、没出错"。众议院那条路径本来就是这个顺序，这里对齐。
+    # ⚠️ The order is what matters: **fetch the full index → filter out what is synced → only then apply the quota**.
+    # Pass limit to the index instead (taking the newest N only) and, once those N are all cached,
+    # every later sync fetches the same batch and discards all of it — earlier filings are **never synced**,
+    # while it all looks like "it ran and nothing went wrong". The House path already works this way; this aligns with it.
     filings = src.senate_filings(since, limit=10000)
     known = store.settled_doc_ids("senate")
     todo = [f for f in filings if f.doc_id and f.doc_id not in known]
@@ -112,12 +111,12 @@ def _sync_senate(since: str, limit: Optional[int]) -> None:
         todo = todo[:limit]
     with STATE.lock:
         STATE.total += len(todo)
-    STATE.stage = f"参议院（新增 {len(todo)} 份 / 共 {len(filings)} 份）"
+    STATE.stage = f"Senate ({len(todo)} new of {len(filings)})"
 
     for f in todo:
         try:
             if f.is_paper:
-                store.save_filing(f, [], "纸质扫描件（图片），无 OCR 无法解析明细",
+                store.save_filing(f, [], parse.SENATE_PAPER_REASON,
                                   terminal=True)
             else:
                 res = parse.parse_senate_ptr(src.senate_ptr_html(f.detail_url), f)
@@ -127,11 +126,11 @@ def _sync_senate(since: str, limit: Optional[int]) -> None:
             store.save_filing(f, [], str(e))
         except src.SenateUnavailable as e:
             with STATE.lock:
-                STATE.errors.append(f"参议院中断：{e}")
-            break                                    # 会话挂了，后面的也没意义
+                STATE.errors.append(f"Senate interrupted: {e}")
+            break                                    # the session is gone, so the rest is pointless
         except Exception as e:
             with STATE.lock:
-                STATE.errors.append(f"参议院 {f.doc_id} {f.name}: {type(e).__name__}: {e}")
+                STATE.errors.append(f"Senate {f.doc_id} {f.name}: {type(e).__name__}: {e}")
         finally:
             with STATE.lock:
                 STATE.done += 1
@@ -140,8 +139,8 @@ def _sync_senate(since: str, limit: Optional[int]) -> None:
 def _run(years: list[int], since: str, limit: Optional[int],
          chambers: tuple[str, ...]) -> None:
     try:
-        # ⚠️ limit 是**本次同步总额度**，两院共享。
-        # 给每院各传一份会让 limit=N 实际处理最多 2N 份 —— 与参数说明不符。
+        # ⚠️ limit is the **quota for this whole sync**, shared by both chambers.
+        # Passing one to each makes limit=N process up to 2N filings — not what the parameter says.
         remaining = limit
         if "house" in chambers:
             for y in years:
@@ -152,11 +151,11 @@ def _run(years: list[int], since: str, limit: Optional[int],
                     remaining = max(0, limit - STATE.done)
         if "senate" in chambers and (remaining is None or remaining > 0):
             _sync_senate(since, remaining)
-        STATE.stage = "完成"
+        STATE.stage = "done"
     except Exception as e:
-        STATE.stage = f"中断：{type(e).__name__}: {e}"
+        STATE.stage = f"interrupted: {type(e).__name__}: {e}"
         with STATE.lock:
-            STATE.errors.append(f"同步中断：{type(e).__name__}: {e}")
+            STATE.errors.append(f"Sync interrupted: {type(e).__name__}: {e}")
     finally:
         with STATE.lock:
             STATE.running = False
@@ -166,33 +165,33 @@ def _run(years: list[int], since: str, limit: Optional[int],
 def start(year: Optional[int] = None, years_back: int = 0,
           since: Optional[str] = None, limit: Optional[int] = None,
           chambers: tuple[str, ...] = ("house", "senate")) -> dict:
-    """启动一次增量同步（已在跑就直接返回当前进度，不叠开）。
+    """Start an incremental sync (already running, it just returns current progress rather than stacking another).
 
-    ⚠️ **众议院的归档是按年分卷的**，一次只能同步指定年份。
-    默认只同步当年 —— 所以 UI 上不能说"一次同步就补齐全部历史"。
-    要往前回补就传 `years_back`（如 3 = 当年 + 前 3 年，共 4 卷）。
-    每多一年就多几百份 PDF，代价要让用户自己决定，不该默默替他跑。
+    ⚠️ **The House archive is split by year**, so one run syncs one specified year.
+    The default is the current year only — so the UI must not claim "one sync fills in all of history".
+    To reach further back, pass `years_back` (3 = this year plus the previous 3, four volumes in all).
+    Each extra year is several hundred more PDFs, and that cost is the user's to accept, not ours to spend quietly.
     """
     with STATE.lock:
         if STATE.running:
-            # 已持锁 —— 必须用 _snapshot_locked，调 snapshot() 会死锁
-            return {"started": False, "reason": "已有同步在进行中",
+            # Lock already held — this must use _snapshot_locked; calling snapshot() would deadlock
+            return {"started": False, "reason": "a sync is already running",
                     **STATE._snapshot_locked()}
         STATE.running = True
         STATE.done = 0
         STATE.total = 0
         STATE.errors = []
-        STATE.stage = "启动中"
+        STATE.stage = "starting"
         STATE.senate_status = None
         STATE.started_at = datetime.now().isoformat(timespec="seconds")
         STATE.finished_at = None
 
     base = year or date.today().year
     years = [base - i for i in range(max(0, years_back) + 1)]
-    # ⚠️ 参议院起点必须跟随**年份边界**，不能用"今天往前 N 天"的滚动窗口：
-    # 众议院按自然年分卷同步，参议院若用 180 天滚动窗，七月跑一次就会漏掉
-    # 当年 1-2 月的参议院申报 —— 两院覆盖范围对不上，而 UI 却说这是"同步某年"。
-    # 传了 year 却不影响参议院范围，更是直接与参数语义矛盾。
+    # ⚠️ The Senate start date has to follow the **year boundary**, not a rolling "N days back from today":
+    # the House syncs by calendar year, so a 180-day rolling window on the Senate side means a July run
+    # misses that year's January and February Senate filings — the two chambers cover different ground while the UI says "syncing year X".
+    # Passing a year and having it not affect the Senate range contradicts the parameter outright.
     s = since or f"01/01/{min(years)}"
     threading.Thread(target=_run, args=(years, s, limit, chambers), daemon=True).start()
     return {"started": True, **STATE.snapshot()}

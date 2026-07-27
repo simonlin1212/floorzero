@@ -252,3 +252,43 @@ def test_未知工具返回结构化错误而不是抛异常():
     """MCP 调用方需要拿到错误，不是断连。"""
     import tools
     assert "error" in tools.exec_tool("no_such_tool", {})
+
+
+# ─────────────────── 国会：终态判定不能靠文案 ───────────────────
+
+def test_扫描件的原因文案与终态判定是同一个常量():
+    """一份纯图片的 PDF 解析不了，是**终态** —— 无 OCR 永远读不了，重试没有意义。
+
+    同步层曾靠在这句话里找一个词来判定终态。翻译一改措辞，判定就失效：
+    33 份扫描件重新变成"每次都重试"，吃光配额、更早的申报永远轮不到，
+    而且同步照常报成功。所以这里断言的是**产出方与判定方用同一个常量**，
+    不是断言这句话里有哪个词。
+    """
+    from modules import congress as parse
+
+    writer = pytest.importorskip("pypdf").PdfWriter()
+    writer.add_blank_page(width=612, height=792)      # 有效 PDF，零个可提取字符
+    buf = __import__("io").BytesIO()
+    writer.write(buf)
+
+    res = parse.parse_house_ptr(buf.getvalue(), _filing())
+    assert res.trades == ()
+    assert res.unparsed_reason is not None
+    assert parse.is_terminal(res.unparsed_reason), res.unparsed_reason
+
+
+def test_可重试的失败不会被判成终态():
+    """网络故障、临时取不到 —— 判成终态就再也不会重试了。"""
+    from modules import congress as parse
+    for reason in ("File unavailable: timeout", "No transaction lines recognised in the PDF",
+                   None):
+        assert not parse.is_terminal(reason), reason
+
+
+def _filing():
+    from datetime import date
+    from sources.congress import Filing
+    return Filing(chamber="house", name="X", last="X", first="X",
+                  state_district="IN02", filing_type="P",
+                  filing_date=date(2260, 1, 5), year="2260", doc_id="1",
+                  detail_url="")
