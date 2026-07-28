@@ -685,3 +685,30 @@ def test_a_listing_that_exactly_fills_the_limit_is_not_called_truncated(tmp_db):
     assert exact["returned"] == 10
     assert exact["truncated"] is False, "ten rows out of ten is a complete answer"
     assert c.get("/api/congress/trades?limit=11").json()["scope"]["truncated"] is False
+
+
+def test_cot_truncation_is_decided_after_the_unparseable_rows_are_dropped(monkeypatch):
+    """The one-extra-row trick transfers to the database listings cleanly, because every row that
+    comes back from SQLite is a row. It does **not** transfer here: `parse_cot` discards anything
+    without a market name, so slicing the raw page before parsing hands back fewer than `limit`
+    usable rows *and* reports the set truncated — understating the data and mislabelling it at once.
+
+    This regression was introduced by the previous round's fix for the opposite error, which is
+    the shape most of this project's re-review findings take.
+    """
+    from fastapi.testclient import TestClient
+    from sources import macro as macro_src
+    import app
+
+    good = {"market_and_exchange_names": "S&P 500 - CME", "report_date_as_yyyy_mm_dd": "2260-01-07",
+            "lev_money_positions_long": "1", "lev_money_positions_short": "2",
+            "asset_mgr_positions_long": "3", "asset_mgr_positions_short": "4",
+            "dealer_positions_long": "5", "dealer_positions_short": "6",
+            "open_interest_all": "7"}
+    # 6 unparseable rows in front of 5 good ones — a raw slice at limit=5 would keep none of the good
+    junk = dict(good, market_and_exchange_names="")
+    monkeypatch.setattr(macro_src, "cot_rows", lambda **kw: [junk]*6 + [good]*5)
+
+    body = TestClient(app.app).get("/api/market/cot?limit=5").json()
+    assert body["count"] == 5, "the five parseable rows must all survive the junk in front of them"
+    assert body["scope"]["truncated"] is False, "five valid rows out of five is not a truncation"

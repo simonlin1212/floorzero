@@ -891,13 +891,16 @@ def market_cot(
         raise HTTPException(status_code=404, detail=str(e)) from e
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
-    # ⚠️ Same one-extra-row trick as the congress and insider listings: `len(raw) >= limit`
-    #    calls the set truncated whenever the match count lands exactly on the limit, and the
-    #    chart then tells the user its history was cut when it was not.
-    truncated = len(raw) > limit
-    raw = raw[:limit]
+    # ⚠️ Parse **first**, then decide truncation from the valid rows. The one-extra-row trick
+    #    works on the database listings because every row that comes back is a row; here
+    #    `parse_cot` drops anything without a market name, so slicing the raw page first can
+    #    hand back fewer than `limit` usable rows *and* call the set truncated — understating
+    #    the data and mislabelling it in the same breath. (Introduced by the previous round's
+    #    fix for the opposite error, and caught by the re-review.)
     rows = [market_parse.cot_to_dict(c)
             for c in (market_parse.parse_cot(r) for r in raw) if c]
+    truncated = len(rows) > limit
+    rows = rows[:limit]
     return {"rows": rows, "count": len(rows), "notes": market_parse.NOTES,
             "markets": sorted({r["market"] for r in rows}),
             "scope": {"market": market, "exact": exact, "limit": limit,
