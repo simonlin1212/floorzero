@@ -781,3 +781,43 @@ def test_cot_fills_the_page_even_when_upstream_sends_records_it_cannot_read(monk
     assert b["count"] == 0
     assert b["scope"]["truncated"] is False
     assert b["scope"]["unparseable_dropped"] > 0, "silence about unreadable records reads as no data"
+
+
+def test_a_widened_cot_request_that_fails_does_not_come_back_as_a_short_success(monkeypatch):
+    """The widening loop has two exits that can turn "incomplete" into "complete", and both were
+    introduced by the fix that added the loop.
+
+    1. A widened request that errors must propagate. Returning the earlier short page as a 200
+       is "could not fetch" rendered as "does not exist", and it would arrive with
+       `truncated: false` — nothing on screen would hint the history was cut.
+    2. Stopping at the fetch ceiling while upstream was still filling every request means the
+       source has more. That is a truncation, however few rows survived parsing.
+    """
+    from fastapi.testclient import TestClient
+    from sources import macro as macro_src
+    import app
+
+    good = {"market_and_exchange_names": "S&P 500 - CME", "report_date_as_yyyy_mm_dd": "2260-01-07",
+            "lev_money_positions_long": "1", "lev_money_positions_short": "2",
+            "asset_mgr_positions_long": "3", "asset_mgr_positions_short": "4",
+            "dealer_positions_long": "5", "dealer_positions_short": "6",
+            "open_interest_all": "7"}
+    junk = dict(good, market_and_exchange_names="")
+    c = TestClient(app.app)
+
+    # 1. First call succeeds, the widened one fails → the endpoint must fail too, not answer short
+    state = {"n": 0}
+    def flaky(limit, **kw):
+        state["n"] += 1
+        if state["n"] == 1:
+            return [junk]*6            # full page, nothing parseable → forces a widen
+        raise RuntimeError("CFTC rate limited the widened request")
+    monkeypatch.setattr(macro_src, "cot_rows", flaky)
+    assert c.get("/api/market/cot?limit=5").status_code == 502
+
+    # 2. Ceiling reached while upstream kept filling every page → still a truncation
+    monkeypatch.setattr(macro_src, "cot_rows",
+                        lambda limit, **kw: ([junk]*4500 + [good]*500)[:limit])
+    b = c.get("/api/market/cot?limit=5").json()
+    assert b["scope"]["truncated"] is True, \
+        "stopped at the ceiling on a full page — the source still has more"

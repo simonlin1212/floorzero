@@ -891,13 +891,14 @@ def market_cot(
 
     ⚠️ It runs **three days behind**: positions as of Tuesday's close, published on Friday.
     """
-    try:
-        raw = macro_src.cot_rows(limit=limit + 1, market_contains=market, exact=exact)
-    except macro_src.DataNotAvailable as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
-    except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e)) from e
-    # ⚠️ Two things have to be true at once here, and three review rounds went into separating
+    # ⚠️ The **whole** fetch loop sits inside one try, not just the first call. Mapping only the
+    #    first request to 404/502 left a widened retry free to raise straight out of the endpoint —
+    #    or, in the version before that, to be swallowed into a short 200. First attempt and
+    #    retry have to travel the same error path, or "could not fetch" arrives dressed as data.
+    def _fetch(n):
+        return macro_src.cot_rows(limit=n, market_contains=market, exact=exact)
+
+    # ⚠️ Two things have to be true at once below, and three review rounds went into separating
     #    them: the page must come back **full** even when upstream sends records we cannot read,
     #    and `truncated` must mean "the source has more", never "parsing came up short".
     #
@@ -909,22 +910,31 @@ def market_cot(
     #    cosmetic miscount; it is history quietly missing from the chart.
     #
     #    So: widen the request until `limit` parseable rows are in hand or the source runs dry.
-    dropped, rows, want = 0, [], limit + 1
-    while True:
-        parsed = [market_parse.cot_to_dict(c)
-                  for c in (market_parse.parse_cot(r) for r in raw) if c]
-        dropped = len(raw) - len(parsed)
-        # Enough to answer, or upstream gave less than asked → it has nothing further to give
-        if len(parsed) > limit or len(raw) < want or want >= _COT_MAX_FETCH:
-            rows = parsed
-            break
-        want = min(want + max(dropped, 1) + limit, _COT_MAX_FETCH)
-        try:
-            raw = macro_src.cot_rows(limit=want, market_contains=market, exact=exact)
-        except (macro_src.DataNotAvailable, RuntimeError):
-            rows = parsed          # keep what we already have rather than failing the request
-            break
-    truncated = len(rows) > limit
+    try:
+        raw = _fetch(limit + 1)
+        dropped, want = 0, limit + 1
+        upstream_exhausted = False
+        while True:
+            rows = [market_parse.cot_to_dict(c)
+                    for c in (market_parse.parse_cot(r) for r in raw) if c]
+            dropped = len(raw) - len(rows)
+            if len(raw) < want:
+                # Upstream gave less than asked for — it has nothing further to give
+                upstream_exhausted = True
+                break
+            if len(rows) > limit or want >= _COT_MAX_FETCH:
+                break
+            want = min(want + max(dropped, 1) + limit, _COT_MAX_FETCH)
+            raw = _fetch(want)
+    except macro_src.DataNotAvailable as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    # ⚠️ Truncation means "the source has more", and there are two ways for that to be true:
+    #    we hold more parsed rows than asked for, **or** we stopped while upstream was still
+    #    filling every request. Hitting the ceiling on a full page is the second kind — say so,
+    #    or a partial history goes out labelled complete.
+    truncated = len(rows) > limit or not upstream_exhausted
     rows = rows[:limit]
     return {"rows": rows, "count": len(rows), "notes": market_parse.NOTES,
             "markets": sorted({r["market"] for r in rows}),
