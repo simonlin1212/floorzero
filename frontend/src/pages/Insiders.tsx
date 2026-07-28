@@ -149,7 +149,11 @@ export default function Insiders() {
   const [ticker, setTicker] = useState("");
   const [tickerInput, setTickerInput] = useState("");
 
+type TradeScope = { limit: number; returned: number; truncated: boolean };
+
   const [trades, setTrades] = useState<Trade[]>([]);
+  // The listing's **own** truncation, not the summary's — they answer different queries
+  const [tradeScope, setTradeScope] = useState<TradeScope | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [sync, setSync] = useState<SyncState | null>(null);
   const [loading, setLoading] = useState(false);
@@ -183,11 +187,13 @@ export default function Insiders() {
             : String(t.reason),
         );
       }
-      const nextTrades = ((await t.value.json()) as { trades: Trade[] }).trades;
+      const tPayload = (await t.value.json()) as { trades: Trade[]; scope: TradeScope };
+      const nextTrades = tPayload.trades;
       const nextSummary =
         s.status === "fulfilled" && s.value.ok ? ((await s.value.json()) as Summary) : null;
       if (seq !== reqRef.current) return; // superseded by a newer filter
       setTrades(nextTrades);
+      setTradeScope(tPayload.scope ?? null);
       setSummary(nextSummary);
     } catch (e) {
       if (seq !== reqRef.current) return;
@@ -195,6 +201,7 @@ export default function Insiders() {
       // ⚠️ Old results must be cleared on failure: otherwise the market-wide table and charts carry on
       // displaying under an "NVDA" filter label, and what the user sees does not match what it says.
       setTrades([]);
+      setTradeScope(null);
       setSummary(null);
     } finally {
       if (seq === reqRef.current) setLoading(false);
@@ -684,7 +691,7 @@ export default function Insiders() {
       {!cacheEmpty && !filterEmpty && (
         <Card
           title="Transaction detail"
-          sub={`Newest ${trades.length} trades${summary?.scope.truncated ? " (the return limit was reached; this is not everything)" : ""}`}
+          sub={`Newest ${trades.length} trades${tradeScope?.truncated ? " (the return limit was reached; this is not everything)" : ""}`}
         >
           <div className="-mx-1 overflow-x-auto">
             <table className="w-full min-w-[980px] text-left text-xs">

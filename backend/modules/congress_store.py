@@ -143,8 +143,14 @@ def save_filing(filing: Any, trades: list[dict],
 
 def query_trades(chamber: Optional[str] = None, ticker: Optional[str] = None,
                  member: Optional[str] = None, since: Optional[str] = None,
-                 tx_type: Optional[str] = None, limit: int = 500) -> list[dict]:
-    """Query cached trades (most recent trade date first)."""
+                 tx_type: Optional[str] = None,
+                 limit: Optional[int] = 500) -> list[dict]:
+    """Query cached trades (most recent trade date first). `limit=None` returns every match.
+
+    ⚠️ `None` exists for the aggregates, which have to describe the whole filtered set rather
+    than its newest page — a page-bounded summary labels itself as covering the period and does
+    not. The detail listings keep a limit; they are a page and say so.
+    """
     _init()
     sql = "SELECT * FROM congress_trade WHERE 1=1"
     args: list[Any] = []
@@ -161,8 +167,10 @@ def query_trades(chamber: Optional[str] = None, ticker: Optional[str] = None,
     elif tx_type == "sell":
         sql += " AND tx_type LIKE 'S%'"
     # tx_date is an ISO string, so lexical order is chronological order; NULLs sort last
-    sql += " ORDER BY tx_date IS NULL, tx_date DESC, id DESC LIMIT ?"
-    args.append(limit)
+    sql += " ORDER BY tx_date IS NULL, tx_date DESC, id DESC"
+    if limit is not None:
+        sql += " LIMIT ?"
+        args.append(limit)
     with db.connect() as conn:
         return [dict(r) for r in conn.execute(sql, args)]
 

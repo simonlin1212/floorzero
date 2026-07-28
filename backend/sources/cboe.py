@@ -81,11 +81,21 @@ class Contract:
     rho: Optional[float]
     last: Optional[float]
 
-    @property
-    def dte(self) -> int:
-        """Days to expiry (by US/Eastern date)."""
+    def dte_from(self, ref: str) -> int:
+        """Days to expiry, counted from `ref` (YYYY-MM-DD) — normally the chain's `asof`.
+
+        ⚠️ The reference is **required, and deliberately so**. This was a zero-argument property
+        that reached for `et_today()`, because a `Contract` holds no reference back to its `Chain`
+        and so had nothing else within reach. Every caller therefore measured against the wall
+        clock, and once the ET date rolled past the session the chain was still carrying, the
+        session's own 0DTE came out at −1: `filter(dte_max=…)` drops negatives, so the largest
+        expiry of the day silently left the sample — measured at 66% of one session's volume —
+        while the unfiltered view kept it, leaving "whole chain" ≠ the sum of its own slices.
+        Passing the reference in is what stops that returning: a caller that forgets one now
+        fails loudly instead of quietly answering for today.
+        """
         return (datetime.strptime(self.expiry, "%Y-%m-%d").date()
-                - datetime.strptime(et_today(), "%Y-%m-%d").date()).days
+                - datetime.strptime(ref, "%Y-%m-%d").date()).days
 
 
 @dataclass(frozen=True)
@@ -102,19 +112,45 @@ class Chain:
     #: and the diff comes out all zeros: it looks like "nothing moved" but there was no new data.
     session: Optional[str] = None
 
+    @property
+    def asof(self) -> str:
+        """The date this chain speaks for — **its own session**, and only failing that, today in ET.
+
+        ⚠️ Everything dated off a chain has to go through here. Cboe keeps serving the last
+        completed session until the next one starts printing, so from ET midnight to the open —
+        and right through the weekend — `session` sits a day or more behind the wall clock. Date
+        the contracts by the wall clock over that window and the session's own 0DTE reads as
+        expired: `0DTE` selects the following expiry instead, and `dte_max` drops the real one.
+
+        ⚠️ The session is validated here rather than trusted. It is sliced out of Cboe's
+        `last_trade_time` on a shape check alone, so a string that looks like a date without being
+        one gets through — and it would then reach `strptime` inside a per-contract loop, outside
+        every guard, taking the page down with a 500. Dating by the clock could never fail that
+        way, so trusting the session unchecked would trade a wrong number for no page at all.
+        Unparseable means the session cannot date it, and today is the honest fallback.
+        """
+        if self.session:
+            try:
+                datetime.strptime(self.session, "%Y-%m-%d")
+                return self.session
+            except (ValueError, TypeError):
+                pass
+        return et_today()
+
     def expiries(self) -> list[str]:
         return sorted({c.expiry for c in self.contracts})
 
     def filter(self, expiry: Optional[str] = None, dte_max: Optional[int] = None,
                traded_only: bool = False) -> list[Contract]:
-        """expiry='0DTE' takes today's expiry; dte_max takes N days out; traded_only keeps today's trades."""
+        """expiry='0DTE' takes the session's own expiry; dte_max takes N days out; traded_only keeps traded contracts."""
         cs = list(self.contracts)
+        asof = self.asof
         if expiry == "0DTE":
-            cs = [c for c in cs if c.expiry == et_today()]
+            cs = [c for c in cs if c.expiry == asof]
         elif expiry:
             cs = [c for c in cs if c.expiry == expiry]
         if dte_max is not None:
-            cs = [c for c in cs if 0 <= c.dte <= dte_max]
+            cs = [c for c in cs if 0 <= c.dte_from(asof) <= dte_max]
         if traded_only:
             cs = [c for c in cs if c.volume > 0]
         return cs

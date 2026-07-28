@@ -395,7 +395,7 @@ def _tool_get_option_chain_summary(ticker: str) -> dict:
     for c in chain.contracts:
         if not c.volume:
             continue
-        d = c.dte
+        d = c.dte_from(chain.asof)
         key = "0-1d" if d <= 1 else "2-7d" if d <= 7 else "8-30d" if d <= 30 else "over 30d"
         buckets[key] += c.volume
     total = sum(buckets.values()) or 1
@@ -471,14 +471,14 @@ def _tool_get_congress_trades(ticker: str | None = None, member: str | None = No
     }
 
 
-#: The fetch limit for the Congress summary. ⚠️ Beyond it, the statistics only describe the newest N trades.
-_CONGRESS_SUMMARY_LIMIT = 5000
-
-
 def _tool_get_congress_summary(since: str | None = None, chamber: str | None = None,
                                top: int = 10) -> dict:
-    rows = congress_store.query_trades(chamber=chamber, since=since,
-                                       limit=_CONGRESS_SUMMARY_LIMIT)
+    # ⚠️ No limit: the statistics have to describe every matching filing. This used to fetch the
+    #    newest 5,000 and warn when it hit the ceiling, but a warning attached to a wrong number
+    #    is still a wrong number, and a model reading the summary carries the number, not the
+    #    caveat. The REST endpoint made the same mistake at 2,000 and understated the filings
+    #    past the 45-day deadline by 27%.
+    rows = congress_store.query_trades(chamber=chamber, since=since, limit=None)
     out = congress_parse.summarize([_row_to_trade(r) for r in rows])
     n = max(1, min(top, 50))
     out["by_ticker"] = out["by_ticker"][:n]
@@ -487,15 +487,9 @@ def _tool_get_congress_summary(since: str | None = None, chamber: str | None = N
         out["summary"] = "Nothing local matches those conditions (possibly not synced yet, or genuinely nothing filed in that period)."
         return out
     hot = ", ".join(f"{t['ticker']} ({t['trades']} trades)" for t in out["by_ticker"][:5])
-    # ⚠️ Hitting the limit has to be said: the REST endpoint carries a truncated flag,
-    # and without saying it here the AI takes "statistics over the newest 5,000" for a conclusion about the whole period.
-    truncated = len(rows) >= _CONGRESS_SUMMARY_LIMIT
     out["scope"] = {"chamber": chamber, "since": since, "sampled": len(rows),
-                    "limit": _CONGRESS_SUMMARY_LIMIT, "truncated": truncated}
-    prefix = (f"⚠️ The {_CONGRESS_SUMMARY_LIMIT}-trade limit was reached, so the statistics below "
-              f"**cover only the newest {len(rows)} trades** and not the whole period. "
-              if truncated else "")
-    out["summary"] = (prefix +
+                    "limit": None, "truncated": False}
+    out["summary"] = (
         f"{out['total_trades']} trades in total ({out['buys']} buys / {out['sells']} sells). "
         f"Most active tickers: {hot}. The median disclosure delay is {out['delay']['median_days']} days, "
         f"with {out['delay']['over_45d_count']} beyond 45 days — "
@@ -604,7 +598,9 @@ def _tool_get_institution_holdings(cusip: str | None = None,
         return {"holdings": [], "count": 0,
                 "summary": "No 13F data has been imported locally yet — which means **nothing has been imported**, "
                            "not that institutions hold nothing. Call POST /api/institution/sync first."}
-    p = period or (st["periods"][0] if st["periods"] else None)
+    # Same table the aggregate reads — `stats` reports periods from the import log, which
+    # can be empty while holdings are present, and an empty period sums every quarter at once.
+    p = period or institution_store.newest_period()
     agg = institution_store.aggregate(top=max(1, min(top, 50)), cusip=cusip,
                                       manager=manager, period=p, kind=kind)
     c = agg["counts"]

@@ -276,6 +276,10 @@ def congress_trades(
     st = congress_store.stats()
     return {
         "trades": out, "count": len(out), "stats": st,
+        # ⚠️ A listing carries **its own** scope. Both tables used to caption themselves from the
+        #    summary's flag, which describes a different query entirely — the insider summary's was
+        #    a hardcoded False, so that caption could never fire no matter how many rows were cut.
+        "scope": {"limit": limit, "returned": len(out), "truncated": len(out) >= limit},
         "disclaimer": {
             "amount": "Amounts are **ranges**, not exact figures — the STOCK Act only requires banded "
                       "disclosure (such as $1,001-$15,000). Any total is an estimate from range midpoints.",
@@ -293,24 +297,34 @@ def congress_summary(
     ticker: Optional[str] = Query(None),
     member: Optional[str] = Query(None),
     tx_type: Optional[str] = Query(None, pattern="^(buy|sell)$"),
-    limit: int = Query(2000, ge=1, le=20000),
+    limit: int = Query(2000, ge=1, le=20000, deprecated=True,
+                       description="⚠️ Ignored. The aggregate covers every matching row; kept so "
+                                   "that callers written against the old signature keep working"),
 ) -> dict:
     """Aggregate by ticker and by member.
 
     ⚠️ The filter parameters must match `/api/congress/trades` **exactly**:
     miss one ticker or tx_type and you get "the detail table shows only NVDA while the cards and charts above are still market-wide" —
     two views on one screen contradicting each other. This class of drift between two views of one dataset has happened four times here.
+
+    ⚠️ The aggregation runs over **every matching row**, and `limit` no longer applies to it —
+    the same rule the insider summary already follows, and for the same reason. Measured here
+    before the change: 3,766 filings aggregated from the newest 2,000 put 721 past the 45-day
+    deadline where the truth was 992, understating the one number this section exists to show by
+    27%. A `truncated` flag does not rescue a wrong headline, and this one was rendered under the
+    detail table rather than beside the cards it applied to.
     """
     rows = congress_store.query_trades(chamber=chamber, since=since, ticker=ticker,
-                                       member=member, tx_type=tx_type, limit=limit)
+                                       member=member, tx_type=tx_type, limit=None)
     trades = [_row_to_trade(r) for r in rows]
     out = congress_parse.summarize(trades)
     out["stats"] = congress_store.stats()
     out["scope"] = {"chamber": chamber or "both chambers", "since": since, "ticker": ticker,
                     "member": member, "tx_type": tx_type, "sampled": len(rows),
-                    "limit": limit,
-                    # Say so when the limit was hit; do not let the user think they are seeing everything
-                    "truncated": len(rows) >= limit}
+                    "limit": None,
+                    # Never partial any more — and saying so is part of the fix, since the old
+                    # flag is what the interface reads to decide whether to caveat the numbers
+                    "truncated": False}
     return out
 
 
@@ -436,6 +450,10 @@ def insider_trades(
     out = [insider_parse.to_dict(_ins_row_to_trade(r)) for r in rows]
     return {
         "trades": out, "count": len(out), "stats": insider_store.stats(),
+        # ⚠️ A listing carries **its own** scope. Both tables used to caption themselves from the
+        #    summary's flag, which describes a different query entirely — the insider summary's was
+        #    a hardcoded False, so that caption could never fire no matter how many rows were cut.
+        "scope": {"limit": limit, "returned": len(out), "truncated": len(out) >= limit},
         "disclaimer": {
             "forms": "This page holds Form 4 only (plus 4/A amendments if asked for). The same SEC dataset also "
                      "carries Form 3 (an initial statement of holdings, not a transaction) and Form 5 (the annual "
@@ -619,11 +637,21 @@ def institution_summary(
     include_amendments: bool = Query(False),
     top: int = Query(20, ge=1, le=100),
 ) -> dict:
-    """Aggregate by ticker and by manager (in SQL over everything, not over the first N rows)."""
+    """Aggregate by ticker and by manager (in SQL over everything, not over the first N rows).
+
+    ⚠️ With no period given this **defaults to the newest**, as the web page and the MCP tool
+    already did. Left unset it aggregated across every imported quarter, and 13F is a quarter-end
+    snapshot: two quarters added together describe no moment that ever existed. Worse, the
+    addition was not even uniform — holders came back deduplicated while shares and value were
+    summed, so NVIDIA read as "4,844 holders between them hold 31.84B shares" (15.53B + 16.30B),
+    with an implied price blended out of two quarters. Only a direct REST caller ever saw it,
+    which on an open-source tool is exactly who to protect.
+    """
+    st = institution_store.stats()
+    period = period or institution_store.newest_period()
     agg = institution_store.aggregate(
         top=top, period=period, cusip=cusip, manager=manager, kind=kind,
         min_value=min_value, include_amendments=include_amendments)
-    st = institution_store.stats()
     return {**agg, "stats": st,
             "scope": {"period": period, "cusip": cusip, "manager": manager,
                       "kind": kind, "min_value": min_value,

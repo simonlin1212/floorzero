@@ -76,7 +76,7 @@ def contract_gex(c: Contract, spot: float,
     return -raw if c.type == "call" else raw
 
 
-def total_gex_at(contracts: Iterable[Contract], hypo_spot: float,
+def total_gex_at(contracts: Iterable[Contract], hypo_spot: float, asof: str,
                  convention: DealerConvention = "long_call_short_put",
                  rate: float = 0.04) -> float:
     """Total GEX on the assumption that the share price becomes hypo_spot.
@@ -89,7 +89,7 @@ def total_gex_at(contracts: Iterable[Contract], hypo_spot: float,
     for c in contracts:
         if not c.open_interest or not c.iv or c.iv <= 0:
             continue
-        g = bs.bs_gamma(hypo_spot, c.strike, bs.years_to_expiry(c.dte), c.iv, rate)
+        g = bs.bs_gamma(hypo_spot, c.strike, bs.years_to_expiry(c.dte_from(asof)), c.iv, rate)
         if not g:
             continue
         raw = g * c.open_interest * CONTRACT_SIZE * hypo_spot * hypo_spot * 0.01
@@ -100,7 +100,7 @@ def total_gex_at(contracts: Iterable[Contract], hypo_spot: float,
     return total
 
 
-def _find_gamma_flip(contracts: list[Contract], spot: float,
+def _find_gamma_flip(contracts: list[Contract], spot: float, asof: str,
                      convention: DealerConvention,
                      search_pct: float = 0.10, steps: int = 60,
                      rate: float = 0.04) -> Optional[float]:
@@ -112,7 +112,7 @@ def _find_gamma_flip(contracts: list[Contract], spot: float,
     """
     lo, hi = spot * (1 - search_pct), spot * (1 + search_pct)
     xs = [lo + (hi - lo) * i / steps for i in range(steps + 1)]
-    vals = [total_gex_at(contracts, x, convention, rate) for x in xs]
+    vals = [total_gex_at(contracts, x, asof, convention, rate) for x in xs]
 
     # ⚠️ The curve can cross zero **more than once** within the search range (common with mixed call/put OI).
     # Sweeping upwards from the low end and "taking the first" reports a crossing far from spot — which is no watershed in market structure.
@@ -129,7 +129,7 @@ def _find_gamma_flip(contracts: list[Contract], spot: float,
     x0, x1, v0, _ = cross
     for _ in range(40):                       # bisect down to about 1e-4
         mid = (x0 + x1) / 2
-        vm = total_gex_at(contracts, mid, convention, rate)
+        vm = total_gex_at(contracts, mid, asof, convention, rate)
         if (v0 > 0 >= vm) or (v0 < 0 <= vm):
             x1 = mid
         else:
@@ -189,7 +189,7 @@ def compute(chain: Chain,
         total_gex=sum(r.net_gex for r in rows),
         by_strike=tuple(rows),
         by_expiry=tuple(sorted(by_exp.items())),
-        gamma_flip=_find_gamma_flip(cs, spot, convention),
+        gamma_flip=_find_gamma_flip(cs, spot, chain.asof, convention),
         call_wall=call_wall,
         put_wall=put_wall,
         convention=convention,
@@ -292,7 +292,7 @@ def compute_exposures(chain: Chain,
     for c in cs:
         if not c.open_interest or not c.iv or c.iv <= 0:
             continue
-        t = bs.years_to_expiry(c.dte)
+        t = bs.years_to_expiry(c.dte_from(chain.asof))
         sign = _dealer_sign(c, convention)
         notional = c.open_interest * CONTRACT_SIZE * spot
         v_agg[c.strike] += sign * bs.bs_vanna(spot, c.strike, t, c.iv, rate) * notional * 0.01

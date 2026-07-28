@@ -314,3 +314,222 @@ def test_an_unsupported_filter_fails_loudly_rather_than_being_ignored(tmp_db):
     # tmp_db keeps this off the real database — an empty store still answers 200
     assert c.get("/api/institution/holdings").status_code == 200
     assert c.get("/api/institution/holdings?cusip=037833100").status_code == 200
+
+
+# ─────────── Rule five: a chain is dated by its own session, not by the wall clock ───────────
+
+def _session_chain():
+    """A chain whose session is 2260-01-05 while "today" has already rolled to 2260-01-06.
+
+    That is the ordinary state of things for most of the day: Cboe's file keeps carrying the
+    last completed session until the next one starts printing, so between ET midnight and the
+    open — and all weekend — `session` is behind the wall clock.
+    """
+    from sources.cboe import Chain, Contract
+    def c(expiry, volume):
+        return Contract(symbol="X", expiry=expiry, type="call", strike=100.0,
+                        bid=1.0, ask=1.2, volume=volume, open_interest=50.0,
+                        iv=0.3, delta=0.5, gamma=0.01, vega=0.1, theta=-0.05,
+                        rho=0.01, last=1.1)
+    return Chain(ticker="X", spot=100.0, timestamp="2260-01-06 03:57:10",
+                 session="2260-01-05",
+                 contracts=(c("2260-01-05", 900.0),      # the session's own 0DTE
+                            c("2260-01-06", 100.0),      # the next expiry
+                            c("2260-02-20", 10.0)))      # far out
+
+
+def test_zero_dte_means_the_sessions_own_expiry_not_the_wall_clocks(monkeypatch):
+    """`0DTE` measured against the wall clock selects **the wrong expiry** once the ET date rolls.
+
+    Measured live on 2026-07-28: session was 2026-07-27, and `?expiry=0DTE` returned the
+    2026-07-28 expiry (−0.745bn of GEX) while the session's actual 0DTE was 2026-07-27
+    (−1.390bn). Not a rounding difference — a different expiry, roughly half the magnitude.
+    """
+    from sources import cboe
+    monkeypatch.setattr(cboe, "et_today", lambda: "2260-01-06")
+    got = {c.expiry for c in _session_chain().filter(expiry="0DTE")}
+    assert got == {"2260-01-05"}, f"0DTE picked {got}, but the session's own expiry is 2260-01-05"
+
+
+def test_a_dte_window_keeps_the_sessions_own_expiry(monkeypatch):
+    """`dte_max` drops anything with a negative dte, so against the wall clock the session's
+    own 0DTE — the single largest bucket of the day — silently leaves the sample.
+
+    Measured live: the flow page defaults to `dte_max=7` and showed 3,169,494 of the session's
+    13,835,063 contracts. The missing 66.2% was one expiry: the session's own 0DTE.
+    """
+    from sources import cboe
+    monkeypatch.setattr(cboe, "et_today", lambda: "2260-01-06")
+    cs = _session_chain().filter(dte_max=7)
+    assert "2260-01-05" in {c.expiry for c in cs}, "the session's own 0DTE was filtered out"
+    assert sum(c.volume for c in cs) == 1000.0, "a dte window must not lose the session's volume"
+
+
+def test_the_whole_chain_equals_the_sum_of_its_dte_slices(monkeypatch):
+    """Rule four in its sharpest form: two views of one dataset must not disagree.
+
+    Unfiltered took every contract while any `dte_max` slice dropped the negative ones, so
+    "whole chain" was not the sum of its own parts and neither number looked wrong on its own.
+    """
+    from sources import cboe
+    monkeypatch.setattr(cboe, "et_today", lambda: "2260-01-06")
+    ch = _session_chain()
+    whole = sum(c.volume for c in ch.filter())
+    sliced = sum(c.volume for c in ch.filter(dte_max=10_000))
+    assert whole == sliced == 1010.0
+
+
+def test_dte_needs_an_explicit_reference_date(monkeypatch):
+    """The defect was structural: `Contract` holds no reference to its `Chain`, so a zero-argument
+    `dte` could only reach for the wall clock. Requiring the reference is what stops it coming back —
+    a call site that forgets one now fails loudly instead of quietly measuring against today.
+    """
+    from sources import cboe
+    monkeypatch.setattr(cboe, "et_today", lambda: "2260-01-06")
+    ch = _session_chain()
+    assert ch.asof == "2260-01-05", "a chain dates itself by its session"
+    c0 = next(c for c in ch.contracts if c.expiry == "2260-01-05")
+    assert c0.dte_from(ch.asof) == 0
+    assert c0.dte_from("2260-01-06") == -1          # against the wall clock, expired
+    assert not hasattr(c0, "dte"), "a zero-argument dte would silently reintroduce the wall clock"
+
+
+def test_a_chain_without_a_session_falls_back_to_the_wall_clock(monkeypatch):
+    """Session is optional in the dataclass, and a fallback that raised would take the page down."""
+    from sources import cboe
+    monkeypatch.setattr(cboe, "et_today", lambda: "2260-01-06")
+    from sources.cboe import Chain
+    assert Chain(ticker="X", spot=1.0, timestamp=None, contracts=()).asof == "2260-01-06"
+
+
+# ─────────── Rule four: a summary describes every matching row, not the newest page ───────────
+
+def _seed_congress(n: int):
+    """n trades whose filing delay alternates 90 / 10 days, the slow half being the older half.
+
+    Ordered that way on purpose: take only the newest page and the late filings are exactly
+    what falls off the end, so "over 45 days" reads far lower than the truth.
+    """
+    from datetime import date, timedelta
+    from modules import congress_store
+    trades = []
+    for i in range(n):
+        slow = i < n // 2                       # older half filed late
+        tx = date(2260, 1, 1) + timedelta(days=i)
+        delay = 90 if slow else 10
+        trades.append(dict(
+            member=f"Member {i % 7}", state_district="IN02", ticker="NVDA",
+            asset_name="NVIDIA", asset_type="ST", asset_type_label="Stock",
+            tx_type="P", tx_type_label="Purchase", tx_date=tx.isoformat(),
+            notification_date=None, filing_date=(tx + timedelta(days=delay)).isoformat(),
+            amount_low=1001.0, amount_high=15000.0, amount_raw="$1,001 - $15,000",
+            owner="self", delay_days=delay, source_url=""))
+    congress_store.save_filing(_filing(), trades)
+
+
+def test_congress_summary_describes_every_matching_row_not_the_newest_page(tmp_db):
+    """The cards read as statistics for the whole period, so they have to be computed over it.
+
+    Measured on the real database before the fix: with 3,766 filings the cards were built from
+    the newest 2,000 and reported 721 filings past the 45-day deadline. The true figure was 992 —
+    **27% of the late filings missing**, on the one metric this section exists to show. The API
+    did return `truncated: true`, but only the detail table rendered it, and a footnote under a
+    table cannot repair a headline number above it.
+    """
+    from fastapi.testclient import TestClient
+    import app
+
+    _seed_congress(400)
+    c = TestClient(app.app)
+    # a limit far below the row count must not change what the statistics describe
+    small = c.get("/api/congress/summary?limit=10").json()
+    whole = c.get("/api/congress/summary?limit=20000").json()
+
+    assert small["delay"]["over_45d_count"] == 200, "the late half has to be counted in full"
+    assert small["delay"]["over_45d_count"] == whole["delay"]["over_45d_count"]
+    assert small["delay"]["median_days"] == whole["delay"]["median_days"]
+    assert small["total_trades"] == whole["total_trades"] == 400, \
+        "a count of trades must be the count, never the row limit"
+
+
+def test_congress_summary_scope_reports_the_aggregate_as_complete(tmp_db):
+    """`truncated` meant "these numbers are partial". Now that they never are, it has to say so —
+    a stale true left there would be a second wrong answer in place of the first."""
+    from fastapi.testclient import TestClient
+    import app
+
+    _seed_congress(400)
+    body = TestClient(app.app).get("/api/congress/summary?limit=10").json()
+    assert body["scope"]["sampled"] == 400
+    assert body["scope"]["truncated"] is False
+
+
+def test_a_detail_listing_reports_its_own_truncation_not_the_summarys(tmp_db):
+    """The two tables captioned themselves from `summary.scope.truncated` — a flag describing a
+    different query. Insider's was hardcoded false, so that caption could never appear however
+    many rows were cut; and making the congress aggregate whole would have silently retired the
+    congress one the same way. A listing has to carry its own scope.
+    """
+    from fastapi.testclient import TestClient
+    import app
+
+    _seed_congress(400)
+    c = TestClient(app.app)
+    cut = c.get("/api/congress/trades?limit=50").json()
+    assert cut["count"] == 50
+    assert cut["scope"]["truncated"] is True, "a capped listing has to say it was capped"
+    assert cut["scope"]["limit"] == 50
+
+    whole = c.get("/api/congress/trades?limit=2000").json()
+    assert whole["scope"]["truncated"] is False
+
+    # the insider listing carries the same contract, on an empty store as much as a full one
+    assert c.get("/api/insider/trades?limit=50").json()["scope"]["truncated"] is False
+
+
+def test_a_13f_aggregate_never_sums_two_reporting_periods(tmp_db):
+    """13F is a quarter-end snapshot, so two quarters added together describe no moment that existed.
+
+    Measured on the real database: with two periods imported, `/api/institution/summary` with no
+    period returned NVIDIA at 31.84B shares — 15.53B and 16.30B added — while deduplicating the
+    holder count, so it read as "4,844 holders between them hold 31.84B shares". The web page and
+    the MCP tool both default to the newest period and never saw it; only a direct REST caller did,
+    and on an open-source tool that caller is the point.
+    """
+    from fastapi.testclient import TestClient
+    from modules import institution_store
+    import app
+
+    def hold(period, shares, value):
+        return dict(accession=f"a-{period}", holding_key=f"k-{period}", manager="M",
+                    manager_cik="1", period=period, filing_date=period, is_amendment=0,
+                    cusip="67066G104", issuer="NVIDIA", title_of_class="COM", kind="share",
+                    value=value, shares=shares, shares_type="SH", discretion="SOLE",
+                    voting_sole=shares, voting_shared=0.0, voting_none=0.0, source_url="")
+
+    institution_store.save_holdings([hold("2260-03-31", 100.0, 1000.0),
+                                     hold("2259-12-31", 200.0, 2000.0)])
+
+    c = TestClient(app.app)
+    bare = c.get("/api/institution/summary").json()
+    newest = c.get("/api/institution/summary?period=2260-03-31").json()
+    assert bare["scope"]["period"] == "2260-03-31", "no period given must mean the newest, not all of them"
+    assert bare["counts"]["val"] == newest["counts"]["val"] == 1000.0
+    assert bare["by_issuer"][0]["shares"] == 100.0, "two quarters must never be added together"
+
+
+def test_a_malformed_session_falls_back_rather_than_taking_the_page_down(monkeypatch):
+    """Dating the chain by its session introduced a failure path that dating it by the clock
+    never had: `session` is sliced out of Cboe's `last_trade_time` on a shape check alone, so a
+    string that looks like a date but is not one reaches `strptime` — and it is evaluated inside
+    every per-contract loop, well outside the guards. Rule six, and the same shape as `lag_days`.
+    """
+    from sources import cboe
+    from sources.cboe import Chain
+    monkeypatch.setattr(cboe, "et_today", lambda: "2260-01-06")
+    for bad in ("2260-99-99", "not-a-date", "", None):
+        ch = Chain(ticker="X", spot=1.0, timestamp=None, contracts=(), session=bad)
+        assert ch.asof == "2260-01-06", f"{bad!r} should have fallen back to the wall clock"
+    # a well-formed session still wins
+    assert Chain(ticker="X", spot=1.0, timestamp=None, contracts=(),
+                 session="2260-01-05").asof == "2260-01-05"

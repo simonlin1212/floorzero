@@ -182,7 +182,7 @@ def parse(chain: Chain, dte_max: Optional[int] = None,
                           traded_only=traded_only):
         rows.append(FlowRow(
             symbol=chain.ticker, expiry=c.expiry, type=c.type, strike=c.strike,
-            dte=c.dte, volume=c.volume, open_interest=c.open_interest,
+            dte=c.dte_from(chain.asof), volume=c.volume, open_interest=c.open_interest,
             mid=_mid(c), bid_zero=not (c.bid and c.bid > 0),
             last=c.last, iv=c.iv, delta=c.delta, gamma=c.gamma))
     return rows

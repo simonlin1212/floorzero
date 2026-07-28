@@ -676,7 +676,18 @@ export default function Market() {
               </table>
               {cot.rows.length > 30 && (
                 <div className="mt-2 text-[10px] text-dim">
-                  The table lists the last 30 reports; the chart shows all {cot.rows.length}
+                  The table lists the last 30 reports; the chart shows{" "}
+                  {cot.scope?.truncated ? "the newest" : "all"} {cot.rows.length}
+                </div>
+              )}
+              {/* ⚠️ The response has carried this flag from the start and nothing rendered it, while
+                  the line above said "the chart shows all N". It is not a rare edge either: 53 of the
+                  90 contracts hold more than the 160 fetched, and the longest run to 1,050 weekly
+                  reports — so "all 160" was standing in for twenty years of history. */}
+              {cot.scope?.truncated && (
+                <div className="mt-2 text-[10px] text-brand">
+                  Only the newest {cot.scope.limit} reports were fetched, so this contract's history
+                  runs back further than the chart shows.
                 </div>
               )}
             </div>

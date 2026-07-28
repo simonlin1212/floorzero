@@ -227,6 +227,21 @@ def known_periods() -> list[str]:
             "SELECT period FROM f13_batch ORDER BY period DESC")]
 
 
+def newest_period() -> Optional[str]:
+    """The newest reporting period **that has holdings**, or None on an empty store.
+
+    ⚠️ Deliberately reads `f13_holding` rather than `f13_batch`, which is what `known_periods`
+    and `stats` report from. The batch table is a record of imports, and holdings can outlive or
+    arrive without one; asked for a default period, a batch-derived answer can come back empty
+    while rows sit right there — and an empty default is what puts the aggregate back to summing
+    every quarter at once. The default has to come from the same table the aggregate reads.
+    """
+    _init()
+    with db.connect() as conn:
+        r = conn.execute("SELECT MAX(period) FROM f13_holding").fetchone()
+    return r[0] if r and r[0] else None
+
+
 def _where(period: Optional[str] = None, cusip: Optional[str] = None,
            manager: Optional[str] = None, kind: Optional[str] = "share",
            min_value: Optional[float] = None,
