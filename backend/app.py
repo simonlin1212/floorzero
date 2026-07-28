@@ -875,6 +875,12 @@ def market_cot_markets(
             "active_only": active_only, "notes": market_parse.NOTES}
 
 
+#: Ceiling on how far the COT endpoint will widen its request while chasing `limit`
+#: parseable rows. Without it, a source that suddenly returns nothing parseable would
+#: have this loop asking for larger and larger pages until the request timed out.
+_COT_MAX_FETCH = 5000
+
+
 @app.get("/api/market/cot")
 def market_cot(
     market: Optional[str] = Query(None, description="Market name keyword, e.g. S&P 500 / TREASURY"),
@@ -891,22 +897,34 @@ def market_cot(
         raise HTTPException(status_code=404, detail=str(e)) from e
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
-    # ⚠️ Truncation here is decided by **whether upstream filled the page**, never by counting
-    #    what survived parsing. Two rounds of review were spent learning why:
-    #      · counting raw rows with `>=` called an exact fit truncated;
-    #      · counting *parsed* rows calls a full page complete, because `parse_cot` drops any
-    #        record without a market name — one bad record inside `limit + 1` leaves exactly
-    #        `limit` good ones and the answer reads "that is everything" while CFTC still holds
-    #        hundreds more.
+    # ⚠️ Two things have to be true at once here, and three review rounds went into separating
+    #    them: the page must come back **full** even when upstream sends records we cannot read,
+    #    and `truncated` must mean "the source has more", never "parsing came up short".
+    #
     #    The one-extra-row trick transfers cleanly to the SQLite listings, where every row that
-    #    comes back is a row. It does not transfer to a source that discards its own records, so
-    #    the two signals are kept apart: `raw` answers "was there more", `rows` answers "what
-    #    could we read".
-    upstream_full = len(raw) > limit          # asked for limit+1 and got them all
-    rows = [market_parse.cot_to_dict(c)
-            for c in (market_parse.parse_cot(r) for r in raw) if c]
-    dropped = len(raw) - len(rows)
-    truncated = upstream_full
+    #    comes back is a row. It does not transfer to a source that discards its own records:
+    #    `parse_cot` drops anything without a market name, so a page fetched at `limit + 1` can
+    #    yield fewer than `limit` usable rows and — counted naively — also claim to be complete.
+    #    The frontend asks for a fixed 160 reports and cannot paginate, so a short page is not a
+    #    cosmetic miscount; it is history quietly missing from the chart.
+    #
+    #    So: widen the request until `limit` parseable rows are in hand or the source runs dry.
+    dropped, rows, want = 0, [], limit + 1
+    while True:
+        parsed = [market_parse.cot_to_dict(c)
+                  for c in (market_parse.parse_cot(r) for r in raw) if c]
+        dropped = len(raw) - len(parsed)
+        # Enough to answer, or upstream gave less than asked → it has nothing further to give
+        if len(parsed) > limit or len(raw) < want or want >= _COT_MAX_FETCH:
+            rows = parsed
+            break
+        want = min(want + max(dropped, 1) + limit, _COT_MAX_FETCH)
+        try:
+            raw = macro_src.cot_rows(limit=want, market_contains=market, exact=exact)
+        except (macro_src.DataNotAvailable, RuntimeError):
+            rows = parsed          # keep what we already have rather than failing the request
+            break
+    truncated = len(rows) > limit
     rows = rows[:limit]
     return {"rows": rows, "count": len(rows), "notes": market_parse.NOTES,
             "markets": sorted({r["market"] for r in rows}),

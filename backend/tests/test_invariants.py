@@ -736,3 +736,48 @@ def test_cot_truncation_reflects_upstream_not_what_survived_parsing(monkeypatch)
     assert b["count"] == 2
     assert b["scope"]["unparseable_dropped"] == 3
     assert b["scope"]["truncated"] is False
+
+
+def test_cot_fills_the_page_even_when_upstream_sends_records_it_cannot_read(monkeypatch):
+    """A short page is not a cosmetic miscount here — the chart asks for a fixed 160 reports and
+    cannot paginate, so every dropped record is a week of history silently missing from it.
+
+    The endpoint widens its request until `limit` parseable rows are in hand or the source runs
+    dry, and counts how many calls that took so the loop cannot quietly become a fetch storm.
+    """
+    from fastapi.testclient import TestClient
+    from sources import macro as macro_src
+    import app
+
+    good = {"market_and_exchange_names": "S&P 500 - CME", "report_date_as_yyyy_mm_dd": "2260-01-07",
+            "lev_money_positions_long": "1", "lev_money_positions_short": "2",
+            "asset_mgr_positions_long": "3", "asset_mgr_positions_short": "4",
+            "dealer_positions_long": "5", "dealer_positions_short": "6",
+            "open_interest_all": "7"}
+    junk = dict(good, market_and_exchange_names="")
+
+    calls = []
+    def upstream(rows):
+        def f(limit, **kw):
+            calls.append(limit)
+            return rows[:limit]
+        return f
+
+    c = TestClient(app.app)
+
+    # Junk sitting in front of plenty of good records: the page still comes back full.
+    for n_junk in (1, 2, 8):
+        calls.clear()
+        monkeypatch.setattr(macro_src, "cot_rows", upstream([junk]*n_junk + [good]*200))
+        b = c.get("/api/market/cot?limit=5").json()
+        assert b["count"] == 5, f"{n_junk} unreadable records shortened the page to {b['count']}"
+        assert b["scope"]["truncated"] is True
+        assert len(calls) <= 4, f"widening took {len(calls)} calls — that is a fetch storm"
+
+    # A source that holds nothing readable must end, not widen for ever.
+    calls.clear()
+    monkeypatch.setattr(macro_src, "cot_rows", upstream([junk]*40))
+    b = c.get("/api/market/cot?limit=5").json()
+    assert b["count"] == 0
+    assert b["scope"]["truncated"] is False
+    assert b["scope"]["unparseable_dropped"] > 0, "silence about unreadable records reads as no data"
