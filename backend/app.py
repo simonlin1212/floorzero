@@ -564,8 +564,26 @@ def institution_holdings(
                                                  "a 13F amendment must restate the filing whole, so counting it "
                                                  "alongside the original double-counts"),
     limit: int = Query(200, ge=1, le=2000),
+    ticker: Optional[str] = Query(None,
+                                  description="⛔ Not supported — 13F keys on CUSIP and the SEC "
+                                              "publishes no ticker→CUSIP mapping. Passing one is an "
+                                              "error rather than a silent no-op; search by issuer name"),
 ) -> dict:
-    """Holding detail (from the local cache, largest value first)."""
+    """Holding detail (from the local cache, largest value first).
+
+    ⚠️ `ticker` exists only so that passing it **fails loudly**. FastAPI ignores query
+    parameters it does not declare, so `?ticker=NVDA` used to return HTTP 200 with the
+    whole unfiltered table — the caller believes they filtered and they did not, which is
+    the silent-wrong-answer this project exists to avoid. The stock page already tells the
+    user a holding cannot be located from a symbol; the API has to say the same thing.
+    """
+    if ticker:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"13F cannot be filtered by ticker ({ticker!r}). It keys on CUSIP, and the SEC "
+                    f"publishes no ticker→CUSIP mapping — matching issuer names was measured hitting "
+                    f"only 42.8%. Use `cusip`, or search `manager`/issuer name instead. This is a "
+                    f"mapping we cannot do, not an absence of holdings."))
     rows = institution_store.query(
         period=period, cusip=cusip, manager=manager, kind=kind,
         min_value=min_value, include_amendments=include_amendments, limit=limit)

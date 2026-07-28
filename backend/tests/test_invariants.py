@@ -292,3 +292,25 @@ def _filing():
                   state_district="IN02", filing_type="P",
                   filing_date=date(2260, 1, 5), year="2260", doc_id="1",
                   detail_url="")
+
+
+def test_an_unsupported_filter_fails_loudly_rather_than_being_ignored(tmp_db):
+    """FastAPI ignores query parameters it does not declare, so `?ticker=NVDA` on the 13F
+    endpoint returned HTTP 200 with the whole unfiltered table — the caller believes they
+    filtered and they did not.
+
+    That is the silent wrong answer this project exists to avoid, and it is worse here than
+    elsewhere: the stock page already tells the user in prose that a holding cannot be located
+    from a symbol, while the API quietly accepted one.
+    """
+    from fastapi.testclient import TestClient
+    import app
+
+    c = TestClient(app.app)
+    bad = c.get("/api/institution/holdings?ticker=NVDA")
+    assert bad.status_code == 400, "an unsupported filter must not be silently ignored"
+    assert "cusip" in bad.json()["detail"].lower(), "the error has to say what to use instead"
+    # the supported filters must keep working
+    # tmp_db keeps this off the real database — an empty store still answers 200
+    assert c.get("/api/institution/holdings").status_code == 200
+    assert c.get("/api/institution/holdings?cusip=037833100").status_code == 200

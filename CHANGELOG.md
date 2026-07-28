@@ -52,7 +52,7 @@ First complete version. Ten sections, seventeen MCP tools, ten public data sourc
 
 ### Tests
 
-51 tests, no network. They pin the invariants that review kept finding: unavailable
+52 tests, no network. They pin the invariants that review kept finding: unavailable
 never rendering as zero (in each shape it took), reason codes surviving to the caller,
 history keyed by trading session, IV history bounded by the requested session, expired
 contracts distinguished from closings, aggregate rows never summed with per-firm rows,

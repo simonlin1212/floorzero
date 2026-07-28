@@ -195,7 +195,7 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-51 tests, none of which touch the network. What they cover is the arithmetic and the
+52 tests, none of which touch the network. What they cover is the arithmetic and the
 semantics — the invariants that adversarial review kept catching in the first place:
 
 - a value that cannot be computed never renders as zero, in each of the shapes that
