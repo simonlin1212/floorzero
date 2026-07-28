@@ -268,8 +268,11 @@ def congress_trades(
     ⚠️ This reads the **local cache** and does not fetch live — the House files 313 PDFs in a year,
     and fetching them takes 100+ seconds. Call `/api/congress/sync` first to fill it.
     """
+    # +1 row: see the note on `scope` — the extra row is what tells truncation from an exact fit
     rows = congress_store.query_trades(chamber=chamber, ticker=ticker, member=member,
-                                       since=since, tx_type=tx_type, limit=limit)
+                                       since=since, tx_type=tx_type, limit=limit + 1)
+    truncated = len(rows) > limit
+    rows = rows[:limit]
     # ⚠️ Must go through **the same derivation path** as /summary (_row_to_trade → to_dict).
     # Returning raw DB rows loses derived fields such as date_anomaly —
     # so the summary card says "2 dates look wrong" while the detail table cheerfully shows -320 days.
@@ -281,7 +284,11 @@ def congress_trades(
         # ⚠️ A listing carries **its own** scope. Both tables used to caption themselves from the
         #    summary's flag, which describes a different query entirely — the insider summary's was
         #    a hardcoded False, so that caption could never fire no matter how many rows were cut.
-        "scope": {"limit": limit, "returned": len(out), "truncated": len(out) >= limit},
+        # ⚠️ Truncation is decided by asking for **one row more** than requested. Testing
+        #    `len(out) >= limit` calls a listing truncated whenever the match count lands
+        #    exactly on the limit, and the interface then tells the user rows were omitted
+        #    when none were — a false caveat is its own kind of wrong answer.
+        "scope": {"limit": limit, "returned": len(out), "truncated": truncated},
         "disclaimer": {
             "amount": "Amounts are **ranges**, not exact figures — the STOCK Act only requires banded "
                       "disclosure (such as $1,001-$15,000). Any total is an estimate from range midpoints.",
@@ -445,17 +452,24 @@ def insider_trades(
     limit: int = Query(300, ge=1, le=2000),
 ) -> dict:
     """Insider trade detail (from the local cache, most recent trade date first)."""
+    # +1 row: see the note on `scope` — the extra row is what tells truncation from an exact fit
     rows = insider_store.query(
         ticker=ticker, owner=owner, group=None if group == "all" else group,
         direction=direction, since=since, min_value=min_value, role=role,
-        plan=plan, include_amendments=include_amendments, limit=limit)
+        plan=plan, include_amendments=include_amendments, limit=limit + 1)
+    truncated = len(rows) > limit
+    rows = rows[:limit]
     out = [insider_parse.to_dict(_ins_row_to_trade(r)) for r in rows]
     return {
         "trades": out, "count": len(out), "stats": insider_store.stats(),
         # ⚠️ A listing carries **its own** scope. Both tables used to caption themselves from the
         #    summary's flag, which describes a different query entirely — the insider summary's was
         #    a hardcoded False, so that caption could never fire no matter how many rows were cut.
-        "scope": {"limit": limit, "returned": len(out), "truncated": len(out) >= limit},
+        # ⚠️ Truncation is decided by asking for **one row more** than requested. Testing
+        #    `len(out) >= limit` calls a listing truncated whenever the match count lands
+        #    exactly on the limit, and the interface then tells the user rows were omitted
+        #    when none were — a false caveat is its own kind of wrong answer.
+        "scope": {"limit": limit, "returned": len(out), "truncated": truncated},
         "disclaimer": {
             "forms": "This page holds Form 4 only (plus 4/A amendments if asked for). The same SEC dataset also "
                      "carries Form 3 (an initial statement of holdings, not a transaction) and Form 5 (the annual "
@@ -604,6 +618,11 @@ def institution_holdings(
                     f"publishes no ticker→CUSIP mapping — matching issuer names was measured hitting "
                     f"only 42.8%. Use `cusip`, or search `manager`/issuer name instead. This is a "
                     f"mapping we cannot do, not an absence of holdings."))
+    # ⚠️ Same default as `/api/institution/summary`, and it has to stay that way. These two are
+    #    read as a pair — the aggregate above, this detail below. When only the summary defaulted
+    #    to the newest quarter, calling both with identical parameters put a 2026-03-31 aggregate
+    #    on top of 2025-12-31 rows, and nothing on screen said the two disagreed.
+    period = period or institution_store.newest_period()
     rows = institution_store.query(
         period=period, cusip=cusip, manager=manager, kind=kind,
         min_value=min_value, include_amendments=include_amendments, limit=limit)
@@ -613,6 +632,7 @@ def institution_holdings(
         r["kind_label"] = institution_parse.POSITION_KINDS.get(r["kind"], r["kind"])
     return {
         "holdings": rows, "count": len(rows),
+        "period": period,
         "stats": institution_store.stats(),
         "disclaimer": {
             "coverage": "13F holds **long positions in 13(f) securities as of quarter-end** only. "
@@ -866,17 +886,22 @@ def market_cot(
     ⚠️ It runs **three days behind**: positions as of Tuesday's close, published on Friday.
     """
     try:
-        raw = macro_src.cot_rows(limit=limit, market_contains=market, exact=exact)
+        raw = macro_src.cot_rows(limit=limit + 1, market_contains=market, exact=exact)
     except macro_src.DataNotAvailable as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
+    # ⚠️ Same one-extra-row trick as the congress and insider listings: `len(raw) >= limit`
+    #    calls the set truncated whenever the match count lands exactly on the limit, and the
+    #    chart then tells the user its history was cut when it was not.
+    truncated = len(raw) > limit
+    raw = raw[:limit]
     rows = [market_parse.cot_to_dict(c)
             for c in (market_parse.parse_cot(r) for r in raw) if c]
     return {"rows": rows, "count": len(rows), "notes": market_parse.NOTES,
             "markets": sorted({r["market"] for r in rows}),
             "scope": {"market": market, "exact": exact, "limit": limit,
-                      "truncated": len(raw) >= limit}}
+                      "truncated": truncated}}
 
 
 # ═══════════════════════ Options flow (tier C: Cboe delayed, local only) ═══════════════════════

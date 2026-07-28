@@ -639,3 +639,49 @@ def test_a_filing_dated_before_its_own_trade_does_not_lead_the_listing(tmp_db):
     assert len(rows) == 3, "the bad row must still be listed, not filtered away"
     assert rows[0]["tx_date"] == "2260-03-01", "the newest sound row leads"
     assert rows[-1]["tx_date"] == "2299-12-26", "the impossible one goes last"
+
+
+def test_the_13f_pair_defaults_to_the_same_quarter(tmp_db):
+    """`/institution/summary` and `/institution/holdings` are read as a pair — aggregate above,
+    detail below. Defaulting them differently put a 2026-03-31 aggregate over 2025-12-31 rows,
+    with nothing on screen saying the two described different quarters.
+    """
+    from fastapi.testclient import TestClient
+    from modules import institution_store
+    import app
+
+    def hold(period, shares, value, key):
+        return dict(accession=f"a-{key}", holding_key=f"k-{key}", manager="M", manager_cik="1",
+                    period=period, filing_date=period, is_amendment=0, cusip="67066G104",
+                    issuer="NVIDIA", title_of_class="COM", kind="share", value=value,
+                    shares=shares, shares_type="SH", discretion="SOLE", voting_sole=shares,
+                    voting_shared=0.0, voting_none=0.0, source_url="")
+
+    institution_store.save_holdings([hold("2260-03-31", 100.0, 1000.0, "new"),
+                                     hold("2259-12-31", 200.0, 2000.0, "old")])
+    c = TestClient(app.app)
+    s = c.get("/api/institution/summary").json()
+    h = c.get("/api/institution/holdings").json()
+    assert s["scope"]["period"] == "2260-03-31"
+    assert h["period"] == "2260-03-31", "the detail must default to the same quarter as the summary"
+    assert {r["period"] for r in h["holdings"]} == {"2260-03-31"}
+
+
+def test_a_listing_that_exactly_fills_the_limit_is_not_called_truncated(tmp_db):
+    """`len(rows) >= limit` calls a listing truncated whenever the match count lands exactly on
+    the limit. The interface then warns that rows were omitted when none were — and a caveat
+    that is not true costs the same trust as a wrong number.
+
+    Fixed by asking for one row more than requested and deciding from the extra row.
+    """
+    from fastapi.testclient import TestClient
+    from datetime import date, timedelta
+    import app
+
+    _seed_congress(10)
+    c = TestClient(app.app)
+    assert c.get("/api/congress/trades?limit=9").json()["scope"]["truncated"] is True
+    exact = c.get("/api/congress/trades?limit=10").json()["scope"]
+    assert exact["returned"] == 10
+    assert exact["truncated"] is False, "ten rows out of ten is a complete answer"
+    assert c.get("/api/congress/trades?limit=11").json()["scope"]["truncated"] is False

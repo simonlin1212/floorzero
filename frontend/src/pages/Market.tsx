@@ -202,7 +202,7 @@ export default function Market() {
       },
       tooltip: {
         trigger: "axis",
-        backgroundColor: "#1a1815",
+        backgroundColor: "#f2efe9",
         borderColor: "#e2ddd4",
         textStyle: { color: "#1a1815", fontSize: 11 },
         formatter: (ps: { axisValue: string; seriesName: string; data: number | null }[]) => {
@@ -266,7 +266,7 @@ export default function Market() {
       grid: { left: 48, right: 18, top: 22, bottom: 30 },
       tooltip: {
         trigger: "axis",
-        backgroundColor: "#1a1815",
+        backgroundColor: "#f2efe9",
         borderColor: "#e2ddd4",
         textStyle: { color: "#1a1815", fontSize: 11 },
         formatter: (ps: { axisValue: string; data: number | null }[]) =>
@@ -315,7 +315,7 @@ export default function Market() {
       },
       tooltip: {
         trigger: "axis",
-        backgroundColor: "#1a1815",
+        backgroundColor: "#f2efe9",
         borderColor: "#e2ddd4",
         textStyle: { color: "#1a1815", fontSize: 11 },
         formatter: (ps: { axisValue: string; seriesName: string; data: number | null }[]) =>

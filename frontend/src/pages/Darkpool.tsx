@@ -178,7 +178,7 @@ export default function Darkpool() {
       legend: { top: 0, textStyle: { color: "#6b665e", fontSize: 11 } },
       tooltip: {
         trigger: "axis",
-        backgroundColor: "#1a1815",
+        backgroundColor: "#f2efe9",
         borderColor: "#e2ddd4",
         textStyle: { color: "#1a1815", fontSize: 11 },
         formatter: (ps: { axisValue: string; seriesName: string; data: number }[]) =>

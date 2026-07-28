@@ -261,7 +261,7 @@ export default function Flow() {
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "shadow" },
-        backgroundColor: "#1a1815",
+        backgroundColor: "#f2efe9",
         borderColor: "#e2ddd4",
         textStyle: { color: "#1a1815", fontSize: 11 },
         formatter: (ps: { axisValue: string; seriesName: string; data: number }[]) =>
@@ -309,7 +309,7 @@ export default function Flow() {
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "shadow" },
-        backgroundColor: "#1a1815",
+        backgroundColor: "#f2efe9",
         borderColor: "#e2ddd4",
         textStyle: { color: "#1a1815", fontSize: 11 },
         formatter: (ps: { axisValue: string; seriesName: string; data: number }[]) =>
