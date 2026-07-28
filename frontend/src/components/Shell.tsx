@@ -77,6 +77,19 @@ export default function Shell({ children }: { children: React.ReactNode }) {
             </nav>
             <div className="mt-6 border-t border-line pt-4 text-[10px] leading-relaxed text-dim">
               Self-hosted · your data stays on your own machine
+              {/* ⚠️ `rel="noreferrer"` as much as `noopener`: this runs on localhost, and the
+                  referrer would otherwise hand the destination the local URL. */}
+              <div className="mt-2">
+                Built by Simon ·{" "}
+                <a
+                  href="https://x.com/linsizhen"
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="font-mono text-dim underline decoration-line underline-offset-2 transition hover:text-brand hover:decoration-brand"
+                >
+                  @linsizhen
+                </a>
+              </div>
             </div>
           </div>
         </aside>
