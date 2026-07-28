@@ -533,3 +533,41 @@ def test_a_malformed_session_falls_back_rather_than_taking_the_page_down(monkeyp
     # a well-formed session still wins
     assert Chain(ticker="X", spot=1.0, timestamp=None, contracts=(),
                  session="2260-01-05").asof == "2260-01-05"
+
+
+def test_every_genuinely_absent_exception_is_caught_as_absent(monkeypatch):
+    """There is one `DataNotAvailable` per source package and all of them subclass `RuntimeError`,
+    so one left out of `exec_tool` does not go uncaught — it falls through to the network branch
+    and is reported as a fetch failure. A caller told that retries; a model told that says the
+    fetch broke, when the Treasury simply never published that year. Rule one, running backwards.
+
+    This asserts against the classes the packages actually export rather than a list written out
+    here, so adding a source that defines its own cannot slip through unnoticed.
+    """
+    import tools
+    from sources import cboe, congress, edgar
+
+    for exc in (cboe.DataNotAvailable, edgar.DataNotAvailable, congress.DataNotAvailable):
+        monkeypatch.setitem(tools._IMPL, "_probe",
+                            lambda **_: (_ for _ in ()).throw(exc("not published for that year")))
+        out = tools.exec_tool("_probe", {})
+        assert out["error"].startswith("No data:"), f"{exc.__module__}.{exc.__name__} → {out['error']}"
+
+    # and a real failure still has to read as one
+    monkeypatch.setitem(tools._IMPL, "_probe",
+                        lambda **_: (_ for _ in ()).throw(RuntimeError("connection reset")))
+    assert tools.exec_tool("_probe", {})["error"].startswith("Fetch failed:")
+
+
+def test_the_app_imports_and_serves_every_declared_route():
+    """Cheap, and it is the first thing a user hits. Worth pinning explicitly: most of the
+    TestClient coverage sits inside individual section tests, so a broken import in `app.py`
+    can leave the suite green while nothing serves at all.
+    """
+    import app
+    paths = {r.path for r in app.app.routes if getattr(r, "path", "").startswith("/api")}
+    assert "/api/health" in paths
+    for p in ("/api/gex/{ticker}", "/api/flow/{ticker}", "/api/scanner", "/api/shorts/ftd",
+              "/api/darkpool/{ticker}", "/api/stock/{ticker}", "/api/congress/trades",
+              "/api/insider/trades", "/api/institution/holdings", "/api/market/curve"):
+        assert p in paths, p

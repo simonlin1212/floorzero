@@ -11,6 +11,10 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from sources import cboe
+# ⚠️ Imported for exec_tool's exception handling: each source package defines its own
+#    `DataNotAvailable`, and one left out gets reported as a fetch failure.
+from sources import edgar as edgar_src
+from sources import congress as congress_src
 from modules import greeks
 from modules import congress as congress_parse
 from modules import congress_store
@@ -1120,13 +1124,22 @@ _IMPL: dict[str, Callable[..., dict]] = {
 
 def exec_tool(name: str, args: dict[str, Any]) -> dict:
     """The single execution entry point. Exceptions become {"error": ...} rather than being raised —
-    an MCP or function-calling caller needs a structured error, not a dropped connection."""
+    an MCP or function-calling caller needs a structured error, not a dropped connection.
+
+    ⚠️ **Every** "genuinely absent" class has to be listed here, and listed first. There is one per
+    source package rather than one shared class, and all of them subclass `RuntimeError`, so any that
+    is left out does not go uncaught — it falls through to the network branch and is reported as
+    "Fetch failed". A caller told that retries, and a model told that says the fetch broke, when in
+    fact the Treasury simply never published that year. That is rule one running backwards: the thing
+    that does not exist, dressed up as the thing we could not reach.
+    """
     fn = _IMPL.get(name)
     if fn is None:
         return {"error": f"Unknown tool: {name}"}
     try:
         return fn(**args)
-    except cboe.DataNotAvailable as e:
+    except (cboe.DataNotAvailable, edgar_src.DataNotAvailable,
+            congress_src.DataNotAvailable) as e:
         return {"error": f"No data: {e}"}
     except (ValueError, TypeError) as e:
         return {"error": f"Bad parameter: {e}"}

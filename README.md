@@ -20,6 +20,7 @@
   <a href="#why-you-run-it-yourself">Why you run it yourself</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#the-ten-sections">The ten sections</a> ·
+  <a href="#roadmap">Roadmap</a> ·
   <a href="#data-sources-and-their-licences">Data sources</a> ·
   <a href="#what-it-refuses-to-do">What it refuses to do</a> ·
   <a href="#mcp">MCP</a> ·
@@ -115,6 +116,29 @@ Python 3.9 or newer (`zoneinfo`); a startup guard checks this and says so plainl
 | **Institutions** | 13F holdings and quarter-over-quarter changes | SEC EDGAR |
 | **Shorts** | SEC fails-to-deliver; FINRA off-exchange volume optional | SEC / FINRA |
 | **Market** | Treasury yield curve with two inversion definitions, CFTC positioning | Treasury / CFTC |
+
+## Roadmap
+
+**This is 0.1.0 — a usable start, not a finished product.** Ten sections work today; the
+version number will say how far along it is. Each release that adds a section moves the
+minor version by one, and **1.0 is the complete one**.
+
+| Version | Adds | Why it is not here yet |
+|---|---|---|
+| **0.1** ✅ | Stock · Flow · GEX · Scanner · Darkpool · Congress · Insiders · Institutions · Shorts · Macro | — |
+| 0.2 | **Volatility** — IV term structure, skew, variance risk premium | Needs the local IV history the scanner is still accruing; 60 sessions before rank means anything |
+| 0.3 | **Earnings and fundamentals** — statements, calendar, surprise history | EDGAR XBRL is a separate shape from the filing index already wired up |
+| 0.4 | **Sector and market tide** — net flow by sector, breadth | Cheap per symbol, expensive across the market; needs the scanner's batch pass first |
+| 0.5 | **Seasonality** — monthly and annual, per symbol | Wants years of local history rather than a fetch |
+| 0.6 | **Prediction markets** — Polymarket and Kalshi as a macro overlay | Working elsewhere; needs porting, not inventing |
+| … | | |
+| **1.0** | Complete | |
+
+Anything not on this list is not planned. That is deliberate, and it is the same promise as
+the reason codes: **be clear about what this does not do.**
+
+⚠️ Dates are absent on purpose. This is one person's side project, and a roadmap with dates
+on it would be the first thing in this README to become untrue.
 
 ## Data sources and their licences
 

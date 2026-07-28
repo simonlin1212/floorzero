@@ -66,6 +66,21 @@ These recur throughout and are worth internalising before editing:
 7. **Do not depend on the development machine.** SQLite `FULL OUTER JOIN` needs 3.39+;
    a self-hosting user may have 3.3x. Python floor is 3.9, enforced at startup.
 
+## Versions
+
+**0.1.0 is a usable start; 1.0 is the finished product.** Adding a section moves the minor
+version by one (0.2, 0.3, …); patches fix what is already there. The roadmap in the README
+lists what is still missing, and **anything not on it is not planned** — saying that plainly
+is the same promise as the reason codes.
+
+Not splitting this into several repositories was a decision, not an oversight: it was tried
+on 2026-07-28 and reverted the same day. One repository whose version number shows how far
+along it is carries a continuity that a scatter of repositories does not.
+
+⚠️ The version appears in **four** places — `frontend/package.json`, `backend/app.py`,
+`backend/mcp_server.py`, `CHANGELOG.md`. Bump all four; package.json is the one that gets
+missed.
+
 ## Workflow
 
 1. Compare against the published version before editing — a local copy may be behind.

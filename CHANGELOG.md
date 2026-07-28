@@ -7,9 +7,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow
 Build notes for each section — sources probed, traps measured, defects found and
 fixed — are kept in the module docstrings, beside the code they explain.
 
+## How versions work here
+
+**0.1.0 is a usable start, not a finished product. 1.0 is the finished one.**
+
+Each release that adds a section moves the minor version by one — 0.2, 0.3, and so on —
+so the number says how far along the thing is rather than how long it has existed. Patch
+releases are fixes to what is already there. See [the roadmap](README.md#roadmap) for what
+is still missing; anything not listed there is not planned, and saying so is part of the
+same promise as the reason codes: **be clear about what this does not do.**
+
 ## [0.1.0] — 2026-07-27
 
-First complete version. Ten sections, seventeen MCP tools, ten public data sources.
+The first usable release. Ten sections, seventeen MCP tools, ten public data sources —
+enough to be worth running, and a long way from complete.
 
 ### Sections
 
