@@ -23,7 +23,7 @@
   <a href="#路线图">路线图</a> ·
   <a href="#数据源与它们的条款">数据源与条款</a> ·
   <a href="#它刻意不做的事">它刻意不做的事</a> ·
-  <a href="#mcp">MCP</a> ·
+  <a href="#在-ai-助手里使用">在 AI 助手里使用</a> ·
   <a href="CHANGELOG.md">更新日志</a>
 </p>
 
@@ -204,13 +204,75 @@ cd frontend && npm install && npm run dev
 两者从你装上那天开始积累，跑得越久越值钱。
 EDGAR 与 FINRA 那几条线自带历史，随时可以回补。
 
-## MCP
+## 在 AI 助手里使用
 
-十七个工具，**只在 `backend/tools.py` 定义一次**，MCP server 自动继承 ——
-所以 REST 与 MCP 不可能各说各话。任意 MCP 客户端指向 `backend/mcp_server.py` 即可。
+17 个 MCP 工具，在 `backend/tools.py` 里**只定义一次**、由 MCP 服务器继承，
+所以 HTTP API 和工具层不可能漂移。
 
-工具的返回摘要带着与界面**同样的**告诫 ——
-助手来问期权流，响应里就会告诉它：这份数据推断不出方向。
+**AI 跑在你本来就有的客户端里** —— Claude Code、Claude Desktop，或任何 MCP 客户端 ——
+从你机器上的服务器取数。**这个 app 里没有聊天面板，是刻意的**：
+做了面板就意味着把本地数据发到别人的 API 上，
+而侧栏那句「你的数据留在你自己的机器上」当场就不成立了。
+
+> 💡 **这一整节可以直接丢给你的 AI 助手，让它替你装。**
+> 它是按「照字面执行」写的：路径全是绝对路径，最后一步是怎么验证装好了。
+
+### Claude Code
+
+```bash
+claude mcp add floorzero --env FZ_CONTACT="Your Name you@example.com" -- /absolute/path/to/python /absolute/path/to/FloorZero/backend/mcp_server.py
+```
+
+### Claude Desktop
+
+编辑 `claude_desktop_config.json` —— macOS 在
+`~/Library/Application Support/Claude/claude_desktop_config.json`，
+Windows 在 `%APPDATA%\Claude\claude_desktop_config.json` —— 然后重启应用：
+
+```json
+{
+  "mcpServers": {
+    "floorzero": {
+      "command": "/absolute/path/to/python",
+      "args": ["/absolute/path/to/FloorZero/backend/mcp_server.py"],
+      "env": { "FZ_CONTACT": "Your Name you@example.com" }
+    }
+  }
+}
+```
+
+**决定能否一次装成的三件事：**
+
+- **两个路径都必须是绝对路径。** 客户端是从**它自己的工作目录**启动服务器的，不是从仓库目录。
+- **Python 必须是装了依赖的那个** —— 虚拟环境里的 `bin/python`，
+  不是系统的 `python3`（除非你把 `requirements.txt` 装到了全局）。
+- **`FZ_CONTACT` 没有默认值。** 读已经同步下来的数据不需要它，所以缺了**不会在启动时报错** ——
+  而是等到某个工具要联网取数时才冒出来，那时看起来像是数据出了问题。在这里设好就不会咬人。
+
+### 验证装好了
+
+问助手：
+
+> Which FloorZero tools do you have?
+
+应该回来 17 个工具名。一个都没有就是服务器没起来：
+把同一条命令**在终端里手动跑一遍**，错误会打在 stderr 上，而不是被客户端吞掉。
+
+### 它真正擅长什么
+
+值得把这些工具用在**需要先把定义弄对才能答对**的问题上 —— 那正是多数工具悄悄答错的地方：
+
+> NVDA 最近有没有人在公开市场买入 —— 真买入，不是期权行权或股权激励？
+
+> SPY 的 gamma flip 在哪？call wall 和 put wall 分别在哪个行权价？
+
+> 这个季度有哪些议员在交易发生 45 天之后才申报？
+
+> 机构对 NVDA 的季度环比做了什么 —— 新建、加仓、还是清仓？
+
+**每个返回值都自带告诫**：数据有多旧、样本覆盖了什么、哪个数字是估算。
+助手来问期权流，回复里会直接告诉它**这份数据推不出方向** ——
+限制和数字一起走，不会在路上被丢掉。
 
 ## 测试
 

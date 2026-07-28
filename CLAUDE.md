@@ -120,5 +120,13 @@ violation. Two conventions:
 
 Python 3.9+ · FastAPI · React 19 · Vite · Tailwind · ECharts · SQLite.
 Four backend dependencies; keep it that way. Tools are defined once in `backend/tools.py`
-and inherited by the MCP server, so REST and MCP cannot diverge. Data lives in
+and inherited by the MCP server, so REST and MCP cannot diverge.
+
+⛔ **No chat panel inside the app, and this is not an oversight.** An assistant reaches the
+data through MCP, running in the client the user already trusts. A panel here would mean
+either posting local data to somebody's API — which would make the sidebar's "your data
+stays on your own machine" false — or spawning a CLI on the host, with SEC filing text and
+issuer names flowing into the prompt as an injection surface. The MCP route has neither
+problem, and it keeps rule three intact: the tool still states no conclusion, and whatever
+the user's own assistant concludes is the assistant's, not this project's. Data lives in
 `~/.floorzero/`, outside the repo, so updating code never destroys accrued history.

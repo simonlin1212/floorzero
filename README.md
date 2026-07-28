@@ -23,7 +23,7 @@
   <a href="#roadmap">Roadmap</a> ·
   <a href="#data-sources-and-their-licences">Data sources</a> ·
   <a href="#what-it-refuses-to-do">What it refuses to do</a> ·
-  <a href="#mcp">MCP</a> ·
+  <a href="#use-it-from-an-ai-assistant">Use it from an AI assistant</a> ·
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
@@ -211,13 +211,81 @@ Two datasets cannot be backfilled, because Cboe serves only the present:
 Both start accumulating the day you install and are worth more the longer you run it.
 EDGAR and FINRA lanes carry their own history and can be backfilled at any time.
 
-## MCP
+## Use it from an AI assistant
 
-Seventeen tools, defined once in `backend/tools.py` and inherited by the MCP server, so
-REST and MCP can never drift apart. Point any MCP client at `backend/mcp_server.py`.
+Seventeen tools over MCP, defined once in `backend/tools.py` and inherited by the MCP
+server, so the HTTP API and the tool layer can never drift apart.
 
-Tool summaries carry the same caveats the UI does — an assistant asking for options flow
-is told, in the response, that direction cannot be inferred from this data.
+**The assistant runs where you already have it** — Claude Code, Claude Desktop, or any MCP
+client — and pulls from the server on your machine. There is no chat panel inside this app,
+and that is deliberate: a panel would mean posting your local data to somebody's API, and
+the sidebar's promise that your data stays on your own machine would stop being true.
+
+> 💡 You can hand this whole section to your assistant and ask it to set the thing up. It is
+> written to be followed literally: every path is absolute, and the verification step is at
+> the end.
+
+### Claude Code
+
+```bash
+claude mcp add floorzero --env FZ_CONTACT="Your Name you@example.com" -- /absolute/path/to/python /absolute/path/to/FloorZero/backend/mcp_server.py
+```
+
+### Claude Desktop
+
+Edit `claude_desktop_config.json` — on macOS at
+`~/Library/Application Support/Claude/claude_desktop_config.json`, on Windows at
+`%APPDATA%\Claude\claude_desktop_config.json` — and restart the app:
+
+```json
+{
+  "mcpServers": {
+    "floorzero": {
+      "command": "/absolute/path/to/python",
+      "args": ["/absolute/path/to/FloorZero/backend/mcp_server.py"],
+      "env": { "FZ_CONTACT": "Your Name you@example.com" }
+    }
+  }
+}
+```
+
+Three things that decide whether this works first try:
+
+- **Absolute paths, both of them.** The client starts the server from its own working
+  directory, not from the repository.
+- **The Python must be the one with the dependencies installed** — the virtualenv's
+  `bin/python`, not the system `python3`, unless you installed `requirements.txt` globally.
+- **`FZ_CONTACT` has no default.** Reading what you have already synced works without it, so
+  a missing contact does not fail at startup — it surfaces later as a fetch error that reads
+  like a data problem. Set it here and it cannot bite you.
+
+### Check that it worked
+
+Ask the assistant:
+
+> Which FloorZero tools do you have?
+
+Seventeen names should come back. If none do, the server did not start: run the same command
+by hand in a terminal, and the error will be on stderr rather than swallowed by the client.
+
+### What it is actually good at
+
+The tools are worth pointing at questions that need a *definition* to be answered correctly,
+which is where most tools quietly get it wrong:
+
+> Has anyone at NVDA bought on the open market recently — real purchases, not option
+> exercises or grants?
+
+> Where is SPY's gamma flip, and which strikes are the call and put walls?
+
+> Which members of Congress filed more than 45 days after the trade this quarter?
+
+> What did institutions do with NVDA quarter on quarter — new positions, added, exited?
+
+Every response carries its own caveats: how old the data is, what the sample covers, and
+where a figure is an estimate. An assistant asking for options flow is told, in the reply,
+that direction cannot be inferred from this data — so the limits travel with the numbers
+instead of being dropped on the way.
 
 ## Tests
 
