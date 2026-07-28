@@ -287,7 +287,13 @@ function LaneBody({ lane }: { lane: Lane }) {
     rows.push(["Contracts", num(d.contracts)]);
     rows.push(["Snapshot time", String(d.timestamp ?? "—")]);
   } else if (lane.key === "gex") {
-    rows.push(["Total GEX", `${num(d.total_gex_bn)}B`]);
+    // ⚠️ Already in billions, so it must **not** go through `num()` — that formatter scales a
+    //    raw number and appends B/M/K, and anything under a thousand comes out of it rounded to
+    //    a whole number. −0.2007 rendered as "-0B": a real, non-zero figure shown as zero, which
+    //    is the one thing this project is built not to do.
+    rows.push(["Total GEX",
+               typeof d.total_gex_bn === "number" && isFinite(d.total_gex_bn)
+                 ? `${d.total_gex_bn.toFixed(2)}B` : "—"]);
     rows.push(["gamma flip", d.gamma_flip == null ? "—" : String(d.gamma_flip)]);
     rows.push(["call wall", String(d.call_wall ?? "—")]);
     rows.push(["put wall", String(d.put_wall ?? "—")]);

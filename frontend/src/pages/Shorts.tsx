@@ -229,9 +229,9 @@ export default function Shorts() {
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "shadow" },
-        backgroundColor: "#131316",
-        borderColor: "#2a2a31",
-        textStyle: { color: "#f2efe9", fontSize: 12 },
+        backgroundColor: "#ffffff",
+        borderColor: "#e2ddd4",
+        textStyle: { color: "#1a1815", fontSize: 12 },
         formatter: (ps: any[]) => {
           const r = rows[ps[0].dataIndex];
           return (
@@ -245,10 +245,10 @@ export default function Shorts() {
       xAxis: {
         type: "value",
         name: "Shares",
-        nameTextStyle: { color: "#8e8a83", fontSize: 10 },
-        splitLine: { lineStyle: { color: "#1e1e24" } },
+        nameTextStyle: { color: "#6b665e", fontSize: 10 },
+        splitLine: { lineStyle: { color: "#ece7dd" } },
         axisLabel: {
-          color: "#8e8a83",
+          color: "#6b665e",
           fontSize: 10,
           fontFamily: "JetBrains Mono",
           formatter: (v: number) => num(v),
@@ -257,8 +257,8 @@ export default function Shorts() {
       yAxis: {
         type: "category",
         data: rows.map((r) => r.symbol),
-        axisLine: { lineStyle: { color: "#2a2a31" } },
-        axisLabel: { color: "#f2efe9", fontSize: 11, fontFamily: "JetBrains Mono" },
+        axisLine: { lineStyle: { color: "#e2ddd4" } },
+        axisLabel: { color: "#1a1815", fontSize: 11, fontFamily: "JetBrains Mono" },
       },
       series: [
         {
@@ -268,7 +268,7 @@ export default function Shorts() {
           label: {
             show: true,
             position: "right",
-            color: "#8e8a83",
+            color: "#6b665e",
             fontSize: 10,
             fontFamily: "JetBrains Mono",
             // ⚠️ With no price, mark it "no quote" rather than $0: the SEC's price field is "."
@@ -293,9 +293,9 @@ export default function Shorts() {
       grid: { left: 66, right: 24, top: 22, bottom: 46 },
       tooltip: {
         trigger: "axis",
-        backgroundColor: "#131316",
-        borderColor: "#2a2a31",
-        textStyle: { color: "#f2efe9", fontSize: 12 },
+        backgroundColor: "#ffffff",
+        borderColor: "#e2ddd4",
+        textStyle: { color: "#1a1815", fontSize: 12 },
         formatter: (ps: any[]) => {
           const r = rows[ps[0].dataIndex];
           return (
@@ -308,14 +308,14 @@ export default function Shorts() {
       xAxis: {
         type: "category",
         data: rows.map((r) => r.settlement_date.slice(5)),
-        axisLine: { lineStyle: { color: "#2a2a31" } },
-        axisLabel: { color: "#8e8a83", fontSize: 10, fontFamily: "JetBrains Mono", rotate: 45 },
+        axisLine: { lineStyle: { color: "#e2ddd4" } },
+        axisLabel: { color: "#6b665e", fontSize: 10, fontFamily: "JetBrains Mono", rotate: 45 },
       },
       yAxis: {
         type: "value",
-        splitLine: { lineStyle: { color: "#1e1e24" } },
+        splitLine: { lineStyle: { color: "#ece7dd" } },
         axisLabel: {
-          color: "#8e8a83",
+          color: "#6b665e",
           fontSize: 10,
           fontFamily: "JetBrains Mono",
           formatter: (v: number) => num(v),
@@ -326,7 +326,7 @@ export default function Shorts() {
           // ⚠️ Bars, not a line: a line implies "continuous evolution", while the SEC states plainly that consecutive days'
           // balances "may have little or no relationship" — each day is an independent instant and should not be joined into a trend
           type: "bar",
-          itemStyle: { color: "#3b82f6" },
+          itemStyle: { color: "#1d4ed8" },
           data: rows.map((r) => r.total_quantity),
         },
       ],
@@ -605,7 +605,10 @@ export default function Shorts() {
           </div>
 
           <Card
-            title="Largest fail-to-deliver balances"
+            /* ⚠️ Ordered by the **mean** across the settlement dates each symbol appears on, which
+               "largest" does not convey — it is read as the latest, or the peak. Both of those are
+               also on the row, so the ordering has to say which one it used. */
+            title="Highest mean fail-to-deliver balance"
             sub="Ordered by the mean balance across settlement dates (not their sum) · bars labelled with notional value"
           >
             {summary.by_symbol.length ? (

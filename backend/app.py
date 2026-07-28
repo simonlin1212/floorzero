@@ -128,7 +128,9 @@ def get_gex_curve(
     for i in range(points + 1):
         px = lo + (hi - lo) * i / points
         curve.append({"price": round(px, 2),
-                      "gex_bn": round(greeks.total_gex_at(cs, px) / 1e9, 4)})
+                      # The chain dates itself; the curve must be computed against the same
+                      # session, or every point on it is priced as though today were expiry day
+                      "gex_bn": round(greeks.total_gex_at(cs, px, chain.asof) / 1e9, 4)})
     return {
         "ticker": chain.ticker,
         "spot": round(chain.spot, 2),

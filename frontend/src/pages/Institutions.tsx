@@ -268,9 +268,9 @@ export default function Institutions() {
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "shadow" },
-        backgroundColor: "#131316",
-        borderColor: "#2a2a31",
-        textStyle: { color: "#f2efe9", fontSize: 12 },
+        backgroundColor: "#ffffff",
+        borderColor: "#e2ddd4",
+        textStyle: { color: "#1a1815", fontSize: 12 },
         formatter: (ps: any[]) => {
           const r = rows[ps[0].dataIndex];
           return (
@@ -281,9 +281,9 @@ export default function Institutions() {
       },
       xAxis: {
         type: "value",
-        splitLine: { lineStyle: { color: "#1e1e24" } },
+        splitLine: { lineStyle: { color: "#ece7dd" } },
         axisLabel: {
-          color: "#8e8a83",
+          color: "#6b665e",
           fontSize: 10,
           fontFamily: "JetBrains Mono",
           formatter: (v: number) => money(v),
@@ -292,18 +292,18 @@ export default function Institutions() {
       yAxis: {
         type: "category",
         data: rows.map((r) => label(r).slice(0, 26)),
-        axisLine: { lineStyle: { color: "#2a2a31" } },
-        axisLabel: { color: "#f2efe9", fontSize: 10 },
+        axisLine: { lineStyle: { color: "#e2ddd4" } },
+        axisLabel: { color: "#1a1815", fontSize: 10 },
       },
       series: [
         {
           type: "bar",
-          itemStyle: { color: kind === "put" ? "#ef4444" : "#3b82f6" },
+          itemStyle: { color: kind === "put" ? "#b91c1c" : "#1d4ed8" },
           data: rows.map((r) => r.value),
           label: {
             show: true,
             position: "right",
-            color: "#8e8a83",
+            color: "#6b665e",
             fontSize: 10,
             fontFamily: "JetBrains Mono",
             formatter: (p: any) => `${rows[p.dataIndex].holders} managers`,
@@ -327,9 +327,9 @@ export default function Institutions() {
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "shadow" },
-        backgroundColor: "#131316",
-        borderColor: "#2a2a31",
-        textStyle: { color: "#f2efe9", fontSize: 12 },
+        backgroundColor: "#ffffff",
+        borderColor: "#e2ddd4",
+        textStyle: { color: "#1a1815", fontSize: 12 },
         formatter: (ps: any[]) => {
           const r = rows[ps[0].dataIndex];
           return (
@@ -341,9 +341,9 @@ export default function Institutions() {
       },
       xAxis: {
         type: "value",
-        splitLine: { lineStyle: { color: "#1e1e24" } },
+        splitLine: { lineStyle: { color: "#ece7dd" } },
         axisLabel: {
-          color: "#8e8a83",
+          color: "#6b665e",
           fontSize: 10,
           fontFamily: "JetBrains Mono",
           formatter: (v: number) => money(v),
@@ -352,15 +352,15 @@ export default function Institutions() {
       yAxis: {
         type: "category",
         data: rows.map((r) => label(r).slice(0, 26)),
-        axisLine: { lineStyle: { color: "#2a2a31" } },
-        axisLabel: { color: "#f2efe9", fontSize: 10 },
+        axisLine: { lineStyle: { color: "#e2ddd4" } },
+        axisLabel: { color: "#1a1815", fontSize: 10 },
       },
       series: [
         {
           type: "bar",
           data: rows.map((r) => ({
             value: r.delta_value,
-            itemStyle: { color: r.delta_value >= 0 ? "#22c55e" : "#ef4444" },
+            itemStyle: { color: r.delta_value >= 0 ? "#15803d" : "#b91c1c" },
           })),
         },
       ],
@@ -662,7 +662,10 @@ export default function Institutions() {
           </div>
 
           <Card
-            title={`Largest holdings · ${KINDS.find((k) => k.v === kind)?.label}`}
+            /* ⚠️ "Shares" here is the **position kind** (share / call / put), not a share count,
+               while the axis is reported value in dollars. Titled `Largest holdings · Shares` the
+               two read as one claim, and the chart looks like it is plotting share counts. */
+            title={`Largest positions by reported value · ${KINDS.find((k) => k.v === kind)?.label} kind`}
             sub={`Bars labelled with the number of managers holding it · ${active}`}
           >
             {summary.by_issuer.length ? (

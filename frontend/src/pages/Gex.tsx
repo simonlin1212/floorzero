@@ -190,36 +190,36 @@ export default function Gex() {
       backgroundColor: "transparent",
       animation: false,
       grid: { left: 66, right: 62, top: 30, bottom: 44 },
-      tooltip: { trigger: "axis", backgroundColor: "#131316",
-        borderColor: "#2a2a31", textStyle: { color: "#f2efe9", fontSize: 12 } },
-      legend: { data: ["Total GEX", "Spot"], textStyle: { color: "#8e8a83", fontSize: 11 },
+      tooltip: { trigger: "axis", backgroundColor: "#ffffff",
+        borderColor: "#e2ddd4", textStyle: { color: "#1a1815", fontSize: 12 } },
+      legend: { data: ["Total GEX", "Spot"], textStyle: { color: "#6b665e", fontSize: 11 },
         top: 2, left: "center", itemWidth: 12, itemHeight: 8 },
       xAxis: { type: "category",
         data: rows.map((r) => r.captured_at.replace("T", " ").slice(5, 16)),
-        axisLine: { lineStyle: { color: "#2a2a31" } },
-        axisLabel: { color: "#8e8a83", fontSize: 9, fontFamily: "JetBrains Mono" } },
+        axisLine: { lineStyle: { color: "#e2ddd4" } },
+        axisLabel: { color: "#6b665e", fontSize: 9, fontFamily: "JetBrains Mono" } },
       yAxis: [
         { type: "value", name: "B$",
-          nameTextStyle: { color: "#8e8a83", fontSize: 10 },
-          splitLine: { lineStyle: { color: "#1e1e24" } },
-          axisLabel: { color: "#8e8a83", fontSize: 10, fontFamily: "JetBrains Mono" } },
+          nameTextStyle: { color: "#6b665e", fontSize: 10 },
+          splitLine: { lineStyle: { color: "#ece7dd" } },
+          axisLabel: { color: "#6b665e", fontSize: 10, fontFamily: "JetBrains Mono" } },
         { type: "value", name: "$", scale: true,
-          nameTextStyle: { color: "#8e8a83", fontSize: 10 },
+          nameTextStyle: { color: "#6b665e", fontSize: 10 },
           splitLine: { show: false },
-          axisLabel: { color: "#8e8a83", fontSize: 10, fontFamily: "JetBrains Mono" } },
+          axisLabel: { color: "#6b665e", fontSize: 10, fontFamily: "JetBrains Mono" } },
       ],
       series: [
         // ⚠️ No smoothing: snapshots can be tens of minutes apart, and a spline fits movement between two points
         // that never happened (a spike and a fall). Straight segments are the honest rendering.
         { name: "Total GEX", type: "line", symbol: "circle", symbolSize: 5,
-          lineStyle: { color: "#F35D2B", width: 2 }, itemStyle: { color: "#F35D2B" },
+          lineStyle: { color: "#d4400d", width: 2 }, itemStyle: { color: "#d4400d" },
           data: rows.map((r) => +(r.total_gex / 1e9).toFixed(3)),
           markLine: { silent: true, symbol: "none",
             // The default label is off: it lands on the right-hand ticks and overlaps the spot scale
             label: { show: false },
-            data: [{ yAxis: 0, lineStyle: { color: "#8e8a83", type: "dashed" } }] } },
+            data: [{ yAxis: 0, lineStyle: { color: "#6b665e", type: "dashed" } }] } },
         { name: "Spot", type: "line", yAxisIndex: 1, symbol: "circle", symbolSize: 3,
-          lineStyle: { color: "#3b82f6", width: 1.5, opacity: 0.7 },
+          lineStyle: { color: "#1d4ed8", width: 1.5, opacity: 0.7 },
           data: rows.map((r) => r.spot) },
       ],
     };
@@ -236,9 +236,9 @@ export default function Gex() {
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "shadow" },
-        backgroundColor: "#131316",
-        borderColor: "#2a2a31",
-        textStyle: { color: "#f2efe9", fontSize: 12 },
+        backgroundColor: "#ffffff",
+        borderColor: "#e2ddd4",
+        textStyle: { color: "#1a1815", fontSize: 12 },
         formatter: (ps: any[]) => {
           const s = ps[0]?.axisValue;
           const row = data.by_strike.find((r) => String(r.strike) === String(s));
@@ -247,12 +247,12 @@ export default function Gex() {
             Call GEX ${row.call_gex_bn.toFixed(3)} B<br/>
             Put GEX ${row.put_gex_bn.toFixed(3)} B<br/>
             <b>Net ${row.net_gex_bn.toFixed(3)} B</b><br/>
-            <span style="color:#8e8a83">OI  C ${row.call_oi.toLocaleString()} / P ${row.put_oi.toLocaleString()}</span>`;
+            <span style="color:#6b665e">OI  C ${row.call_oi.toLocaleString()} / P ${row.put_oi.toLocaleString()}</span>`;
         },
       },
       legend: {
         data: ["Call GEX", "Put GEX"],
-        textStyle: { color: "#8e8a83", fontSize: 11 },
+        textStyle: { color: "#6b665e", fontSize: 11 },
         top: 4,
         right: 8,
         itemWidth: 12,
@@ -261,15 +261,15 @@ export default function Gex() {
       xAxis: {
         type: "category",
         data: xs,
-        axisLine: { lineStyle: { color: "#2a2a31" } },
-        axisLabel: { color: "#8e8a83", fontSize: 10, fontFamily: "JetBrains Mono" },
+        axisLine: { lineStyle: { color: "#e2ddd4" } },
+        axisLabel: { color: "#6b665e", fontSize: 10, fontFamily: "JetBrains Mono" },
       },
       yAxis: {
         type: "value",
         name: "B$ / 1%",
-        nameTextStyle: { color: "#8e8a83", fontSize: 10 },
-        splitLine: { lineStyle: { color: "#1e1e24" } },
-        axisLabel: { color: "#8e8a83", fontSize: 10, fontFamily: "JetBrains Mono" },
+        nameTextStyle: { color: "#6b665e", fontSize: 10 },
+        splitLine: { lineStyle: { color: "#ece7dd" } },
+        axisLabel: { color: "#6b665e", fontSize: 10, fontFamily: "JetBrains Mono" },
       },
       series: [
         {
@@ -277,14 +277,14 @@ export default function Gex() {
           type: "bar",
           stack: "gex",
           data: data.by_strike.map((r) => r.call_gex_bn),
-          itemStyle: { color: "#22c55e" },
+          itemStyle: { color: "#15803d" },
         },
         {
           name: "Put GEX",
           type: "bar",
           stack: "gex",
           data: data.by_strike.map((r) => r.put_gex_bn),
-          itemStyle: { color: "#ef4444" },
+          itemStyle: { color: "#b91c1c" },
           markLine: {
             silent: true,
             symbol: "none",
@@ -293,8 +293,8 @@ export default function Gex() {
                 xAxis: String(
                   xs.reduce((p, c) => (Math.abs(c - data.spot) < Math.abs(p - data.spot) ? c : p))
                 ),
-                lineStyle: { color: "#ff5a1f", width: 2, type: "solid" },
-                label: { formatter: "Spot", color: "#ff5a1f", fontSize: 10 },
+                lineStyle: { color: "#d4400d", width: 2, type: "solid" },
+                label: { formatter: "Spot", color: "#d4400d", fontSize: 10 },
               },
             ],
           },
@@ -312,9 +312,9 @@ export default function Gex() {
       grid: { left: 62, right: 24, top: 30, bottom: 42 },
       tooltip: {
         trigger: "axis",
-        backgroundColor: "#131316",
-        borderColor: "#2a2a31",
-        textStyle: { color: "#f2efe9", fontSize: 12 },
+        backgroundColor: "#ffffff",
+        borderColor: "#e2ddd4",
+        textStyle: { color: "#1a1815", fontSize: 12 },
         formatter: (ps: any[]) => {
           const [px, gex] = ps[0].data as [number, number];
           return `Price <b>$${px.toFixed(2)}</b><br/>Total GEX <b>${gex.toFixed(3)} B</b>`;
@@ -327,18 +327,18 @@ export default function Gex() {
         type: "value",
         min: curve[0].price,
         max: curve[curve.length - 1].price,
-        axisLine: { lineStyle: { color: "#2a2a31" } },
+        axisLine: { lineStyle: { color: "#e2ddd4" } },
         axisLabel: {
-          color: "#8e8a83", fontSize: 10, fontFamily: "JetBrains Mono",
+          color: "#6b665e", fontSize: 10, fontFamily: "JetBrains Mono",
           formatter: (v: number) => (v >= 100 ? v.toFixed(0) : v.toFixed(2)),
         },
       },
       yAxis: {
         type: "value",
         name: "B$ / 1%",
-        nameTextStyle: { color: "#8e8a83", fontSize: 10 },
-        splitLine: { lineStyle: { color: "#1e1e24" } },
-        axisLabel: { color: "#8e8a83", fontSize: 10, fontFamily: "JetBrains Mono" },
+        nameTextStyle: { color: "#6b665e", fontSize: 10 },
+        splitLine: { lineStyle: { color: "#ece7dd" } },
+        axisLabel: { color: "#6b665e", fontSize: 10, fontFamily: "JetBrains Mono" },
       },
       series: [
         {
@@ -347,7 +347,7 @@ export default function Gex() {
           symbol: "none",
           // No visualMap for piecewise colouring: under ECharts 6, pieces do not take effect on one-dimensional line data
           // and the whole line fails to render. markArea distinguishes the positive and negative regions instead, with the line in the brand colour.
-          lineStyle: { width: 3, color: "#ff5a1f" },
+          lineStyle: { width: 3, color: "#d4400d" },
           areaStyle: {
             opacity: 0.15,
             color: {
@@ -363,7 +363,7 @@ export default function Gex() {
             silent: true,
             symbol: "none",
             data: [
-              { yAxis: 0, lineStyle: { color: "#4a4a55", type: "dashed" }, label: { show: false } },
+              { yAxis: 0, lineStyle: { color: "#b8b0a2", type: "dashed" }, label: { show: false } },
               // ⚠️ The flip may fall outside the curve's drawn range (±span_pct) —
               // reduce would then pick the outermost point and misreport the chart's edge as the crossing. Outside the range, it is not drawn.
               ...(data.gamma_flip &&
@@ -373,8 +373,8 @@ export default function Gex() {
                     {
                       // On a value axis the real flip price can be used directly, with no need to find the nearest sample
                       xAxis: data.gamma_flip,
-                      lineStyle: { color: "#ff5a1f", width: 2 },
-                      label: { formatter: "FLIP", color: "#ff5a1f", fontSize: 10 },
+                      lineStyle: { color: "#d4400d", width: 2 },
+                      label: { formatter: "FLIP", color: "#d4400d", fontSize: 10 },
                     },
                   ]
                 : []),
@@ -398,27 +398,27 @@ export default function Gex() {
       animation: false,
       grid: { left: 66, right: 24, top: 34, bottom: 42 },
       tooltip: { trigger: "axis", axisPointer: { type: "shadow" },
-        backgroundColor: "#131316", borderColor: "#2a2a31",
-        textStyle: { color: "#f2efe9", fontSize: 12 } },
-      legend: { data: ["Vanna", "Charm"], textStyle: { color: "#8e8a83", fontSize: 11 },
+        backgroundColor: "#ffffff", borderColor: "#e2ddd4",
+        textStyle: { color: "#1a1815", fontSize: 12 } },
+      legend: { data: ["Vanna", "Charm"], textStyle: { color: "#6b665e", fontSize: 11 },
         top: 4, right: 8, itemWidth: 12, itemHeight: 8 },
       xAxis: { type: "category", data: strikes,
-        axisLine: { lineStyle: { color: "#2a2a31" } },
-        axisLabel: { color: "#8e8a83", fontSize: 10, fontFamily: "JetBrains Mono" } },
+        axisLine: { lineStyle: { color: "#e2ddd4" } },
+        axisLabel: { color: "#6b665e", fontSize: 10, fontFamily: "JetBrains Mono" } },
       yAxis: { type: "value", name: "MM$",
-        nameTextStyle: { color: "#8e8a83", fontSize: 10 },
-        splitLine: { lineStyle: { color: "#1e1e24" } },
-        axisLabel: { color: "#8e8a83", fontSize: 10, fontFamily: "JetBrains Mono" } },
+        nameTextStyle: { color: "#6b665e", fontSize: 10 },
+        splitLine: { lineStyle: { color: "#ece7dd" } },
+        axisLabel: { color: "#6b665e", fontSize: 10, fontFamily: "JetBrains Mono" } },
       series: [
-        { name: "Vanna", type: "bar", itemStyle: { color: "#3b82f6" },
+        { name: "Vanna", type: "bar", itemStyle: { color: "#1d4ed8" },
           data: exp.vanna_by_strike.map((r) => r.vanna_mm) },
         { name: "Charm", type: "bar", itemStyle: { color: "#a78bfa" },
           data: strikes.map((k) => charmMap.get(k) ?? 0),
           markLine: { silent: true, symbol: "none", data: [{
             xAxis: String(strikes.reduce((p, c) =>
               Math.abs(c - data.spot) < Math.abs(p - data.spot) ? c : p)),
-            lineStyle: { color: "#ff5a1f", width: 2 },
-            label: { formatter: "Spot", color: "#ff5a1f", fontSize: 10 } }] } },
+            lineStyle: { color: "#d4400d", width: 2 },
+            label: { formatter: "Spot", color: "#d4400d", fontSize: 10 } }] } },
       ],
     };
   }, [exp, data]);
@@ -439,26 +439,26 @@ export default function Gex() {
       animation: false,
       grid: { left: 66, right: 78, top: 20, bottom: 70 },
       tooltip: {
-        backgroundColor: "#131316", borderColor: "#2a2a31",
-        textStyle: { color: "#f2efe9", fontSize: 12 },
+        backgroundColor: "#ffffff", borderColor: "#e2ddd4",
+        textStyle: { color: "#1a1815", fontSize: 12 },
         formatter: (p: any) => {
           const [x, y, v] = p.data as [number, number, number];
-          const over = Math.abs(v) > bound ? '  <span style="color:#ff5a1f">beyond the scale</span>' : "";
+          const over = Math.abs(v) > bound ? '  <span style="color:#d4400d">beyond the scale</span>' : "";
           return `Expiry <b>${surface.expiries[x]}</b><br/>Strike <b>$${surface.strikes[y]}</b><br/>GEX <b>${v.toFixed(3)} B</b>${over}`;
         },
       },
       xAxis: { type: "category", data: surface.expiries.map((e) => e.slice(5)),
         splitArea: { show: false },
-        axisLabel: { color: "#8e8a83", fontSize: 9, fontFamily: "JetBrains Mono", rotate: 45 } },
+        axisLabel: { color: "#6b665e", fontSize: 9, fontFamily: "JetBrains Mono", rotate: 45 } },
       yAxis: { type: "category", data: surface.strikes.map(String),
         splitArea: { show: false },
-        axisLabel: { color: "#8e8a83", fontSize: 9, fontFamily: "JetBrains Mono" } },
+        axisLabel: { color: "#6b665e", fontSize: 9, fontFamily: "JetBrains Mono" } },
       visualMap: {
         min: -bound, max: bound, calculable: true, orient: "vertical",
         right: 8, top: "middle", itemHeight: 160,
-        textStyle: { color: "#8e8a83", fontSize: 10 },
+        textStyle: { color: "#6b665e", fontSize: 10 },
         // The midpoint colour is the card's own background, so near-zero cells fade out and only real exposure shows
-        inRange: { color: ["#ef4444", "#131316", "#22c55e"] },
+        inRange: { color: ["#b91c1c", "#ffffff", "#15803d"] },
         formatter: (v: number) =>
           clipped && Math.abs(Math.abs(v) - bound) < 1e-9
             ? `${v > 0 ? "≥" : "≤"}${v.toFixed(2)}`
@@ -493,7 +493,7 @@ export default function Gex() {
               className={`rounded-lg border px-3.5 py-2 font-mono text-sm transition ${
                 ticker === t
                   ? "border-brand bg-brand text-black font-bold"
-                  : "border-line bg-card2 text-ink hover:border-[#3d3d46]"
+                  : "border-line bg-card2 text-ink hover:border-[#cfc8bc]"
               }`}
             >
               {t}
@@ -526,7 +526,7 @@ export default function Gex() {
                 className={`rounded-lg border px-3 py-2 text-sm transition ${
                   on
                     ? "border-brand bg-brand/10 text-brand"
-                    : "border-line bg-card2 text-dim hover:border-[#3d3d46]"
+                    : "border-line bg-card2 text-dim hover:border-[#cfc8bc]"
                 }`}
               >
                 {o.label}
@@ -573,8 +573,13 @@ export default function Gex() {
                     : "No flip within the range"
                 }
               />
-              <Stat label="Call Wall" value={data.call_wall ? `$${data.call_wall}` : "—"} hint="often acts as resistance" />
-              <Stat label="Put Wall" value={data.put_wall ? `$${data.put_wall}` : "—"} hint="often acts as support" />
+              {/* ⚠️ The definition belongs on the tile. Without it "wall" is just a word that sounds
+                  meaningful — and these two can land on the same strike, which reads as a bug unless
+                  you know each is picked from a different side of the chain. */}
+              <Stat label="Call Wall" value={data.call_wall ? `$${data.call_wall}` : "—"}
+                    hint="strike with the largest call GEX · often acts as resistance" />
+              <Stat label="Put Wall" value={data.put_wall ? `$${data.put_wall}` : "—"}
+                    hint="strike with the largest put GEX · often acts as support" />
             </div>
 
             {/* Charts */}

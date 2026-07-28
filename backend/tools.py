@@ -387,7 +387,8 @@ def _tool_get_gex_curve(ticker: str, dte_max: int | None = None,
         raise ValueError(f"{ticker} has no contracts matching those conditions")
     lo, hi = chain.spot * (1 - span_pct), chain.spot * (1 + span_pct)
     curve = [{"price": round(lo + (hi - lo) * i / 40, 2),
-              "gex_bn": round(greeks.total_gex_at(cs, lo + (hi - lo) * i / 40) / 1e9, 4)}
+              "gex_bn": round(greeks.total_gex_at(cs, lo + (hi - lo) * i / 40,
+                                                 chain.asof) / 1e9, 4)}
              for i in range(41)]
     return {"ticker": chain.ticker, "spot": round(chain.spot, 2), "curve": curve}
 

@@ -175,12 +175,12 @@ export default function Darkpool() {
     return {
       backgroundColor: "transparent",
       grid: { left: 58, right: 18, top: 30, bottom: 44 },
-      legend: { top: 0, textStyle: { color: "#8e8a83", fontSize: 11 } },
+      legend: { top: 0, textStyle: { color: "#6b665e", fontSize: 11 } },
       tooltip: {
         trigger: "axis",
-        backgroundColor: "#1b1b20",
-        borderColor: "#2a2a31",
-        textStyle: { color: "#f2efe9", fontSize: 11 },
+        backgroundColor: "#1a1815",
+        borderColor: "#e2ddd4",
+        textStyle: { color: "#1a1815", fontSize: 11 },
         formatter: (ps: { axisValue: string; seriesName: string; data: number }[]) =>
           `<b>Week beginning ${esc(ps[0]?.axisValue)}</b><br/>` +
           ps
@@ -190,13 +190,13 @@ export default function Darkpool() {
       xAxis: {
         type: "category",
         data: s.map((x) => x.week),
-        axisLine: { lineStyle: { color: "#2a2a31" } },
-        axisLabel: { color: "#8e8a83", fontSize: 10 },
+        axisLine: { lineStyle: { color: "#e2ddd4" } },
+        axisLabel: { color: "#6b665e", fontSize: 10 },
       },
       yAxis: {
         type: "value",
-        axisLabel: { color: "#8e8a83", fontSize: 10, formatter: (v: number) => num(v) },
-        splitLine: { lineStyle: { color: "#2a2a31", type: "dashed" } },
+        axisLabel: { color: "#6b665e", fontSize: 10, formatter: (v: number) => num(v) },
+        splitLine: { lineStyle: { color: "#e2ddd4", type: "dashed" } },
       },
       dataZoom: [{ type: "inside" }, { type: "slider", height: 16, bottom: 6 }],
       series: [
@@ -205,16 +205,16 @@ export default function Darkpool() {
           type: "line",
           data: s.map((x) => x.ats_shares),
           showSymbol: false,
-          lineStyle: { color: "#ff5a1f", width: 1.8 },
-          itemStyle: { color: "#ff5a1f" },
+          lineStyle: { color: "#d4400d", width: 1.8 },
+          itemStyle: { color: "#d4400d" },
         },
         {
           name: "Non-ATS off-exchange (internalisation)",
           type: "line",
           data: s.map((x) => x.otc_shares),
           showSymbol: false,
-          lineStyle: { color: "#5b9cf7", width: 1.8 },
-          itemStyle: { color: "#5b9cf7" },
+          lineStyle: { color: "#2563eb", width: 1.8 },
+          itemStyle: { color: "#2563eb" },
         },
       ],
     };
@@ -606,7 +606,7 @@ function Stat({
   return (
     <div className="rounded-xl border border-line bg-card2/60 px-3 py-2.5">
       <div className="text-[10px] uppercase tracking-wide text-dim">{label}</div>
-      <div className={`mt-0.5 font-mono text-lg ${warn ? "text-[#5b9cf7]" : "text-ink"}`}>
+      <div className={`mt-0.5 font-mono text-lg ${warn ? "text-[#2563eb]" : "text-ink"}`}>
         {value}
       </div>
       {sub && <div className="mt-0.5 text-[10px] text-dim">{sub}</div>}

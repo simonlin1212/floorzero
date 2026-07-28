@@ -571,3 +571,71 @@ def test_the_app_imports_and_serves_every_declared_route():
               "/api/darkpool/{ticker}", "/api/stock/{ticker}", "/api/congress/trades",
               "/api/insider/trades", "/api/institution/holdings", "/api/market/curve"):
         assert p in paths, p
+
+
+def test_every_caller_of_the_greeks_passes_a_reference_date():
+    """Adding the `asof` parameter fixed the dating and broke two callers the suite never ran:
+    the GEX curve endpoint and the `get_gex_curve` tool both still called `total_gex_at` with
+    two arguments, so both raised TypeError on every request while 62 tests stayed green.
+
+    The lesson is in what got grepped. The change was motivated by `.dte`, so `.dte` is what was
+    swept — but what actually broke was **the signature**, and its callers sit in files that have
+    nothing to do with dates. So this checks every call against the real signature, by parsing
+    the modules rather than by matching text: a first attempt split on the closing bracket and
+    cut `total_gex_at(cs, lo + (hi - lo)` in half, reporting the fixed code as broken.
+    """
+    import ast
+    import inspect
+    from modules import greeks
+
+    checked = 0
+    for mod_name in ("app", "tools"):
+        mod = __import__(mod_name)
+        tree = ast.parse(inspect.getsource(mod))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", None)
+            if name not in ("total_gex_at", "_find_gamma_flip"):
+                continue
+            checked += 1
+            sig = inspect.signature(getattr(greeks, name))
+            required = [n for n, p in sig.parameters.items()
+                        if p.default is inspect.Parameter.empty]
+            given = len(node.args) + {k.arg for k in node.keywords}.__len__()
+            assert given >= len(required), (
+                f"{mod_name}.py line {node.lineno}: {name}() takes {required}, "
+                f"but is called with {given} arguments")
+    assert checked >= 2, "the callers moved — this test is no longer watching anything"
+
+
+def test_a_filing_dated_before_its_own_trade_does_not_lead_the_listing(tmp_db):
+    """A few congressional filings carry a trade date years in the future — an error in the
+    original, not in the parsing. Ordered by trade date alone they sort to the very top, so the
+    first row anyone reads is the one row that is certainly wrong.
+
+    They stay in the listing and stay flagged; the project does not drop rows it cannot explain.
+    They simply do not get to lead.
+    """
+    from datetime import date
+    from modules import congress_store
+
+    def t(tx, filed):
+        return dict(member="M", state_district="IN02", ticker="NVDA", asset_name="NVIDIA",
+                    asset_type="ST", asset_type_label="Stock", tx_type="P",
+                    tx_type_label="Purchase", tx_date=tx, notification_date=None,
+                    filing_date=filed, amount_low=1.0, amount_high=2.0, amount_raw="",
+                    owner="self",
+                    delay_days=(date.fromisoformat(filed) - date.fromisoformat(tx)).days,
+                    source_url="")
+
+    congress_store.save_filing(_filing(), [
+        t("2260-01-10", "2260-01-20"),
+        t("2299-12-26", "2260-02-09"),     # trade date after the filing date
+        t("2260-03-01", "2260-03-10"),
+    ])
+    rows = congress_store.query_trades(limit=None)
+    assert len(rows) == 3, "the bad row must still be listed, not filtered away"
+    assert rows[0]["tx_date"] == "2260-03-01", "the newest sound row leads"
+    assert rows[-1]["tx_date"] == "2299-12-26", "the impossible one goes last"

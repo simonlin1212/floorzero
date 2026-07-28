@@ -58,9 +58,9 @@ type CotResp = {
 
 const SPREAD_KEYS = ["10Y-2Y", "10Y-3M", "30Y-10Y"];
 const SPREAD_COLOR: Record<string, string> = {
-  "10Y-2Y": "#ff5a1f",
-  "10Y-3M": "#5b9cf7",
-  "30Y-10Y": "#8e8a83",
+  "10Y-2Y": "#d4400d",
+  "10Y-3M": "#2563eb",
+  "30Y-10Y": "#6b665e",
 };
 
 function num(n: number | null | undefined): string {
@@ -197,21 +197,21 @@ export default function Market() {
       grid: { left: 52, right: 18, top: 34, bottom: 46 },
       legend: {
         top: 0,
-        textStyle: { color: "#8e8a83", fontSize: 11 },
+        textStyle: { color: "#6b665e", fontSize: 11 },
         data: SPREAD_KEYS,
       },
       tooltip: {
         trigger: "axis",
-        backgroundColor: "#1b1b20",
-        borderColor: "#2a2a31",
-        textStyle: { color: "#f2efe9", fontSize: 11 },
+        backgroundColor: "#1a1815",
+        borderColor: "#e2ddd4",
+        textStyle: { color: "#1a1815", fontSize: 11 },
         formatter: (ps: { axisValue: string; seriesName: string; data: number | null }[]) => {
           const head = `<b>${esc(ps[0]?.axisValue)}</b>`;
           const body = ps
             .map((p) => {
               const v = p.data;
               const tag =
-                v === null ? "" : v < 0 ? " <span style='color:#ff5a1f'>inverted</span>" : "";
+                v === null ? "" : v < 0 ? " <span style='color:#d4400d'>inverted</span>" : "";
               return `${esc(p.seriesName)}: ${v === null ? "—" : `${v.toFixed(2)}%`}${tag}`;
             })
             .join("<br/>");
@@ -221,15 +221,15 @@ export default function Market() {
       xAxis: {
         type: "category",
         data: curve.dates,
-        axisLine: { lineStyle: { color: "#2a2a31" } },
-        axisLabel: { color: "#8e8a83", fontSize: 10 },
+        axisLine: { lineStyle: { color: "#e2ddd4" } },
+        axisLabel: { color: "#6b665e", fontSize: 10 },
       },
       yAxis: {
         type: "value",
         name: "Spread %",
-        nameTextStyle: { color: "#8e8a83", fontSize: 10 },
-        axisLabel: { color: "#8e8a83", fontSize: 10, formatter: "{value}" },
-        splitLine: { lineStyle: { color: "#2a2a31", type: "dashed" } },
+        nameTextStyle: { color: "#6b665e", fontSize: 10 },
+        axisLabel: { color: "#6b665e", fontSize: 10, formatter: "{value}" },
+        splitLine: { lineStyle: { color: "#e2ddd4", type: "dashed" } },
       },
       dataZoom: [{ type: "inside" }, { type: "slider", height: 16, bottom: 8 }],
       series: SPREAD_KEYS.map((k) => ({
@@ -247,7 +247,7 @@ export default function Market() {
                 silent: true,
                 symbol: "none",
                 label: { show: false },
-                lineStyle: { color: "#8e8a83", type: "dashed", width: 1 },
+                lineStyle: { color: "#6b665e", type: "dashed", width: 1 },
                 data: [{ yAxis: 0 }],
               }
             : undefined,
@@ -266,23 +266,23 @@ export default function Market() {
       grid: { left: 48, right: 18, top: 22, bottom: 30 },
       tooltip: {
         trigger: "axis",
-        backgroundColor: "#1b1b20",
-        borderColor: "#2a2a31",
-        textStyle: { color: "#f2efe9", fontSize: 11 },
+        backgroundColor: "#1a1815",
+        borderColor: "#e2ddd4",
+        textStyle: { color: "#1a1815", fontSize: 11 },
         formatter: (ps: { axisValue: string; data: number | null }[]) =>
           `${esc(ps[0]?.axisValue)}: ${ps[0]?.data === null ? "—" : `${ps[0].data}%`}`,
       },
       xAxis: {
         type: "category",
         data: labels,
-        axisLine: { lineStyle: { color: "#2a2a31" } },
-        axisLabel: { color: "#8e8a83", fontSize: 10 },
+        axisLine: { lineStyle: { color: "#e2ddd4" } },
+        axisLabel: { color: "#6b665e", fontSize: 10 },
       },
       yAxis: {
         type: "value",
         scale: true,
-        axisLabel: { color: "#8e8a83", fontSize: 10, formatter: "{value}%" },
-        splitLine: { lineStyle: { color: "#2a2a31", type: "dashed" } },
+        axisLabel: { color: "#6b665e", fontSize: 10, formatter: "{value}%" },
+        splitLine: { lineStyle: { color: "#e2ddd4", type: "dashed" } },
       },
       series: [
         {
@@ -291,8 +291,8 @@ export default function Market() {
           smooth: true,
           connectNulls: true,
           symbolSize: 6,
-          lineStyle: { color: "#ff5a1f", width: 2 },
-          itemStyle: { color: "#ff5a1f" },
+          lineStyle: { color: "#d4400d", width: 2 },
+          itemStyle: { color: "#d4400d" },
           areaStyle: { color: "rgba(255,90,31,0.10)" },
         },
       ],
@@ -310,14 +310,14 @@ export default function Market() {
       grid: { left: 62, right: 18, top: 34, bottom: 46 },
       legend: {
         top: 0,
-        textStyle: { color: "#8e8a83", fontSize: 11 },
+        textStyle: { color: "#6b665e", fontSize: 11 },
         data: ["Leveraged funds net", "Asset managers net"],
       },
       tooltip: {
         trigger: "axis",
-        backgroundColor: "#1b1b20",
-        borderColor: "#2a2a31",
-        textStyle: { color: "#f2efe9", fontSize: 11 },
+        backgroundColor: "#1a1815",
+        borderColor: "#e2ddd4",
+        textStyle: { color: "#1a1815", fontSize: 11 },
         formatter: (ps: { axisValue: string; seriesName: string; data: number | null }[]) =>
           `<b>${esc(ps[0]?.axisValue)}</b> (Tuesday's positions)<br/>` +
           ps
@@ -330,19 +330,19 @@ export default function Market() {
       xAxis: {
         type: "category",
         data: dates,
-        axisLine: { lineStyle: { color: "#2a2a31" } },
-        axisLabel: { color: "#8e8a83", fontSize: 10 },
+        axisLine: { lineStyle: { color: "#e2ddd4" } },
+        axisLabel: { color: "#6b665e", fontSize: 10 },
       },
       yAxis: {
         type: "value",
         name: "Net position (contracts)",
-        nameTextStyle: { color: "#8e8a83", fontSize: 10 },
+        nameTextStyle: { color: "#6b665e", fontSize: 10 },
         axisLabel: {
-          color: "#8e8a83",
+          color: "#6b665e",
           fontSize: 10,
           formatter: (v: number) => num(v),
         },
-        splitLine: { lineStyle: { color: "#2a2a31", type: "dashed" } },
+        splitLine: { lineStyle: { color: "#e2ddd4", type: "dashed" } },
       },
       dataZoom: [{ type: "inside" }, { type: "slider", height: 16, bottom: 8 }],
       series: [
@@ -352,13 +352,13 @@ export default function Market() {
           data: rows.map((r) => r.lev_net),
           showSymbol: false,
           connectNulls: false,
-          lineStyle: { color: "#ff5a1f", width: 1.6 },
-          itemStyle: { color: "#ff5a1f" },
+          lineStyle: { color: "#d4400d", width: 1.6 },
+          itemStyle: { color: "#d4400d" },
           markLine: {
             silent: true,
             symbol: "none",
             label: { show: false },
-            lineStyle: { color: "#8e8a83", type: "dashed", width: 1 },
+            lineStyle: { color: "#6b665e", type: "dashed", width: 1 },
             data: [{ yAxis: 0 }],
           },
         },
@@ -368,8 +368,8 @@ export default function Market() {
           data: rows.map((r) => r.asset_net),
           showSymbol: false,
           connectNulls: false,
-          lineStyle: { color: "#5b9cf7", width: 1.6 },
-          itemStyle: { color: "#5b9cf7" },
+          lineStyle: { color: "#2563eb", width: 1.6 },
+          itemStyle: { color: "#2563eb" },
         },
       ],
     };

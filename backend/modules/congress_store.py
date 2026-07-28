@@ -166,8 +166,13 @@ def query_trades(chamber: Optional[str] = None, ticker: Optional[str] = None,
         sql += " AND tx_type = 'P'"
     elif tx_type == "sell":
         sql += " AND tx_type LIKE 'S%'"
-    # tx_date is an ISO string, so lexical order is chronological order; NULLs sort last
-    sql += " ORDER BY tx_date IS NULL, tx_date DESC, id DESC"
+    # tx_date is an ISO string, so lexical order is chronological order; NULLs sort last.
+    # ⚠️ Rows whose filing date precedes their trade date sort **last**, not first. A handful of
+    #    filings carry a trade date years in the future (an error in the original), and by plain
+    #    date order those lead the table — the first thing anyone sees is the one row that is
+    #    certainly wrong. They stay listed and flagged; they just do not get to lead.
+    sql += (" ORDER BY (delay_days IS NOT NULL AND delay_days < 0) ASC,"
+            " tx_date IS NULL, tx_date DESC, id DESC")
     if limit is not None:
         sql += " LIMIT ?"
         args.append(limit)

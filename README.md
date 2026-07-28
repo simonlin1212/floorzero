@@ -126,13 +126,21 @@ minor version by one, and **1.0 is the complete one**.
 | Version | Adds | Why it is not here yet |
 |---|---|---|
 | **0.1** ✅ | Stock · Flow · GEX · Scanner · Darkpool · Congress · Insiders · Institutions · Shorts · Macro | — |
-| 0.2 | **Volatility** — IV term structure, skew, variance risk premium | Needs the local IV history the scanner is still accruing; 60 sessions before rank means anything |
-| 0.3 | **Earnings and fundamentals** — statements, calendar, surprise history | EDGAR XBRL is a separate shape from the filing index already wired up |
-| 0.4 | **Sector and market tide** — net flow by sector, breadth | Cheap per symbol, expensive across the market; needs the scanner's batch pass first |
-| 0.5 | **Seasonality** — monthly and annual, per symbol | Wants years of local history rather than a fetch |
-| 0.6 | **Prediction markets** — Polymarket and Kalshi as a macro overlay | Working elsewhere; needs porting, not inventing |
-| … | | |
+| 0.2 | **Historical context for what is already here** — percentile over the last 60/252 sessions, 1-day and 5-day change, the symbol's own range; for GEX, IV and option volume | The commonest gap: `Total GEX −6.44B` on its own cannot be judged. Extreme, or an ordinary Tuesday for SPY? Waits on local history accruing |
+| 0.3 | **Volatility term structure** — ATM IV by expiry, IV against realised, front/back spread, earnings date marked | Without it the options pages show positioning but not price. The realised leg needs daily closes kept locally |
+| 0.4 | **Earnings and fundamentals** — statements, calendar, surprise history | EDGAR XBRL is a different shape from the filing index already wired up |
+| 0.5 | **Saved screens, and a scanner useful on day one** — cross-sectional IV30 percentile, IV30/RV20, option volume against its own median | Ranking a symbol against the market can be had from one scan; ranking it against its own past cannot |
+| 0.6 | **Sector-relative flow and IV** | Cheap per symbol, expensive across the market; wants the scanner's batch pass first |
+| 0.7 | **Seasonality** — monthly and annual, per symbol | Wants years of local history rather than a fetch |
+| 0.8 | **Prediction markets** — Polymarket and Kalshi as a macro overlay | Working elsewhere; needs porting, not inventing. Deliberately last: it is the loosest fit with the rest, and the easiest way for a data tool to drift into being a news feed |
 | **1.0** | Complete | |
+
+⭐ This order was revised after a review by a US options trader, who put it plainly: what is
+needed next is not an eleventh data source, it is making the numbers already here comparable.
+**"Is this figure unusual?" is a question about the data, not a view on the market** — so
+percentiles, z-scores and change-over-time sit comfortably inside the no-conclusions rule.
+What stays out is the composite: no score folding a 130-day-old Form 4 in with yesterday's
+option volume.
 
 Anything not on this list is not planned. That is deliberate, and it is the same promise as
 the reason codes: **be clear about what this does not do.**

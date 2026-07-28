@@ -269,9 +269,9 @@ type TradeScope = { limit: number; returned: number; truncated: boolean };
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "shadow" },
-        backgroundColor: "#131316",
-        borderColor: "#2a2a31",
-        textStyle: { color: "#f2efe9", fontSize: 12 },
+        backgroundColor: "#ffffff",
+        borderColor: "#e2ddd4",
+        textStyle: { color: "#1a1815", fontSize: 12 },
         formatter: (ps: any[]) => {
           const r = rows[ps[0].dataIndex];
           return (
@@ -283,7 +283,7 @@ type TradeScope = { limit: number; returned: number; truncated: boolean };
       },
       legend: {
         data: ["Buys", "Sells"],
-        textStyle: { color: "#8e8a83", fontSize: 11 },
+        textStyle: { color: "#6b665e", fontSize: 11 },
         top: 0,
         right: 4,
         itemWidth: 12,
@@ -291,28 +291,28 @@ type TradeScope = { limit: number; returned: number; truncated: boolean };
       },
       xAxis: {
         type: "value",
-        splitLine: { lineStyle: { color: "#1e1e24" } },
-        axisLabel: { color: "#8e8a83", fontSize: 10, fontFamily: "JetBrains Mono" },
+        splitLine: { lineStyle: { color: "#ece7dd" } },
+        axisLabel: { color: "#6b665e", fontSize: 10, fontFamily: "JetBrains Mono" },
       },
       yAxis: {
         type: "category",
         data: rows.map((r) => r.ticker),
-        axisLine: { lineStyle: { color: "#2a2a31" } },
-        axisLabel: { color: "#f2efe9", fontSize: 11, fontFamily: "JetBrains Mono" },
+        axisLine: { lineStyle: { color: "#e2ddd4" } },
+        axisLabel: { color: "#1a1815", fontSize: 11, fontFamily: "JetBrains Mono" },
       },
       series: [
         {
           name: "Buys",
           type: "bar",
           stack: "x",
-          itemStyle: { color: "#22c55e" },
+          itemStyle: { color: "#15803d" },
           data: rows.map((r) => r.buys),
         },
         {
           name: "Sells",
           type: "bar",
           stack: "x",
-          itemStyle: { color: "#ef4444" },
+          itemStyle: { color: "#b91c1c" },
           data: rows.map((r) => r.sells),
         },
       ],
@@ -334,20 +334,20 @@ type TradeScope = { limit: number; returned: number; truncated: boolean };
       grid: { left: 50, right: 20, top: 20, bottom: 30 },
       tooltip: {
         trigger: "axis",
-        backgroundColor: "#131316",
-        borderColor: "#2a2a31",
-        textStyle: { color: "#f2efe9", fontSize: 12 },
+        backgroundColor: "#ffffff",
+        borderColor: "#e2ddd4",
+        textStyle: { color: "#1a1815", fontSize: 12 },
       },
       xAxis: {
         type: "category",
         data: buckets.map((b) => b.label),
-        axisLine: { lineStyle: { color: "#2a2a31" } },
-        axisLabel: { color: "#8e8a83", fontSize: 11 },
+        axisLine: { lineStyle: { color: "#e2ddd4" } },
+        axisLabel: { color: "#6b665e", fontSize: 11 },
       },
       yAxis: {
         type: "value",
-        splitLine: { lineStyle: { color: "#1e1e24" } },
-        axisLabel: { color: "#8e8a83", fontSize: 10, fontFamily: "JetBrains Mono" },
+        splitLine: { lineStyle: { color: "#ece7dd" } },
+        axisLabel: { color: "#6b665e", fontSize: 10, fontFamily: "JetBrains Mono" },
       },
       series: [
         {
@@ -355,7 +355,7 @@ type TradeScope = { limit: number; returned: number; truncated: boolean };
           data: counts.map((c, i) => ({
             value: c,
             // Only the last bucket (>45d) gets the warning colour — and that is the fact of being late, not a finding of violation
-            itemStyle: { color: i === 4 ? "#ff5a1f" : "#3b82f6" },
+            itemStyle: { color: i === 4 ? "#d4400d" : "#1d4ed8" },
           })),
           barMaxWidth: 54,
         },
@@ -607,9 +607,16 @@ type TradeScope = { limit: number; returned: number; truncated: boolean };
 
           <Card
             title="Disclosure delay distribution"
-            sub={`Days from trade date to filing date (the same sample as the cards above, ${
-      summary?.delay.buckets.reduce((a, b) => a + b.count, 0) ?? 0
-    } trades)`}
+            /* ⚠️ Say the gap here rather than leaving it to the footnote. The card above reads
+                832 and this chart 830, and two numbers a hair apart on one screen look like an
+                error in the software until you find the note explaining the two excluded rows. */
+            sub={(() => {
+              const shown = summary?.delay.buckets.reduce((a, b) => a + b.count, 0) ?? 0;
+              const bad = summary?.delay.anomaly_count ?? 0;
+              return `Days from trade date to filing date · ${shown} trades`
+                + (bad ? ` — ${bad} more are excluded, their filing date preceding the trade date`
+                       + ` (an error in the original, still listed below)` : "");
+            })()}
           >
             {Object.keys(delayOption).length ? (
               <ReactECharts option={delayOption} style={{ height: 240 }} notMerge />

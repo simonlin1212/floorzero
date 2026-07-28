@@ -274,42 +274,42 @@ type TradeScope = { limit: number; returned: number; truncated: boolean };
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "shadow" },
-        backgroundColor: "#131316",
-        borderColor: "#2a2a31",
-        textStyle: { color: "#f2efe9", fontSize: 12 },
+        backgroundColor: "#ffffff",
+        borderColor: "#e2ddd4",
+        textStyle: { color: "#1a1815", fontSize: 12 },
         formatter: (ps: any[]) => {
           const r = rows[ps[0].dataIndex];
           return (
             `<b>${esc(r.ticker)}</b> ${esc(r.company.slice(0, 30))}<br/>` +
             `<b>${r.insider_count}</b> insiders bought · ${r.buys} trades<br/>` +
             `Bought ${money(r.buy_value)} · Sold ${money(r.sell_value)}<br/>` +
-            `<span style="color:#8e8a83">${esc(r.insiders.slice(0, 4).join(", "))}</span>`
+            `<span style="color:#6b665e">${esc(r.insiders.slice(0, 4).join(", "))}</span>`
           );
         },
       },
       xAxis: {
         type: "value",
         name: "Insiders buying",
-        nameTextStyle: { color: "#8e8a83", fontSize: 10 },
-        splitLine: { lineStyle: { color: "#1e1e24" } },
-        axisLabel: { color: "#8e8a83", fontSize: 10, fontFamily: "JetBrains Mono" },
+        nameTextStyle: { color: "#6b665e", fontSize: 10 },
+        splitLine: { lineStyle: { color: "#ece7dd" } },
+        axisLabel: { color: "#6b665e", fontSize: 10, fontFamily: "JetBrains Mono" },
         minInterval: 1,
       },
       yAxis: {
         type: "category",
         data: rows.map((r) => r.ticker),
-        axisLine: { lineStyle: { color: "#2a2a31" } },
-        axisLabel: { color: "#f2efe9", fontSize: 11, fontFamily: "JetBrains Mono" },
+        axisLine: { lineStyle: { color: "#e2ddd4" } },
+        axisLabel: { color: "#1a1815", fontSize: 11, fontFamily: "JetBrains Mono" },
       },
       series: [
         {
           type: "bar",
-          itemStyle: { color: "#22c55e" },
+          itemStyle: { color: "#15803d" },
           data: rows.map((r) => r.insider_count),
           label: {
             show: true,
             position: "right",
-            color: "#8e8a83",
+            color: "#6b665e",
             fontSize: 10,
             fontFamily: "JetBrains Mono",
             formatter: (p: any) => money(rows[p.dataIndex].buy_value),
@@ -330,9 +330,9 @@ type TradeScope = { limit: number; returned: number; truncated: boolean };
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "shadow" },
-        backgroundColor: "#131316",
-        borderColor: "#2a2a31",
-        textStyle: { color: "#f2efe9", fontSize: 12 },
+        backgroundColor: "#ffffff",
+        borderColor: "#e2ddd4",
+        textStyle: { color: "#1a1815", fontSize: 12 },
         formatter: (ps: any[]) => {
           const r = rows[ps[0].dataIndex];
           return (
@@ -343,9 +343,9 @@ type TradeScope = { limit: number; returned: number; truncated: boolean };
       },
       xAxis: {
         type: "value",
-        splitLine: { lineStyle: { color: "#1e1e24" } },
+        splitLine: { lineStyle: { color: "#ece7dd" } },
         axisLabel: {
-          color: "#8e8a83",
+          color: "#6b665e",
           fontSize: 10,
           fontFamily: "JetBrains Mono",
           formatter: (v: number) => money(v),
@@ -354,15 +354,15 @@ type TradeScope = { limit: number; returned: number; truncated: boolean };
       yAxis: {
         type: "category",
         data: rows.map((r) => r.ticker),
-        axisLine: { lineStyle: { color: "#2a2a31" } },
-        axisLabel: { color: "#f2efe9", fontSize: 11, fontFamily: "JetBrains Mono" },
+        axisLine: { lineStyle: { color: "#e2ddd4" } },
+        axisLabel: { color: "#1a1815", fontSize: 11, fontFamily: "JetBrains Mono" },
       },
       series: [
         {
           type: "bar",
           data: rows.map((r) => ({
             value: r.net_value,
-            itemStyle: { color: r.net_value >= 0 ? "#22c55e" : "#ef4444" },
+            itemStyle: { color: r.net_value >= 0 ? "#15803d" : "#b91c1c" },
           })),
         },
       ],

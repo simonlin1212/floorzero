@@ -525,7 +525,11 @@ export default function Scanner() {
                   <Th>Volume</Th>
                   <Th>Volume / median</Th>
                   <Th>IV30</Th>
-                  <Th>IV Rank</Th>
+                  {/* ⚠️ Named for what it is. The history it ranks against is what this install
+                      has accrued, not 252 sessions of market history — Cboe serves only the
+                      present and it cannot be backfilled. Called plain "IV Rank" it reads as the
+                      standard measure, and a fresh install would appear to be reporting one. */}
+                  <Th>IV Rank (local)</Th>
                   <Th>IV percentile</Th>
                   <Th>Samples</Th>
                 </tr>
@@ -540,7 +544,7 @@ export default function Scanner() {
                     </Td>
                     <Td
                       className={`font-mono ${
-                        (r.change_pct ?? 0) < 0 ? "text-[#5b9cf7]" : "text-brand"
+                        (r.change_pct ?? 0) < 0 ? "text-[#2563eb]" : "text-brand"
                       }`}
                     >
                       {r.change_pct === null ? "—" : `${r.change_pct.toFixed(2)}%`}

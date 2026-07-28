@@ -257,13 +257,13 @@ export default function Flow() {
     return {
       backgroundColor: "transparent",
       grid: { left: 58, right: 18, top: 30, bottom: 40 },
-      legend: { top: 0, textStyle: { color: "#8e8a83", fontSize: 11 } },
+      legend: { top: 0, textStyle: { color: "#6b665e", fontSize: 11 } },
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "shadow" },
-        backgroundColor: "#1b1b20",
-        borderColor: "#2a2a31",
-        textStyle: { color: "#f2efe9", fontSize: 11 },
+        backgroundColor: "#1a1815",
+        borderColor: "#e2ddd4",
+        textStyle: { color: "#1a1815", fontSize: 11 },
         formatter: (ps: { axisValue: string; seriesName: string; data: number }[]) =>
           `<b>${esc(ps[0]?.axisValue)}</b><br/>` +
           ps.map((p) => `${esc(p.seriesName)}: ${p.data.toLocaleString()} contracts`).join("<br/>"),
@@ -271,13 +271,13 @@ export default function Flow() {
       xAxis: {
         type: "category",
         data: b.map((x) => x.expiry),
-        axisLine: { lineStyle: { color: "#2a2a31" } },
-        axisLabel: { color: "#8e8a83", fontSize: 10 },
+        axisLine: { lineStyle: { color: "#e2ddd4" } },
+        axisLabel: { color: "#6b665e", fontSize: 10 },
       },
       yAxis: {
         type: "value",
-        axisLabel: { color: "#8e8a83", fontSize: 10, formatter: (v: number) => num(v) },
-        splitLine: { lineStyle: { color: "#2a2a31", type: "dashed" } },
+        axisLabel: { color: "#6b665e", fontSize: 10, formatter: (v: number) => num(v) },
+        splitLine: { lineStyle: { color: "#e2ddd4", type: "dashed" } },
       },
       series: [
         {
@@ -285,14 +285,14 @@ export default function Flow() {
           type: "bar",
           stack: "v",
           data: b.map((x) => x.call_volume),
-          itemStyle: { color: "#ff5a1f" },
+          itemStyle: { color: "#d4400d" },
         },
         {
           name: "Puts",
           type: "bar",
           stack: "v",
           data: b.map((x) => x.put_volume),
-          itemStyle: { color: "#5b9cf7" },
+          itemStyle: { color: "#2563eb" },
         },
       ],
     };
@@ -305,13 +305,13 @@ export default function Flow() {
     return {
       backgroundColor: "transparent",
       grid: { left: 58, right: 18, top: 30, bottom: 40 },
-      legend: { top: 0, textStyle: { color: "#8e8a83", fontSize: 11 } },
+      legend: { top: 0, textStyle: { color: "#6b665e", fontSize: 11 } },
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "shadow" },
-        backgroundColor: "#1b1b20",
-        borderColor: "#2a2a31",
-        textStyle: { color: "#f2efe9", fontSize: 11 },
+        backgroundColor: "#1a1815",
+        borderColor: "#e2ddd4",
+        textStyle: { color: "#1a1815", fontSize: 11 },
         formatter: (ps: { axisValue: string; seriesName: string; data: number }[]) =>
           `<b>Strike ${esc(ps[0]?.axisValue)}</b><br/>` +
           ps
@@ -324,31 +324,31 @@ export default function Flow() {
       xAxis: {
         type: "category",
         data: b.map((x) => x.strike),
-        axisLine: { lineStyle: { color: "#2a2a31" } },
-        axisLabel: { color: "#8e8a83", fontSize: 10 },
+        axisLine: { lineStyle: { color: "#e2ddd4" } },
+        axisLabel: { color: "#6b665e", fontSize: 10 },
       },
       yAxis: {
         type: "value",
         axisLabel: {
-          color: "#8e8a83",
+          color: "#6b665e",
           fontSize: 10,
           formatter: (v: number) => num(Math.abs(v)),
         },
-        splitLine: { lineStyle: { color: "#2a2a31", type: "dashed" } },
+        splitLine: { lineStyle: { color: "#e2ddd4", type: "dashed" } },
       },
       series: [
         {
           name: "Call volume",
           type: "bar",
           data: b.map((x) => x.call_volume),
-          itemStyle: { color: "#ff5a1f" },
+          itemStyle: { color: "#d4400d" },
         },
         {
           // Drawn on the negative axis purely to read the symmetry of the shape; the values themselves are positive (the tooltip takes the absolute)
           name: "Put volume",
           type: "bar",
           data: b.map((x) => -x.put_volume),
-          itemStyle: { color: "#5b9cf7" },
+          itemStyle: { color: "#2563eb" },
         },
       ],
       markLine: undefined,
@@ -471,6 +471,12 @@ export default function Flow() {
                     <div className="text-[10px] uppercase tracking-wide text-dim">{title}</div>
                     <div className="mt-0.5 font-mono text-lg text-ink">
                       {d.pc === null ? "—" : d.pc.toFixed(3)}
+                      {/* ⚠️ The direction has to be on the number itself. "Put/call ratio" is in the
+                          heading above, but a bare 1.366 beside "calls $470M / puts $642M" leaves the
+                          reader dividing the two to work out which way round it is. */}
+                      {d.pc !== null && (
+                        <span className="ml-1.5 font-sans text-[10px] text-dim">puts ÷ calls</span>
+                      )}
                     </div>
                     <div className="mt-0.5 text-[10px] leading-relaxed text-dim">
                       Calls {k === "by_notional" ? money(d.call) : num(d.call)} / puts{" "}
@@ -510,7 +516,7 @@ export default function Flow() {
             <div className="mb-4 rounded-xl border border-line bg-card2/40 px-3 py-2.5">
               <div className="mb-1.5 flex flex-wrap gap-x-6 gap-y-1 text-xs">
                 <span className="text-dim">
-                  Call |delta| exposure{" "}
+                  Absolute call |delta| exposure{" "}
                   <b className="font-mono text-ink">
                     {num(flow.exposure.call_delta_shares)} shares
                   </b>
@@ -520,7 +526,7 @@ export default function Flow() {
                   </span>
                 </span>
                 <span className="text-dim">
-                  Put |delta| exposure{" "}
+                  Absolute put |delta| exposure{" "}
                   <b className="font-mono text-ink">
                     {num(flow.exposure.put_delta_shares)} shares
                   </b>
@@ -615,7 +621,7 @@ export default function Flow() {
                     >
                       <Td className="font-mono">{r.expiry}</Td>
                       <Td className="text-dim">{r.dte}</Td>
-                      <Td className={r.type === "put" ? "text-[#5b9cf7]" : "text-brand"}>
+                      <Td className={r.type === "put" ? "text-[#2563eb]" : "text-brand"}>
                         {r.type === "put" ? "Put" : "Call"}
                       </Td>
                       <Td className="font-mono">{r.strike.toFixed(1)}</Td>
@@ -811,7 +817,7 @@ export default function Flow() {
                             className="border-b border-line/50"
                           >
                             <Td className="font-mono">{r.expiry}</Td>
-                            <Td className={r.type === "put" ? "text-[#5b9cf7]" : "text-brand"}>
+                            <Td className={r.type === "put" ? "text-[#2563eb]" : "text-brand"}>
                               {r.type === "put" ? "Put" : "Call"}
                             </Td>
                             <Td className="font-mono">{r.strike.toFixed(1)}</Td>

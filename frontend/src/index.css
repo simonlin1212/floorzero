@@ -3,14 +3,16 @@
 @tailwind components;
 @tailwind utilities;
 
-:root { color-scheme: dark; }
+:root { color-scheme: light; }
 html, body, #root { height: 100%; }
 body { @apply bg-bg text-ink font-sans antialiased; }
 
-/* Global texture: the faint grid backdrop */
+/* Global texture: the faint grid backdrop.
+   ⚠️ Tuned by eye against the light palette, not carried over: the ratio that reads as a whisper
+   on near-black turns into visible ruled lines on paper. Screenshot it after changing it. */
 .grid-bg {
   background-image:
-    linear-gradient(rgba(255,90,31,.045) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,90,31,.045) 1px, transparent 1px);
+    linear-gradient(rgba(212,64,13,.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(212,64,13,.045) 1px, transparent 1px);
   background-size: 64px 64px;
 }
