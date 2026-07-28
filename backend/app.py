@@ -891,20 +891,30 @@ def market_cot(
         raise HTTPException(status_code=404, detail=str(e)) from e
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
-    # ⚠️ Parse **first**, then decide truncation from the valid rows. The one-extra-row trick
-    #    works on the database listings because every row that comes back is a row; here
-    #    `parse_cot` drops anything without a market name, so slicing the raw page first can
-    #    hand back fewer than `limit` usable rows *and* call the set truncated — understating
-    #    the data and mislabelling it in the same breath. (Introduced by the previous round's
-    #    fix for the opposite error, and caught by the re-review.)
+    # ⚠️ Truncation here is decided by **whether upstream filled the page**, never by counting
+    #    what survived parsing. Two rounds of review were spent learning why:
+    #      · counting raw rows with `>=` called an exact fit truncated;
+    #      · counting *parsed* rows calls a full page complete, because `parse_cot` drops any
+    #        record without a market name — one bad record inside `limit + 1` leaves exactly
+    #        `limit` good ones and the answer reads "that is everything" while CFTC still holds
+    #        hundreds more.
+    #    The one-extra-row trick transfers cleanly to the SQLite listings, where every row that
+    #    comes back is a row. It does not transfer to a source that discards its own records, so
+    #    the two signals are kept apart: `raw` answers "was there more", `rows` answers "what
+    #    could we read".
+    upstream_full = len(raw) > limit          # asked for limit+1 and got them all
     rows = [market_parse.cot_to_dict(c)
             for c in (market_parse.parse_cot(r) for r in raw) if c]
-    truncated = len(rows) > limit
+    dropped = len(raw) - len(rows)
+    truncated = upstream_full
     rows = rows[:limit]
     return {"rows": rows, "count": len(rows), "notes": market_parse.NOTES,
             "markets": sorted({r["market"] for r in rows}),
             "scope": {"market": market, "exact": exact, "limit": limit,
-                      "truncated": truncated}}
+                      "truncated": truncated,
+                      # Say it when upstream sent records we could not read, rather than letting
+                      # the count quietly come up short with no explanation.
+                      "unparseable_dropped": dropped}}
 
 
 # ═══════════════════════ Options flow (tier C: Cboe delayed, local only) ═══════════════════════

@@ -687,14 +687,18 @@ def test_a_listing_that_exactly_fills_the_limit_is_not_called_truncated(tmp_db):
     assert c.get("/api/congress/trades?limit=11").json()["scope"]["truncated"] is False
 
 
-def test_cot_truncation_is_decided_after_the_unparseable_rows_are_dropped(monkeypatch):
-    """The one-extra-row trick transfers to the database listings cleanly, because every row that
-    comes back from SQLite is a row. It does **not** transfer here: `parse_cot` discards anything
-    without a market name, so slicing the raw page before parsing hands back fewer than `limit`
-    usable rows *and* reports the set truncated — understating the data and mislabelling it at once.
+def test_cot_truncation_reflects_upstream_not_what_survived_parsing(monkeypatch):
+    """Two rounds of review were spent on this one endpoint, and the lesson is that the
+    one-extra-row trick does not transfer to a source that discards its own records.
 
-    This regression was introduced by the previous round's fix for the opposite error, which is
-    the shape most of this project's re-review findings take.
+    Counting raw rows with `>=` called an exact fit truncated. Counting *parsed* rows calls a
+    full page complete: `parse_cot` drops any record without a market name, so one bad record
+    inside `limit + 1` leaves exactly `limit` good ones and the reply reads "that is everything"
+    while CFTC still holds hundreds more.
+
+    ⚠️ The mock **honours the requested limit**. The first version of this test did not, and so
+    could not reproduce the constraint it existed to pin — a test that cannot fail against the
+    bug is worse than none.
     """
     from fastapi.testclient import TestClient
     from sources import macro as macro_src
@@ -705,10 +709,30 @@ def test_cot_truncation_is_decided_after_the_unparseable_rows_are_dropped(monkey
             "asset_mgr_positions_long": "3", "asset_mgr_positions_short": "4",
             "dealer_positions_long": "5", "dealer_positions_short": "6",
             "open_interest_all": "7"}
-    # 6 unparseable rows in front of 5 good ones — a raw slice at limit=5 would keep none of the good
-    junk = dict(good, market_and_exchange_names="")
-    monkeypatch.setattr(macro_src, "cot_rows", lambda **kw: [junk]*6 + [good]*5)
+    junk = dict(good, market_and_exchange_names="")          # parse_cot returns None for this
 
-    body = TestClient(app.app).get("/api/market/cot?limit=5").json()
-    assert body["count"] == 5, "the five parseable rows must all survive the junk in front of them"
-    assert body["scope"]["truncated"] is False, "five valid rows out of five is not a truncation"
+    def upstream(rows):
+        """A source holding `rows`, handing back at most what was asked for — as CFTC does."""
+        return lambda limit, **kw: rows[:limit]
+
+    c = TestClient(app.app)
+
+    # 1. One unreadable record inside the fetched page, and plenty more behind it.
+    #    The page comes back full, so "there is more" must survive the record being dropped.
+    monkeypatch.setattr(macro_src, "cot_rows", upstream([junk] + [good]*200))
+    b = c.get("/api/market/cot?limit=5").json()
+    assert b["scope"]["truncated"] is True, "upstream filled the page — more exists"
+    assert b["scope"]["unparseable_dropped"] == 1, "and it has to say one record was unreadable"
+
+    # 2. Upstream genuinely holds five. A short page means there is no more, whatever parsed.
+    monkeypatch.setattr(macro_src, "cot_rows", upstream([good]*5))
+    b = c.get("/api/market/cot?limit=5").json()
+    assert b["count"] == 5
+    assert b["scope"]["truncated"] is False, "five out of five is a complete answer"
+
+    # 3. Unreadable records must not be silently absorbed into a short count.
+    monkeypatch.setattr(macro_src, "cot_rows", upstream([junk]*3 + [good]*2))
+    b = c.get("/api/market/cot?limit=5").json()
+    assert b["count"] == 2
+    assert b["scope"]["unparseable_dropped"] == 3
+    assert b["scope"]["truncated"] is False
