@@ -83,7 +83,7 @@ their own machine, and each user is doing personal research. So:
 ## Quick start
 
 ```bash
-git clone <this repo> && cd floorzero
+git clone https://github.com/simonlin1212/floorzero.git && cd floorzero
 
 # Backend
 cd backend

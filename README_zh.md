@@ -82,7 +82,7 @@ Cboe 的延时期权数据属于 OPRA。OPRA 的规则很直白 ——
 ## 快速开始
 
 ```bash
-git clone <本仓库> && cd floorzero
+git clone https://github.com/simonlin1212/floorzero.git && cd floorzero
 
 # 后端
 cd backend
