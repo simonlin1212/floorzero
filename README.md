@@ -41,12 +41,12 @@ inverted" means nothing without saying which one.
 ![Market section](docs/screenshots/market.png)
 
 **Stock** — nine lanes on one ticker, sorted by how old each one is. The banner reports
-the span between newest and oldest; here, 126 days. Two lanes are empty and each says why
+the span between newest and oldest; here, 130 days. Two lanes are empty and each says why
 it is empty rather than showing a blank.
 
 ![Stock section](docs/screenshots/stock.png)
 
-**Scanner** — the IV Rank column reads "59 more sessions" all the way down, because the
+**Scanner** — the IV Rank column reads "59 more days" all the way down, because the
 history it needs cannot be backfilled and had not accrued yet. That column is the whole
 argument of this project in one screenshot: the honest output of an unavailable metric is
 not a number.

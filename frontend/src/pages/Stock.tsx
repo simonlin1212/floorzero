@@ -208,8 +208,8 @@ export default function StockPage() {
                     <Td className={`font-mono ${ageTone(l.lag_days)}`}>
                       {l.lag_days === null ? "—" : `${l.lag_days} days`}
                     </Td>
-                    <Td className="text-dim">{l.lag_note}</Td>
-                    <Td>
+                    <Td className="text-dim" wrap>{l.lag_note}</Td>
+                    <Td wrap>
                       {l.ok ? (
                         <span className="text-brand">has data</span>
                       ) : (

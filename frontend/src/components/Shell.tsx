@@ -161,13 +161,21 @@ export function Td({
   children,
   className = "",
   title,
+  wrap = false,
 }: {
   children: React.ReactNode;
   className?: string;
   title?: string;
+  /** Let the cell wrap. Dates and figures read better on one line, which is why that is
+   *  the default — but a column holding a sentence overflows its card and gets cut off
+   *  mid-word, which is how the Stock page's "State" column reached the README. */
+  wrap?: boolean;
 }) {
   return (
-    <td className={`whitespace-nowrap px-2 py-1.5 ${className}`} title={title}>
+    <td
+      className={`${wrap ? "" : "whitespace-nowrap"} px-2 py-1.5 ${className}`}
+      title={title}
+    >
       {children}
     </td>
   );

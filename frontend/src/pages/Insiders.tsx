@@ -721,8 +721,8 @@ type TradeScope = { limit: number; returned: number; truncated: boolean };
                       {t.date_anomaly && " ⚠"}
                     </Td>
                     <Td className="font-bold text-ink">{t.ticker ?? "—"}</Td>
-                    <Td className="font-sans text-ink">{t.owner.slice(0, 26)}</Td>
-                    <Td className="font-sans text-dim">
+                    <Td className="font-sans text-ink" wrap>{t.owner.slice(0, 26)}</Td>
+                    <Td className="font-sans text-dim" wrap>
                       {[
                         t.is_officer && (t.officer_title || "Officer"),
                         t.is_director && "Director",
