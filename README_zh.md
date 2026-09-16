@@ -29,15 +29,6 @@
 
 ---
 
-## 寻找深圳的 AI 工作机会
-
-作者目前正在寻找深圳的 AI 相关工作机会，重点关注腾讯等大型科技企业及金融机构的 **AI 投研产品、FDE 与 AI 咨询 / 解决方案岗位**。
-
-兼具金融机构从业经历与 AI 产品实战，持续构建金融市场数据工具和多智能体系统，开源项目累计获得 **17K+ GitHub Stars**。
-
-联系：[simonlin0423@gmail.com](mailto:simonlin0423@gmail.com)
-
----
 
 ## 截图
 
@@ -346,12 +337,6 @@ Python 3.9+ · FastAPI · React 19 · Vite · Tailwind · ECharts · SQLite。
 它不是投资建议，作者也不是持牌投资顾问。
 每个数据源都有自己的边界 —— 滞后、修订、口径怪癖 —— 软件已尽力把它们说清楚，
 但你要为自己得出的结论负责，也要为在你所在法域与使用场景下遵守各数据源的条款负责。
-
-## 赞赏
-
-<p align="center">
-  <a href="https://buymeacoffee.com/simonlin1212"><img src="./assets/bmc-qr.png" width="180" alt="Buy Me a Coffee"></a>
-</p>
 
 ## License
 

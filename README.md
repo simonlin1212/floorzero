@@ -29,15 +29,6 @@
 
 ---
 
-## Open to AI Roles in Shenzhen
-
-The author is open to AI roles in Shenzhen, particularly in **AI-powered investment research products, Forward Deployed Engineering (FDE), and AI consulting or solutions** at Tencent, other leading technology companies, and financial institutions.
-
-He combines experience in financial institutions with hands-on AI product development, building open-source market data tools and multi-agent systems with **17K+ GitHub stars**.
-
-Contact: [simonlin0423@gmail.com](mailto:simonlin0423@gmail.com)
-
----
 
 ## Screenshots
 
@@ -363,12 +354,6 @@ investment advice, and the author is not a licensed financial adviser. Every sou
 limits — delays, revisions, definitional quirks — and the software tries hard to state
 them, but you are responsible for what you conclude and for complying with the terms of
 each data source in your jurisdiction and use case.
-
-## Support
-
-<p align="center">
-  <a href="https://buymeacoffee.com/simonlin1212"><img src="./assets/bmc-qr.png" width="180" alt="Buy Me a Coffee"></a>
-</p>
 
 ## License
 
