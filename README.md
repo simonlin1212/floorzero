@@ -15,6 +15,15 @@
   <img alt="MCP tools" src="https://img.shields.io/badge/MCP%20tools-17-ff5a1f">
 </p>
 
+---
+
+**Open to Work · Shenzhen / Hong Kong / Remote**
+
+I'm Simon, focused on building AI agents and practical tools, and I'm looking for opportunities in Shenzhen, Hong Kong, or remotely.  
+Get in touch: [simonlin0423@gmail.com](mailto:simonlin0423@gmail.com).
+
+---
+
 <p align="center">
   <a href="#what-this-is">What this is</a> ·
   <a href="#why-you-run-it-yourself">Why you run it yourself</a> ·
